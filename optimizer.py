@@ -322,7 +322,10 @@ class TuningAnalyzer:
 
         )
 
-
+        score += self.special_key_tuning_bonus(
+            tuning,
+            reasons
+        )
 
         score += self.open_string_bonus(
 
@@ -337,7 +340,7 @@ class TuningAnalyzer:
         )
 
 
-        score += tuning.popularity * 1.5
+        score += tuning.popularity * 0.5
 
 
 

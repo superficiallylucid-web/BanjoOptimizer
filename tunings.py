@@ -24,7 +24,7 @@ def get_tunings():
             key_strengths={
                 "G major": 15,
                 "E minor": 8,
-                "D major": 6
+                "D major": 3
             }
         ),
 
@@ -60,7 +60,7 @@ def get_tunings():
             category="modern",
             popularity=9,
             key_strengths={
-                "D major": 15,
+                "D major": 30,
                 "E minor": 5
             },
             base_tuning="Double C (gCGCD)",
