@@ -322,23 +322,21 @@ class TuningAnalyzer:
 
         )
 
-        score += self.special_key_tuning_bonus(
-            tuning,
-            reasons
-        )
+        # Future enhancement:
+        # score += self.special_key_tuning_bonus(
+        #     tuning,
+        #     reasons
+        # )
 
         score += self.open_string_bonus(
-
             tuning,
-
             reasons
-
         )
+
         score += self.fifth_string_drone_bonus(
             tuning,
             reasons
         )
-
 
         score += tuning.popularity * 0.5
 

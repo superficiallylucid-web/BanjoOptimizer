@@ -1,23 +1,28 @@
 from pathlib import Path
+import sys
+import os
 
 from parser import MuseScoreFile
 from optimizer import TuningAnalyzer
 
 
-PROJECT_FOLDER = Path(__file__).parent
+if getattr(sys, "frozen", False):
+    PROJECT_FOLDER = Path(sys.executable).parent
+else:
+    PROJECT_FOLDER = Path(__file__).parent
+
 
 SCORES_FOLDER = PROJECT_FOLDER / "scores"
 
-
+print("Working directory:", os.getcwd())
+print("Project folder   :", PROJECT_FOLDER.resolve())
+print("Scores folder    :", SCORES_FOLDER.resolve())
 
 print("Banjo Optimizer\n")
-
-
 
 score_files = sorted(
     SCORES_FOLDER.glob("*.mscz")
 )
-
 
 
 if not score_files:
