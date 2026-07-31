@@ -13,23 +13,6 @@ class TuningAnalyzer:
     - 5th string transition support
     """
 
-    # How much weight to give a tuning's authored "sounds right
-    # for this key" strength. Kept low on purpose: liking how a
-    # tuning resonates in a key is a real but overrated signal —
-    # people (and this optimizer) tend to overweight it relative
-    # to actual playability.
-    KEY_BONUS_WEIGHT = 0.5
-
-    # Hand-movement score, normalized per note transition
-    # (see score_tuning) rather than summed raw. Summed raw,
-    # it scaled with song length and could run into the
-    # hundreds for a long piece — silently overpowering every
-    # other component, including key_bonus, open_string_bonus,
-    # and coverage, all of which are fixed-range (roughly
-    # 0-40). This weight brings the *average* per-transition
-    # score (range roughly -4 to +3) up to a comparable scale.
-    MOVEMENT_SCORE_WEIGHT = 8
-
 
     def __init__(self, notes, key="Unknown"):
 
@@ -128,8 +111,6 @@ class TuningAnalyzer:
 
         movement_score = 0
 
-        transition_count = 0
-
 
         fifth_transition_score = 0
 
@@ -206,9 +187,6 @@ class TuningAnalyzer:
 
 
             if previous_position:
-
-
-                transition_count += 1
 
 
                 movement = abs(
@@ -313,21 +291,6 @@ class TuningAnalyzer:
         else:
 
             fret_score = 0
-
-
-        if transition_count:
-
-            movement_score = (
-
-                movement_score /
-
-                transition_count
-
-            ) * self.MOVEMENT_SCORE_WEIGHT
-
-        else:
-
-            movement_score = 0
 
 
 
@@ -729,7 +692,7 @@ class TuningAnalyzer:
             )
 
 
-        return bonus * self.KEY_BONUS_WEIGHT
+        return bonus
 
 
 

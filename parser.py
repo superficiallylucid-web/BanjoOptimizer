@@ -35,7 +35,7 @@ class MuseScoreFile:
 
     def open(self):
 
-        print(f"\nOpening {self.filename.name}")
+        # print(f"\nOpening {self.filename.name}")
 
 
         with zipfile.ZipFile(
@@ -62,10 +62,10 @@ class MuseScoreFile:
                 )
 
 
-            print(
-                "Reading",
-                score_filename
-            )
+            # print(
+                # "Reading",
+                # score_filename
+            # )
 
 
             xml_text = archive.read(
@@ -81,9 +81,9 @@ class MuseScoreFile:
             self.root = self.tree.getroot()
 
 
-            print(
-                "XML successfully loaded."
-            )
+            # print(
+                # "XML successfully loaded."
+            # )
 
 
 
@@ -91,9 +91,9 @@ class MuseScoreFile:
 
     def read_title(self):
 
-        print(
-            "\nSearching for title..."
-        )
+        # print(
+            # "\nSearching for title..."
+        # )
 
 
         for element in self.root.iter():
@@ -121,10 +121,10 @@ class MuseScoreFile:
                         )
 
 
-                        print(
-                            "Title found:",
-                            self.title
-                        )
+                        # print(
+                            # "Title found:",
+                            # self.title
+                        # )
 
 
                         self.score.title = self.title
@@ -137,9 +137,9 @@ class MuseScoreFile:
 
     def read_time_signature(self):
 
-        print(
-            "\nSearching for time signature..."
-        )
+        # print(
+            # "\nSearching for time signature..."
+        # )
 
 
         for element in self.root.iter():
@@ -173,10 +173,10 @@ class MuseScoreFile:
                     )
 
 
-                    print(
-                        "Time signature found:",
-                        self.time_signature
-                    )
+                    # print(
+                        # "Time signature found:",
+                        # self.time_signature
+                    # )
 
 
                     self.score.time_signature = (
@@ -191,9 +191,9 @@ class MuseScoreFile:
 
     def read_staff_notes(self, staff_number):
 
-        print(
-            f"\nReading notes from Staff {staff_number}..."
-        )
+        # print(
+            # f"\nReading notes from Staff {staff_number}..."
+        # )
 
 
         self.notes = []
@@ -268,10 +268,10 @@ class MuseScoreFile:
                     )
 
 
-        print(
-            "Notes found:",
-            len(self.notes)
-        )
+        # print(
+            # "Notes found:",
+            # len(self.notes)
+        # )
 
 
 
@@ -307,9 +307,9 @@ class MuseScoreFile:
 
     def estimate_key(self):
 
-        print(
-            "\nEstimating key..."
-        )
+        # print(
+            # "\nEstimating key..."
+        # )
 
 
         self.read_key_signature()
@@ -376,13 +376,13 @@ class MuseScoreFile:
         ]
 
 
-        print(
-            "Possible keys:",
-            [
-                major_name,
-                minor_name
-            ]
-        )
+        # print(
+            # "Possible keys:",
+            # [
+                # major_name,
+                # minor_name
+            # ]
+        # )
 
 
         if not self.notes:
@@ -447,15 +447,15 @@ class MuseScoreFile:
         )
 
 
-        print(
-            "Major score:",
-            major_score
-        )
+        # print(
+            # "Major score:",
+            # major_score
+        # )
 
-        print(
-            "Minor score:",
-            minor_score
-        )
+        # print(
+            # "Minor score:",
+            # minor_score
+        # )
 
 
 
@@ -506,8 +506,8 @@ class MuseScoreFile:
         )
 
 
-        print(
-            "Confidence:",
-            self.key_confidence,
-            "%"
-        )
+        # print(
+            # "Confidence:",
+            # self.key_confidence,
+            # "%"
+        # )
