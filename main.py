@@ -83,10 +83,22 @@ else:
         score.read_time_signature()
 
 
-
         # Currently using Staff 4 as the melody staff
+        # print("Reading Staff 4...")
         score.read_staff_notes(4)
+
+        # print("Notes found:", len(score.notes))
+
+        if not score.notes:
+            raise ValueError(
+                "No notes found on Staff 4. "
+                "Check the MuseScore file's staff layout."
+            )
+
+        # print("Estimating key...")
         score.estimate_key()
+
+        # print("Key estimation complete:", score.key)
 
 
         output(
