@@ -2,7 +2,9 @@ from pathlib import Path
 import zipfile
 import xml.etree.ElementTree as ET
 
-from models import Score, Note
+from models import Score, Note, Harmony
+
+from music import tpc_to_name, tpc_to_pitch_class, chord_tones, chord_display_symbol
 
 
 class MuseScoreFile:
@@ -271,6 +273,175 @@ class MuseScoreFile:
         # print(
             # "Notes found:",
             # len(self.notes)
+        # )
+
+
+
+    # -----------------------------------------------------
+
+    def read_melody_notes(self):
+        """
+        Finds and reads the melody staff automatically,
+        instead of assuming any particular staff number.
+
+        Tries staves in order (1, 2, 3, ...), using the same
+        <Staff>-tag counting convention as read_staff_notes
+        (which also counts staff *definitions* nested inside
+        <Part>, not just staves with actual content -- see
+        read_staff_notes' docstring). The first staff that
+        turns out to contain notes is used.
+
+        This is a "first staff with notes" heuristic. It's
+        not guaranteed to find the true melody staff if a
+        score has some other staff with notes appearing
+        first (e.g. a countoff or percussion staff) -- but
+        it's a much safer default than a hardcoded staff
+        number, and it matches how these files are actually
+        structured today.
+
+        Returns the staff number that was used, and raises
+        ValueError if no staff in the file contains any
+        notes at all.
+        """
+
+        staff_count = sum(
+            1
+            for element in self.root.iter()
+            if element.tag.split("}")[-1] == "Staff"
+        )
+
+        for staff_number in range(1, staff_count + 1):
+
+            self.read_staff_notes(staff_number)
+
+            if self.notes:
+
+                return staff_number
+
+
+        raise ValueError(
+            "No staff containing notes was found in this file."
+        )
+
+
+
+    # -----------------------------------------------------
+
+    def read_harmonies(self, staff_number):
+        """
+        Reads chord symbols (Harmony elements) from the score,
+        in the order they appear.
+
+        Uses the same staff-counting convention as
+        read_staff_notes: every <Staff> tag increments the
+        counter, including the staff *definitions* nested
+        inside <Part>, not just the staves that hold musical
+        content. Pass the same staff_number you used for
+        read_staff_notes.
+
+        Note: this records which measure each chord symbol
+        falls in, but not its exact beat position within the
+        measure (durations aren't tracked yet). Good enough
+        for a chord *progression*; not yet precise enough to
+        say which melody note lines up with which chord.
+        """
+
+        self.harmonies = []
+
+        self.score.harmonies = []
+
+        current_staff = 0
+
+        measure = 0
+
+
+        for element in self.root.iter():
+
+            tag = element.tag.split("}")[-1]
+
+
+            if tag == "Staff":
+
+                current_staff += 1
+
+
+            if current_staff != staff_number:
+
+                continue
+
+
+            if tag == "Measure":
+
+                measure += 1
+
+
+            if tag == "Harmony":
+
+                info = None
+
+                for child in element:
+
+                    if child.tag.split("}")[-1] == "harmonyInfo":
+
+                        info = child
+                        break
+
+
+                if info is None:
+
+                    continue
+
+
+                root_tpc = None
+                quality_code = ""
+
+                for child in info:
+
+                    child_tag = child.tag.split("}")[-1]
+
+                    if child_tag == "root":
+
+                        root_tpc = int(child.text)
+
+                    elif child_tag == "name":
+
+                        quality_code = child.text or ""
+
+
+                if root_tpc is None:
+
+                    continue
+
+
+                root_name = tpc_to_name(root_tpc)
+                root_pc = tpc_to_pitch_class(root_tpc)
+
+                symbol = chord_display_symbol(
+                    root_name,
+                    quality_code
+                )
+
+                tones = chord_tones(
+                    root_pc,
+                    quality_code
+                )
+
+                harmony = Harmony(
+                    measure=measure,
+                    root_pc=root_pc,
+                    quality_code=quality_code,
+                    symbol=symbol,
+                    tones=tones if tones else []
+                )
+
+                self.harmonies.append(harmony)
+
+                self.score.add_harmony(harmony)
+
+
+        # print(
+            # "Chord symbols found:",
+            # len(self.harmonies)
         # )
 
 

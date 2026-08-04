@@ -6,6 +6,7 @@ from output import output, clear_output
 
 from parser import MuseScoreFile
 from optimizer import TuningAnalyzer
+from recommendations import apply_shared_features
 
 VERSION = "1.0"
 
@@ -83,22 +84,10 @@ else:
         score.read_time_signature()
 
 
-        # Currently using Staff 4 as the melody staff
-        # print("Reading Staff 4...")
-        score.read_staff_notes(4)
 
-        # print("Notes found:", len(score.notes))
-
-        if not score.notes:
-            raise ValueError(
-                "No notes found on Staff 4. "
-                "Check the MuseScore file's staff layout."
-            )
-
-        # print("Estimating key...")
+        staff_used = score.read_melody_notes()
+        output(f"Using Staff {staff_used}")
         score.estimate_key()
-
-        # print("Key estimation complete:", score.key)
 
 
         output(
@@ -177,20 +166,38 @@ else:
         rank = 1
 
 
-        for item in results["modern"][:3]:
+        top_results = apply_shared_features(
+            results["modern"][:3]
+        )
+
+
+        for item in top_results:
 
 
             output(
-                f"{rank}. {item['name']} "
-                f"({item['symbol']})"
+                f"{rank}. {item.name} "
+                f"({item.symbol})"
             )
-            
-            for reason in item["reasons"]:
+
+            for advantage in item.advantages:
 
                 output(
                     "   -",
-                    reason
+                    advantage
                 )
+
+            if item.tradeoffs:
+
+                output(
+                    "   Tradeoffs:"
+                )
+
+                for tradeoff in item.tradeoffs:
+
+                    output(
+                        "   -",
+                        tradeoff
+                    )
 
 
             print()

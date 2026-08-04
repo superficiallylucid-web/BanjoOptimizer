@@ -350,3 +350,202 @@ def chord_contains(key, midi):
         pitch_class(midi)
         in profile["chord"]
     )
+
+
+# ---------------------------------------------------------
+# MuseScore TPC (tonal pitch class) decoding
+# ---------------------------------------------------------
+#
+# MuseScore stores note/chord roots as a TPC integer rather
+# than a plain pitch class, so that it can tell C# apart from
+# Db even though they share a pitch class. TPC walks the
+# circle of fifths starting from Fbb; TPC 14 = C natural.
+#
+# This lets us recover both the note's letter name (with
+# sharps/flats) and its underlying 0-11 pitch class.
+
+TPC_LETTERS = ["F", "C", "G", "D", "A", "E", "B"]
+
+BASE_PITCH_CLASS = {
+    "F": 5,
+    "C": 0,
+    "G": 7,
+    "D": 2,
+    "A": 9,
+    "E": 4,
+    "B": 11
+}
+
+
+def tpc_to_name(tpc):
+    """
+    Convert a MuseScore TPC integer to a note name.
+
+    Example:
+
+    14 -> "C"
+    20 -> "F#"
+    12 -> "Bb"
+    """
+
+    letter_index = (tpc + 1) % 7
+    alteration = (tpc + 1) // 7 - 2
+
+    letter = TPC_LETTERS[letter_index]
+
+    if alteration > 0:
+        suffix = "#" * alteration
+    elif alteration < 0:
+        suffix = "b" * -alteration
+    else:
+        suffix = ""
+
+    return f"{letter}{suffix}"
+
+
+def tpc_to_pitch_class(tpc):
+    """
+    Convert a MuseScore TPC integer to a 0-11 pitch class.
+    """
+
+    letter_index = (tpc + 1) % 7
+    alteration = (tpc + 1) // 7 - 2
+
+    letter = TPC_LETTERS[letter_index]
+
+    return (
+        BASE_PITCH_CLASS[letter] + alteration
+    ) % 12
+
+
+# ---------------------------------------------------------
+# Chord quality lookup
+# ---------------------------------------------------------
+#
+# MuseScore stores chord symbols as a root TPC plus an
+# internal "quality code" string (its own chord-description
+# shorthand), not the display symbol. This table translates
+# the quality codes we've seen in real files into:
+#   - intervals: semitones above the root
+#   - display: the suffix normally printed after the root
+#     (e.g. root "C" + display "maj7" -> "Cmaj7")
+#
+# Extend this table as new quality codes turn up in other
+# scores; MuseScore only uses a bounded set of them.
+
+CHORD_QUALITIES = {
+
+    "": {
+        "intervals": [0, 4, 7],
+        "display": ""
+    },
+
+    "m": {
+        "intervals": [0, 3, 7],
+        "display": "m"
+    },
+
+    "7": {
+        "intervals": [0, 4, 7, 10],
+        "display": "7"
+    },
+
+    "m7": {
+        "intervals": [0, 3, 7, 10],
+        "display": "m7"
+    },
+
+    "maj7": {
+        "intervals": [0, 4, 7, 11],
+        "display": "maj7"
+    },
+
+    "mb5": {
+        "intervals": [0, 3, 6],
+        "display": "dim"
+    },
+
+    "5": {
+        "intervals": [0, 7],
+        "display": "5"
+    },
+
+    "sus2": {
+        "intervals": [0, 2, 7],
+        "display": "sus2"
+    },
+
+    "sus4": {
+        "intervals": [0, 5, 7],
+        "display": "sus4"
+    }
+
+}
+
+
+def chord_tones(root_pc, quality_code):
+    """
+    Return the pitch classes in a chord, given a root
+    pitch class and a MuseScore quality code.
+
+    Returns None if the quality code isn't recognized yet,
+    so callers can decide how to handle unknown chords
+    rather than silently guessing.
+    """
+
+    quality = CHORD_QUALITIES.get(quality_code)
+
+    if quality is None:
+
+        return None
+
+    return [
+        (root_pc + interval) % 12
+        for interval in quality["intervals"]
+    ]
+
+
+def chord_display_symbol(root_name, quality_code):
+    """
+    Build a human-readable chord symbol, e.g. "C" + "m7" -> "Cm7".
+
+    Falls back to showing the raw quality code if it isn't
+    in CHORD_QUALITIES yet, so unknown chords are still
+    visible instead of silently dropped.
+    """
+
+    quality = CHORD_QUALITIES.get(quality_code)
+
+    if quality is None:
+
+        return f"{root_name}({quality_code})"
+
+    return f"{root_name}{quality['display']}"
+
+
+# ---------------------------------------------------------
+# Tuning symbol from raw string data
+# ---------------------------------------------------------
+
+def tuning_symbol_from_notes(notes):
+    """
+    Build a tuning symbol string (e.g. "gDGBD") from a list
+    of open-string MIDI values, ordered 5th string to 1st.
+
+    This is the ground truth for what a file is *actually*
+    tuned to — as opposed to whatever a filename or title
+    happens to claim. Always prefer this over parsing a
+    filename.
+    """
+
+    if not notes:
+
+        return ""
+
+    letters = [pitch_name(pitch_class(midi)) for midi in notes]
+
+    fifth_string = letters[0].lower()
+
+    rest = "".join(letters[1:])
+
+    return f"{fifth_string}{rest}"

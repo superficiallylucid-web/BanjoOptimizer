@@ -2,6 +2,55 @@ from tunings import get_tunings
 
 from music import get_key_profile
 
+from models import TuningResult
+
+
+# ---------------------------------------------------------
+# Reason classification
+# ---------------------------------------------------------
+#
+# score_tuning() still builds one flat list of explanation
+# strings exactly as before -- this step only sorts that
+# existing text into advantages vs. tradeoffs afterward. It
+# doesn't change what gets said or how the score is computed,
+# only how the explanation is categorized for the report.
+#
+# Only one reason string is negative today ("N notes require
+# difficult positions"); everything else is a positive/
+# informational statement. Extend TRADEOFF_MARKERS if future
+# heuristics add more negative reasons.
+
+TRADEOFF_MARKERS = [
+    "require difficult positions"
+]
+
+
+def classify_reasons(reasons):
+    """
+    Split a flat reasons list into (advantages, tradeoffs)
+    based on known negative-reason phrasing.
+    """
+
+    advantages = []
+    tradeoffs = []
+
+    for reason in reasons:
+
+        is_tradeoff = any(
+            marker in reason
+            for marker in TRADEOFF_MARKERS
+        )
+
+        if is_tradeoff:
+
+            tradeoffs.append(reason)
+
+        else:
+
+            advantages.append(reason)
+
+    return advantages, tradeoffs
+
 
 class TuningAnalyzer:
     """
@@ -29,6 +78,17 @@ class TuningAnalyzer:
     # 0-40). This weight brings the *average* per-transition
     # score (range roughly -4 to +3) up to a comparable scale.
     MOVEMENT_SCORE_WEIGHT = 8
+
+    # fifth_string_transition_support() sums +3/+6 for every
+    # melody leap the 5th string can bridge, with no
+    # normalization by song length -- same shape of bug as
+    # movement_score, just smaller in practice so far. Capping
+    # it (rather than normalizing per-transition, which would
+    # shrink it to near-nothing on typical songs) keeps
+    # today's known-good scores unchanged while still stopping
+    # a long or leap-heavy song from letting this term take
+    # over the total.
+    FIFTH_TRANSITION_CAP = 20
 
 
     def __init__(self, notes, key="Unknown"):
@@ -73,13 +133,13 @@ class TuningAnalyzer:
 
 
         modern.sort(
-            key=lambda x: x["score"],
+            key=lambda x: x.score,
             reverse=True
         )
 
 
         historical.sort(
-            key=lambda x: x["score"],
+            key=lambda x: x.score,
             reverse=True
         )
 
@@ -397,22 +457,32 @@ class TuningAnalyzer:
 
 
 
-        return {
+        advantages, tradeoffs = classify_reasons(reasons)
 
-            "name": tuning.name,
+        return TuningResult(
 
-            "symbol": tuning.symbol,
+            name=tuning.name,
 
-            "category": tuning.category,
+            symbol=tuning.symbol,
 
-            "score": round(
+            category=tuning.category,
+
+            score=round(
                 score,
                 2
             ),
 
-            "reasons": reasons
+            advantages=advantages,
 
-        }
+            tradeoffs=tradeoffs
+
+            # shared_features and confidence are left at
+            # their defaults ([] and None) -- shared_features
+            # is a group-level concept (see
+            # recommendations.py), and confidence isn't
+            # computed yet.
+
+        )
 
 
 

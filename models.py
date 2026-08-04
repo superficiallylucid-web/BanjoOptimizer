@@ -13,6 +13,28 @@ from music import (
 
 
 # ---------------------------------------------------------
+# Harmony model
+# ---------------------------------------------------------
+
+@dataclass
+class Harmony:
+    """
+    Represents one chord symbol found in the score
+    (e.g. "Cmaj7" at measure 2).
+    """
+
+    measure: int
+
+    root_pc: int
+
+    quality_code: str
+
+    symbol: str
+
+    tones: list[int] = field(default_factory=list)
+
+
+# ---------------------------------------------------------
 # Note model
 # ---------------------------------------------------------
 
@@ -78,11 +100,16 @@ class Score:
 
     measures: list[Measure] = field(default_factory=list)
 
+    harmonies: list[Harmony] = field(default_factory=list)
+
     def add_note(self, note: Note):
         self.notes.append(note)
 
     def add_measure(self, measure: Measure):
         self.measures.append(measure)
+
+    def add_harmony(self, harmony: Harmony):
+        self.harmonies.append(harmony)
 
     @property
     def note_count(self):
@@ -143,10 +170,37 @@ class Tuning:
 
 @dataclass
 class TuningResult:
+    """
+    One recommended tuning, with its explanation broken into
+    categories a player can actually use to decide between
+    options -- rather than one flat list of reasons.
+
+    advantages: what's genuinely distinguishing about this
+        tuning (shared_features has already been factored out)
+    tradeoffs: downsides specific to this tuning (e.g. notes
+        that require difficult positions); empty if none
+    shared_features: characteristics this tuning has in common
+        with the other recommendations it was shown alongside.
+        Populated by a group-level step (see recommendations.py),
+        not by scoring a single tuning in isolation.
+    confidence: placeholder for a future score-margin-based
+        confidence value (e.g. for grouping near-tied
+        recommendations). Not yet computed -- None until that
+        logic exists.
+    """
+
     name: str
 
     symbol: str
 
-    score: float
+    category: str = ""
 
-    reasons: list[str] = field(default_factory=list)
+    score: float = 0.0
+
+    advantages: list[str] = field(default_factory=list)
+
+    tradeoffs: list[str] = field(default_factory=list)
+
+    shared_features: list[str] = field(default_factory=list)
+
+    confidence: float | None = None
