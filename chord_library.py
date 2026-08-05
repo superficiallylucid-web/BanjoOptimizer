@@ -22,16 +22,20 @@ shape -- find() should only ever return usable results.
 """
 
 import csv
+import sys
 
 from pathlib import Path
 
 from models import ChordShape
 
 
-# CSV files are loaded relative to this module's own location,
-# not the current working directory, so load() works the same
-# regardless of where the program is run from.
-CHORD_LIBRARY_DIR = Path(__file__).parent / "chord_library"
+# CSV files are loaded relative to this module's own location
+# in normal execution, and via PyInstaller's temporary bundle
+# extraction directory when frozen.
+if getattr(sys, 'frozen', False):
+    CHORD_LIBRARY_DIR = Path(sys._MEIPASS) / "chord_library"
+else:
+    CHORD_LIBRARY_DIR = Path(__file__).parent / "chord_library"
 
 
 class ChordLibrary:

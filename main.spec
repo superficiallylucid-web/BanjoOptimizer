@@ -1,11 +1,18 @@
 # -*- mode: python ; coding: utf-8 -*-
 
+import glob
+from os.path import basename
+
 
 a = Analysis(
     ['main.py'],
     pathex=[],
     binaries=[],
-    datas=[],
+    datas=[
+        (file, 'chord_library') for file in glob.glob('chord_library/*')
+    ] + [
+        (file, 'scores') for file in glob.glob('scores/*')
+    ],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},

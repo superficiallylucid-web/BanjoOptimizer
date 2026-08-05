@@ -21,6 +21,9 @@ imports:
     <a href="#_collections_abc">_collections_abc</a>
  &#8226;   <a href="#_weakrefset">_weakrefset</a>
  &#8226;   <a href="#abc">abc</a>
+ &#8226;   <a href="#chord_generator">chord_generator</a>
+ &#8226;   <a href="#chord_library">chord_library</a>
+ &#8226;   <a href="#chord_service">chord_service</a>
  &#8226;   <a href="#codecs">codecs</a>
  &#8226;   <a href="#collections">collections</a>
  &#8226;   <a href="#copyreg">copyreg</a>
@@ -159,6 +162,7 @@ imports:
  &#8226;   <a href="#operator">operator</a>
  &#8226;   <a href="#optimizer">optimizer</a>
  &#8226;   <a href="#os">os</a>
+ &#8226;   <a href="#output">output</a>
  &#8226;   <a href="#parser">parser</a>
  &#8226;   <a href="#pathlib">pathlib</a>
  &#8226;   <a href="#posixpath">posixpath</a>
@@ -168,6 +172,7 @@ imports:
  &#8226;   <a href="#re._compiler">re._compiler</a>
  &#8226;   <a href="#re._constants">re._constants</a>
  &#8226;   <a href="#re._parser">re._parser</a>
+ &#8226;   <a href="#recommendations">recommendations</a>
  &#8226;   <a href="#reprlib">reprlib</a>
  &#8226;   <a href="#sre_compile">sre_compile</a>
  &#8226;   <a href="#sre_constants">sre_constants</a>
@@ -175,6 +180,7 @@ imports:
  &#8226;   <a href="#stat">stat</a>
  &#8226;   <a href="#sys">sys</a>
  &#8226;   <a href="#traceback">traceback</a>
+ &#8226;   <a href="#tunings">tunings</a>
  &#8226;   <a href="#types">types</a>
  &#8226;   <a href="#warnings">warnings</a>
  &#8226;   <a href="#weakref">weakref</a>
@@ -1446,6 +1452,61 @@ imported by:
 </div>
 
 <div class="node">
+  <a name="chord_generator"></a>
+  <a target="code" href="///C:/Projects/BanjoOptimizer/chord_generator.py" type="text/plain"><tt>chord_generator</tt></a>
+<span class="moduletype">SourceModule</span>  <div class="import">
+imports:
+    <a href="#fretboard">fretboard</a>
+ &#8226;   <a href="#itertools">itertools</a>
+ &#8226;   <a href="#models">models</a>
+ &#8226;   <a href="#music">music</a>
+
+  </div>
+  <div class="import">
+imported by:
+    <a href="#chord_service">chord_service</a>
+ &#8226;   <a href="#main.py">main.py</a>
+
+  </div>
+
+</div>
+
+<div class="node">
+  <a name="chord_library"></a>
+  <a target="code" href="///C:/Projects/BanjoOptimizer/chord_library.py" type="text/plain"><tt>chord_library</tt></a>
+<span class="moduletype">SourceModule</span>  <div class="import">
+imports:
+    <a href="#csv">csv</a>
+ &#8226;   <a href="#models">models</a>
+ &#8226;   <a href="#pathlib">pathlib</a>
+ &#8226;   <a href="#sys">sys</a>
+
+  </div>
+  <div class="import">
+imported by:
+    <a href="#main.py">main.py</a>
+
+  </div>
+
+</div>
+
+<div class="node">
+  <a name="chord_service"></a>
+  <a target="code" href="///C:/Projects/BanjoOptimizer/chord_service.py" type="text/plain"><tt>chord_service</tt></a>
+<span class="moduletype">SourceModule</span>  <div class="import">
+imports:
+    <a href="#chord_generator">chord_generator</a>
+
+  </div>
+  <div class="import">
+imported by:
+    <a href="#main.py">main.py</a>
+
+  </div>
+
+</div>
+
+<div class="node">
   <a name="codecs"></a>
   <a target="code" href="///C:/Users/jsand/AppData/Local/Programs/Python/Python314/Lib/codecs.py" type="text/plain"><tt>codecs</tt></a>
 <span class="moduletype">SourceModule</span>  <div class="import">
@@ -1877,7 +1938,8 @@ imports:
   </div>
   <div class="import">
 imported by:
-    <a href="#importlib.metadata">importlib.metadata</a>
+    <a href="#chord_library">chord_library</a>
+ &#8226;   <a href="#importlib.metadata">importlib.metadata</a>
 
   </div>
 
@@ -5097,6 +5159,18 @@ imported by:
 </div>
 
 <div class="node">
+  <a name="fretboard"></a>
+  <a target="code" href="///C:/Projects/BanjoOptimizer/fretboard.py" type="text/plain"><tt>fretboard</tt></a>
+<span class="moduletype">SourceModule</span>  <div class="import">
+imported by:
+    <a href="#chord_generator">chord_generator</a>
+ &#8226;   <a href="#optimizer">optimizer</a>
+
+  </div>
+
+</div>
+
+<div class="node">
   <a name="ftplib"></a>
   <a target="code" href="///C:/Users/jsand/AppData/Local/Programs/Python/Python314/Lib/ftplib.py" type="text/plain"><tt>ftplib</tt></a>
 <span class="moduletype">SourceModule</span>  <div class="import">
@@ -6070,6 +6144,7 @@ imported by:
 imported by:
     <a href="#_pydecimal">_pydecimal</a>
  &#8226;   <a href="#calendar">calendar</a>
+ &#8226;   <a href="#chord_generator">chord_generator</a>
  &#8226;   <a href="#collections">collections</a>
  &#8226;   <a href="#dataclasses">dataclasses</a>
  &#8226;   <a href="#fnmatch">fnmatch</a>
@@ -6356,7 +6431,10 @@ imports:
   </div>
   <div class="import">
 imported by:
-    <a href="#parser">parser</a>
+    <a href="#chord_generator">chord_generator</a>
+ &#8226;   <a href="#chord_library">chord_library</a>
+ &#8226;   <a href="#optimizer">optimizer</a>
+ &#8226;   <a href="#parser">parser</a>
  &#8226;   <a href="#tunings">tunings</a>
 
   </div>
@@ -6378,8 +6456,10 @@ imported by:
   <a target="code" href="///C:/Projects/BanjoOptimizer/music.py" type="text/plain"><tt>music</tt></a>
 <span class="moduletype">SourceModule</span>  <div class="import">
 imported by:
-    <a href="#models">models</a>
+    <a href="#chord_generator">chord_generator</a>
+ &#8226;   <a href="#models">models</a>
  &#8226;   <a href="#optimizer">optimizer</a>
+ &#8226;   <a href="#parser">parser</a>
 
   </div>
 
@@ -6515,7 +6595,9 @@ imported by:
   <a target="code" href="///C:/Projects/BanjoOptimizer/optimizer.py" type="text/plain"><tt>optimizer</tt></a>
 <span class="moduletype">SourceModule</span>  <div class="import">
 imports:
-    <a href="#music">music</a>
+    <a href="#fretboard">fretboard</a>
+ &#8226;   <a href="#models">models</a>
+ &#8226;   <a href="#music">music</a>
  &#8226;   <a href="#tunings">tunings</a>
 
   </div>
@@ -6620,12 +6702,24 @@ imported by:
 </div>
 
 <div class="node">
+  <a name="output"></a>
+  <a target="code" href="///C:/Projects/BanjoOptimizer/output.py" type="text/plain"><tt>output</tt></a>
+<span class="moduletype">SourceModule</span>  <div class="import">
+imported by:
+    <a href="#main.py">main.py</a>
+
+  </div>
+
+</div>
+
+<div class="node">
   <a name="parser"></a>
   <a target="code" href="///C:/Projects/BanjoOptimizer/parser.py" type="text/plain"><tt>parser</tt></a>
 <span class="moduletype">SourceModule</span>  <div class="import">
 imports:
     <a href="#copyreg">copyreg</a>
  &#8226;   <a href="#models">models</a>
+ &#8226;   <a href="#music">music</a>
  &#8226;   <a href="#pathlib">pathlib</a>
  &#8226;   <a href="#xml.etree.ElementTree">xml.etree.ElementTree</a>
  &#8226;   <a href="#zipfile">zipfile</a>
@@ -6667,7 +6761,8 @@ imports:
   </div>
   <div class="import">
 imported by:
-    <a href="#importlib.metadata">importlib.metadata</a>
+    <a href="#chord_library">chord_library</a>
+ &#8226;   <a href="#importlib.metadata">importlib.metadata</a>
  &#8226;   <a href="#importlib.resources._common">importlib.resources._common</a>
  &#8226;   <a href="#importlib.resources.abc">importlib.resources.abc</a>
  &#8226;   <a href="#importlib.resources.readers">importlib.resources.readers</a>
@@ -7073,6 +7168,17 @@ imported by:
 </div>
 
 <div class="node">
+  <a name="recommendations"></a>
+  <a target="code" href="///C:/Projects/BanjoOptimizer/recommendations.py" type="text/plain"><tt>recommendations</tt></a>
+<span class="moduletype">SourceModule</span>  <div class="import">
+imported by:
+    <a href="#main.py">main.py</a>
+
+  </div>
+
+</div>
+
+<div class="node">
   <a name="reprlib"></a>
   <a target="code" href="///C:/Users/jsand/AppData/Local/Programs/Python/Python314/Lib/reprlib.py" type="text/plain"><tt>reprlib</tt></a>
 <span class="moduletype">SourceModule</span>  <div class="import">
@@ -7467,6 +7573,7 @@ imported by:
  &#8226;   <a href="#ast">ast</a>
  &#8226;   <a href="#base64">base64</a>
  &#8226;   <a href="#calendar">calendar</a>
+ &#8226;   <a href="#chord_library">chord_library</a>
  &#8226;   <a href="#codecs">codecs</a>
  &#8226;   <a href="#collections">collections</a>
  &#8226;   <a href="#compression._common._streams">compression._common._streams</a>
@@ -7795,7 +7902,8 @@ imports:
   </div>
   <div class="import">
 imported by:
-    <a href="#optimizer">optimizer</a>
+    <a href="#main.py">main.py</a>
+ &#8226;   <a href="#optimizer">optimizer</a>
 
   </div>
 
