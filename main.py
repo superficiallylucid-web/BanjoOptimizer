@@ -9,6 +9,7 @@ from optimizer import TuningAnalyzer
 from recommendations import apply_shared_features
 from chord_library import ChordLibrary
 from chord_generator import generate_candidates
+from chord_service import ChordService
 from tunings import get_tunings
 
 VERSION = "1.0"
@@ -202,6 +203,47 @@ for demo_root, demo_root_pc, demo_quality in [
         output(f"    {rank}. {match.shape}")
 
 output("\n--- End Chord Generator Demo ---\n")
+
+# ---------------------------------------------------------
+# TEMPORARY: chord service demo
+# ---------------------------------------------------------
+#
+# Shows ChordService's merged, deduplicated output for a few
+# sample chords -- verified shapes first (library order),
+# then generated candidates that aren't already covered by a
+# verified shape. No ranking logic beyond that ordering yet
+# (see chord_service.py's docstring for what's deliberately
+# left out). Not connected to scoring or the report. Safe to
+# delete this block once it's no longer needed.
+
+output("--- Chord Service Demo (temporary) ---")
+
+chord_service = ChordService(chord_library)
+
+for demo_root, demo_root_pc, demo_quality in [
+    ("C", 0, "Major"),
+    ("G", 7, "Major"),
+    ("E", 4, "Major"),
+]:
+
+    merged = chord_service.get_shapes(
+        tuning=open_g,
+        root=demo_root,
+        root_pc=demo_root_pc,
+        quality_code="",
+        quality_display=demo_quality
+    )
+
+    output(f"\n{demo_root} {demo_quality} in Open G (gDGBD):")
+
+    for rank, shape in enumerate(merged, start=1):
+
+        output(
+            f"    {rank}. {shape.shape}",
+            f"[{shape.source}]"
+        )
+
+output("\n--- End Chord Service Demo ---\n")
 
 # ---------------------------------------------------------
 
