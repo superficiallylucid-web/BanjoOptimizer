@@ -1,5 +1,26 @@
 # Changelog
 
+
+## 2026-08-04
+
+### Added
+Introduced ChordLibrary module.
+Added ChordShape data model.
+Externalized chord knowledge into CSV libraries.
+Implemented library loading and chord lookup.
+
+### Added
+library statistics and validation tools.
+
+Verified
+Existing tuning recommendations unchanged.
+Existing scoring unchanged.
+Existing report unchanged.
+Chord lookups validated against the real Open G library.
+Statistics validated independently against the raw CSV.
+
+---
+
 ## 2026-08-02
 
 ### Fixed

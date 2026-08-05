@@ -204,3 +204,42 @@ class TuningResult:
     shared_features: list[str] = field(default_factory=list)
 
     confidence: float | None = None
+
+
+# ---------------------------------------------------------
+# Chord shape model
+# ---------------------------------------------------------
+
+@dataclass
+class ChordShape:
+    """
+    One playable chord shape from a chord shape library CSV
+    (e.g. chord_library/banjo_chord_library - gDGBD Chord
+    Shapes.csv).
+
+    shape is a string of one fret number per string, ordered
+    4th string to 1st string (the 5th/drone string isn't
+    included) -- e.g. "2012" for a C major shape in gDGBD.
+    This matches the 4-string fret format already seen in
+    MuseScore FretDiagram data.
+
+    Not yet connected to scoring or recommendations -- this
+    is purely a data model for loading and looking up chord
+    shapes.
+    """
+
+    tuning: str
+
+    root: str
+
+    quality: str
+
+    shape: str
+
+    comfort_code: int | None = None
+
+    comfort_explanation: str = ""
+
+    comments: str = ""
+
+    verified: bool | None = None
