@@ -236,6 +236,20 @@ class ChordShape:
         chord_generator.py don't set this themselves. Distinct
         from `verified`, which describes the shape's own
         confirmation status, not which system produced it.
+
+    inversion: which chord tone is lowest-sounding in this
+        specific voicing -- "Root position", "First
+        inversion", "Second inversion", or "Third inversion"
+        (for 7th chords). Set by chord_generator.py for the
+        shapes it produces. Empty string ("") for shapes from
+        elsewhere (e.g. chord_library.py) that haven't had
+        this computed -- an empty value means "not yet
+        determined", not "root position".
+    top_note: the highest-pitched note actually sounding in
+        this voicing (e.g. "E4"), also set by
+        chord_generator.py. Laying groundwork for future
+        melody-note matching -- not used by scoring or
+        ranking yet.
     """
 
     tuning: str
@@ -255,6 +269,10 @@ class ChordShape:
     verified: bool | None = None
 
     source: str = "unknown"
+
+    inversion: str = ""
+
+    top_note: str = ""
 
 
 # ---------------------------------------------------------

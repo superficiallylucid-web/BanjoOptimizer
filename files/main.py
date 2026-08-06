@@ -206,6 +206,44 @@ for demo_root, demo_root_pc, demo_quality in [
 output("\n--- End Chord Generator Demo ---\n")
 
 # ---------------------------------------------------------
+# TEMPORARY: inversion / top note demo
+# ---------------------------------------------------------
+#
+# Shows, for each generated candidate, its shape, identified
+# inversion, and the highest-sounding note in that voicing.
+# Not used in scoring or ranking -- this is groundwork for
+# future melody-note matching. Not connected to the report.
+# Safe to delete this block once it's no longer needed.
+
+output("--- Inversion / Top Note Demo (temporary) ---")
+
+for demo_root, demo_root_pc, demo_quality in [
+    ("C", 0, "Major"),
+    ("G", 7, "Major"),
+    ("E", 4, "Major"),
+]:
+
+    generated_matches = generate_candidates(
+        tuning=open_g,
+        root=demo_root,
+        root_pc=demo_root_pc,
+        quality_code="",
+        quality_display=demo_quality
+    )
+
+    output(f"\n{demo_root} {demo_quality} in Open G (gDGBD):")
+
+    for match in generated_matches:
+
+        output(
+            f"    {match.shape}",
+            f" {match.inversion}",
+            f" (top note: {match.top_note})"
+        )
+
+output("\n--- End Inversion / Top Note Demo ---\n")
+
+# ---------------------------------------------------------
 # TEMPORARY: playability filter demo
 # ---------------------------------------------------------
 #
