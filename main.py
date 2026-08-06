@@ -10,6 +10,7 @@ from recommendations import apply_shared_features
 from chord_library import ChordLibrary
 from chord_generator import generate_candidates
 from chord_service import ChordService
+from playability import evaluate as evaluate_playability
 from tunings import get_tunings
 
 VERSION = "1.0"
@@ -203,6 +204,55 @@ for demo_root, demo_root_pc, demo_quality in [
         output(f"    {rank}. {match.shape}")
 
 output("\n--- End Chord Generator Demo ---\n")
+
+# ---------------------------------------------------------
+# TEMPORARY: playability filter demo
+# ---------------------------------------------------------
+#
+# Shows every RAW generated candidate (before chord_service's
+# filtering) run through playability.evaluate() individually,
+# so both accepted and rejected shapes are visible side by
+# side with their score and reason. This is the unfiltered
+# view -- the chord service demo below shows what's left
+# after rejected candidates are already removed. Not
+# connected to scoring or the report. Safe to delete this
+# block once it's no longer needed.
+
+output("--- Playability Filter Demo (temporary) ---")
+
+for demo_root, demo_root_pc, demo_quality in [
+    ("C", 0, "Major"),
+    ("G", 7, "Major"),
+    ("E", 4, "Major"),
+]:
+
+    raw_candidates = generate_candidates(
+        tuning=open_g,
+        root=demo_root,
+        root_pc=demo_root_pc,
+        quality_code="",
+        quality_display=demo_quality
+    )
+
+    output(f"\n{demo_root} {demo_quality} in Open G (gDGBD):")
+
+    for candidate in raw_candidates:
+
+        result = evaluate_playability(candidate.shape)
+
+        status = "ACCEPTED" if result.accepted else "REJECTED"
+
+        output(
+            f"    {candidate.shape}  {status}",
+            f" score={result.score}",
+            f" - {result.reason}"
+        )
+
+        for warning in result.warnings:
+
+            output(f"        warning: {warning}")
+
+output("\n--- End Playability Filter Demo ---\n")
 
 # ---------------------------------------------------------
 # TEMPORARY: chord service demo

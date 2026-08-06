@@ -23,12 +23,20 @@ Ranking, for this first version, is intentionally simple:
    that duplicates one already included from the verified
    list, so the same fret pattern never appears twice.
 
-No comfort scoring, melody matching, chord transitions, user
-feedback, or playability heuristics are considered here. Those
-are separate future milestones, not part of this pass.
+Generated candidates also pass through playability.py's
+rule-based filter before being returned; rejected candidates
+are dropped entirely (not just deprioritized). Verified library
+shapes are never filtered -- a human already confirmed those,
+so a simple rule-based check has nothing useful to add there.
+
+No comfort scoring, melody matching, chord transitions, or user
+feedback are considered here. Those are separate future
+milestones, not part of this pass.
 """
 
 from chord_generator import generate_candidates
+
+from playability import evaluate as evaluate_playability
 
 
 class ChordService:
@@ -101,6 +109,10 @@ class ChordService:
         for shape in generated_shapes:
 
             if shape.shape in verified_shape_strings:
+
+                continue
+
+            if not evaluate_playability(shape.shape).accepted:
 
                 continue
 

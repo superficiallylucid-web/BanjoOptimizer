@@ -255,3 +255,29 @@ class ChordShape:
     verified: bool | None = None
 
     source: str = "unknown"
+
+
+# ---------------------------------------------------------
+# Playability filter result
+# ---------------------------------------------------------
+
+@dataclass
+class PlayabilityResult:
+    """
+    Result of running a chord shape through the playability
+    filter (playability.py).
+
+    Deliberately minimal for this first version -- accepted /
+    reason / warnings / score is the whole API surface. Meant
+    to be easy to extend later (e.g. a per-rule breakdown)
+    without breaking existing callers, since every field but
+    accepted has a default.
+    """
+
+    accepted: bool
+
+    reason: str = ""
+
+    warnings: list[str] = field(default_factory=list)
+
+    score: int = 0
