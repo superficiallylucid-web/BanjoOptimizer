@@ -1,0 +1,25 @@
+# Force Unix-style line endings for source files, but preserve binary files exactly.
+*.py text eol=lf
+*.md text eol=lf
+*.txt text eol=lf
+*.csv text eol=lf
+*.json text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.html text eol=lf
+*.css text eol=lf
+*.js text eol=lf
+*.ts text eol=lf
+*.spec text eol=lf
+
+# Image and archive files should be treated as binary.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.zip binary
+*.exe binary
+*.pdf binary
+*.gsheet binary
+*.mscz binary
