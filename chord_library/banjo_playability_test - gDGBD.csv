@@ -1,0 +1,9 @@
+Shape,Tuning,Verdict,Reason,Notes
+2512,gDGBD,Reject,Excessive Stretch Required,5 cannot be reached with pinky while other notes are held
+2552,gDGBD,Reject,Excessive Stretch Required,2442 is limit of reach given notes to be played
+2012,gDGBD,Accept,Ergonomically Comfortable,Standard C major
+5435,gDGBD,Accept,Ergonomically Comfortable,Standard Movable Chord Shape
+5555,gDGBD,Accept,Single Finger,Full barre
+0000,gDGBD,Accept,Open Strings,No fretting required
+0030,gDGBD,Accept,Single Finger,"5 Chord, not a triad"
+2452,gDGBD,Accept,"Challenging, but not impractical",

@@ -11,19 +11,26 @@ matching, chord-transition analysis, comfort scoring, user
 feedback) can add more rules or replace the scoring formula
 without restructuring how results are reported.
 
-Only evaluates the shape string itself (e.g. "2012", 4th string
-to 1st, matching ChordShape.shape) -- it doesn't know or care
-whether the shape came from the library or the generator.
-chord_service.py decides who gets filtered.
+Only evaluates the shape string itself (e.g. "2012", or "--657"
+for a shape with a muted string -- see fretboard.parse_shape)
+-- it doesn't know or care whether the shape came from the
+library or the generator. chord_service.py decides who gets
+filtered.
 """
 
 from models import PlayabilityResult
 
+from fretboard import (
+    parse_shape,
+    hand_span,
+    average_fret as fretted_average
+)
 
-# A shape spanning more than this many frets (highest minus
-# lowest, ignoring open strings) is rejected outright. 3 frets
-# is a comfortable single-position stretch; 4+ is already a
-# real reach.
+
+# A shape spanning more than this many FRETTED notes (open and
+# muted strings don't count -- see fretboard.hand_span) is
+# rejected outright. 3 frets is a comfortable single-position
+# stretch; 4+ is already a real reach.
 MAX_ACCEPTABLE_SPAN = 3
 
 # A span at exactly the acceptable limit still gets a warning,
@@ -40,40 +47,38 @@ WARNING_SPAN = MAX_ACCEPTABLE_SPAN
 SPIKE_THRESHOLD = 3
 
 
-def _parse_shape(shape_text):
-
-    return [int(char) for char in shape_text]
-
-
-def _span(frets):
-
-    return max(frets) - min(frets)
-
-
-def _has_spike(frets):
+def _has_spike(values):
     """
     True if any interior string's fret is at least
     SPIKE_THRESHOLD higher than BOTH its neighbors, AND both
-    neighbors are themselves fretted (not open).
+    neighbors are themselves fretted (not open or muted).
 
     The neighbor-fretted condition matters: an isolated high
-    fret surrounded by OPEN strings isn't a crossing problem
-    at all -- there's no competing finger nearby, it's just
-    one finger on one string. The real problem is three (or
-    more) simultaneous fingers where the middle one has to
-    reach much farther than its neighbors, e.g. "2512": fret 5
-    is sandwiched between frets 2 and 1, both of which also
-    need a finger down at the same time.
+    fret surrounded by OPEN or MUTED strings isn't a crossing
+    problem at all -- there's no competing finger nearby,
+    it's just one finger on one string. The real problem is
+    three (or more) simultaneous fingers where the middle one
+    has to reach much farther than its neighbors, e.g. "2512":
+    fret 5 is sandwiched between frets 2 and 1, both of which
+    also need a finger down at the same time.
     """
 
-    for i in range(1, len(frets) - 1):
+    for i in range(1, len(values) - 1):
 
-        fret = frets[i]
+        fret = values[i]
 
-        left = frets[i - 1]
-        right = frets[i + 1]
+        left = values[i - 1]
+        right = values[i + 1]
 
-        if fret == 0 or left == 0 or right == 0:
+        if fret is None or fret == 0:
+
+            continue
+
+        if left is None or left == 0:
+
+            continue
+
+        if right is None or right == 0:
 
             continue
 
@@ -90,7 +95,7 @@ def _has_spike(frets):
     return False
 
 
-def _is_simple_barre(frets):
+def _is_simple_barre(values):
     """
     True if two or more ADJACENT strings share the same
     nonzero fret -- playable with one finger laid across just
@@ -99,44 +104,62 @@ def _is_simple_barre(frets):
     Adjacency matters: two non-adjacent strings happening to
     share a fret value isn't something one finger can span (a
     real finger can't skip over a different fret in between),
-    so this only looks at consecutive string pairs.
+    so this only looks at consecutive string pairs. A muted
+    string never counts as part of a barre.
     """
 
-    for i in range(len(frets) - 1):
+    for i in range(len(values) - 1):
 
-        if frets[i] == frets[i + 1] and frets[i] != 0:
+        a = values[i]
+        b = values[i + 1]
+
+        if a is None or b is None:
+
+            continue
+
+        if a == b and a != 0:
 
             return True
 
     return False
 
 
-def _score(frets):
+def _score(values):
     """
     Rough 0-100 playability estimate. Deliberately simple --
     meant to be refined by later milestones (comfort scoring,
     melody matching, user feedback), not to be the final word.
+
+    Open strings get a real bonus (they cost nothing to play).
+    Muted strings do NOT get the same bonus -- deliberately
+    silencing a string takes extra technique, unlike an open
+    string ringing on its own -- so a muted string only gets a
+    small, separate bonus, smaller than an open string's.
     """
 
-    span = _span(frets)
+    span = hand_span(values)
 
-    open_count = sum(1 for fret in frets if fret == 0)
+    open_count = sum(1 for value in values if value == 0)
 
-    average_fret = sum(frets) / len(frets)
+    muted_count = sum(1 for value in values if value is None)
+
+    avg = fretted_average(values)
 
     score = 100
 
     score -= span * 10
 
-    score -= average_fret * 4
+    score -= avg * 4
 
     score += open_count * 5
 
-    if _is_simple_barre(frets):
+    score += muted_count * 2
+
+    if _is_simple_barre(values):
 
         score += 10
 
-    if _has_spike(frets):
+    if _has_spike(values):
 
         score -= 40
 
@@ -145,8 +168,8 @@ def _score(frets):
 
 def evaluate(shape_text):
     """
-    Evaluate one chord shape (e.g. "2012") and return a
-    PlayabilityResult.
+    Evaluate one chord shape (e.g. "2012", or "--657" with a
+    muted string) and return a PlayabilityResult.
 
     Only looks at the shape string itself -- no melody, no
     chord transitions, no comfort/user-feedback data. Those
@@ -154,13 +177,13 @@ def evaluate(shape_text):
     this first version.
     """
 
-    frets = _parse_shape(shape_text)
+    values = parse_shape(shape_text)
 
     warnings = []
 
-    span = _span(frets)
+    span = hand_span(values)
 
-    if _has_spike(frets):
+    if _has_spike(values):
 
         return PlayabilityResult(
             accepted=False,
@@ -171,7 +194,7 @@ def evaluate(shape_text):
                 "each other"
             ),
             warnings=warnings,
-            score=_score(frets)
+            score=_score(values)
         )
 
     if span > MAX_ACCEPTABLE_SPAN:
@@ -183,7 +206,7 @@ def evaluate(shape_text):
                 "single comfortable hand position"
             ),
             warnings=warnings,
-            score=_score(frets)
+            score=_score(values)
         )
 
     if span >= WARNING_SPAN:
@@ -192,11 +215,13 @@ def evaluate(shape_text):
             f"Noticeable stretch ({span} frets)"
         )
 
-    if _is_simple_barre(frets):
+    open_count = sum(1 for value in values if value == 0)
+
+    if _is_simple_barre(values):
 
         reason = "Simple barre shape, comfortable to play"
 
-    elif sum(1 for fret in frets if fret == 0) >= 2:
+    elif open_count >= 2:
 
         reason = "Compact shape with multiple open strings"
 
@@ -208,5 +233,5 @@ def evaluate(shape_text):
         accepted=True,
         reason=reason,
         warnings=warnings,
-        score=_score(frets)
+        score=_score(values)
     )

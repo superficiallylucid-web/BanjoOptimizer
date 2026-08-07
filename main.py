@@ -12,6 +12,7 @@ from chord_generator import generate_candidates
 from chord_service import ChordService
 from playability import evaluate as evaluate_playability
 from tunings import get_tunings
+from fretboard import parse_shape
 
 VERSION = "1.0"
 
@@ -158,12 +159,12 @@ output("--- End Chord Library Statistics ---\n")
 # TEMPORARY: chord generator demo
 # ---------------------------------------------------------
 #
-# First, small proof of the fretboard-search chord generator:
-# one tuning (Open G), a few Major chords, printed alongside
-# the existing verified library data so they can be compared
-# by eye. Not merged/combined -- that's chord_service.py,
-# future work. Not connected to scoring or the report. Safe
-# to delete this block once it's no longer needed.
+# Detailed view of the fretboard-search chord generator: one
+# tuning (Open G), a few Major chords, showing every property
+# now computed per candidate (sounding note count, average
+# fret, hand span, inversion, top note, generator score). Not
+# connected to scoring or the report. Safe to delete this
+# block once it's no longer needed.
 
 output("--- Chord Generator Demo (temporary) ---")
 
@@ -175,12 +176,6 @@ for demo_root, demo_root_pc, demo_quality in [
     ("E", 4, "Major"),
 ]:
 
-    verified_matches = chord_library.find(
-        "gDGBD",
-        demo_root,
-        demo_quality
-    )
-
     generated_matches = generate_candidates(
         tuning=open_g,
         root=demo_root,
@@ -191,17 +186,22 @@ for demo_root, demo_root_pc, demo_quality in [
 
     output(f"\n{demo_root} {demo_quality} in Open G (gDGBD):")
 
-    output("  Verified:")
+    for match in generated_matches:
 
-    for match in verified_matches:
+        sounding_notes = sum(
+            1 for value in parse_shape(match.shape)
+            if value is not None
+        )
 
-        output(f"    {match.shape}")
-
-    output("  Generated candidates:")
-
-    for rank, match in enumerate(generated_matches, start=1):
-
-        output(f"    {rank}. {match.shape}")
+        output(
+            f"    {match.shape}",
+            f" notes={sounding_notes}",
+            f" avg_fret={match.average_fret}",
+            f" span={match.hand_span}",
+            f" {match.inversion}",
+            f" top={match.top_note}",
+            f" score={match.generator_score}"
+        )
 
 output("\n--- End Chord Generator Demo ---\n")
 

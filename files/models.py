@@ -250,6 +250,17 @@ class ChordShape:
         chord_generator.py. Laying groundwork for future
         melody-note matching -- not used by scoring or
         ranking yet.
+    average_fret: average of only the FRETTED strings in this
+        voicing (open and muted strings excluded). For ranking
+        within chord_generator.py only.
+    hand_span: highest fretted note minus lowest fretted note
+        in this voicing, ignoring open and muted strings --
+        e.g. a single fretted note (everything else open/muted)
+        has a span of 0, not a stretch.
+    generator_score: chord_generator.py's own playability
+        estimate for this specific voicing, kept for reference/
+        debugging. Distinct from playability.py's score, which
+        is a separate, later evaluation.
     """
 
     tuning: str
@@ -273,6 +284,12 @@ class ChordShape:
     inversion: str = ""
 
     top_note: str = ""
+
+    average_fret: float = 0.0
+
+    hand_span: int = 0
+
+    generator_score: float = 0.0
 
 
 # ---------------------------------------------------------
