@@ -2,23 +2,27 @@
 chord_generator.py
 
 Generates candidate chord shapes for a (tuning, root, quality)
-combination, by brute-force search across the fretboard rather
-than looking anything up from a file.
+combination, by searching for USEFUL voicings -- not by
+enumerating every mathematically possible combination of open,
+fretted, and muted strings.
 
-Now supports partial voicings: a shape may mute one of the 4
-melody strings if doing so produces a more playable chord,
-represented with "--" for that string (see fretboard.py's
-parse_shape/format_shape). Every generated shape still has at
-least 3 sounding notes -- two-note dyads aren't generated yet.
-Fully-fretted (4-string) shapes keep the exact same format as
-before ("2012"), so nothing about the existing verified-shape
-matching in chord_service.py needs to change.
+Core principle: a full (4-string) voicing is the default. A
+reduced (muted-string) voicing is only offered as a RESCUE --
+generated specifically because the corresponding full voicing
+is impractical (rejected by playability.py) and removing one
+string turns it into something playable. Muting a string just
+because a full voicing *could* be reduced is NOT a reason to
+offer it as a separate candidate -- that's the player's own
+choice to make while playing, not a distinct recommendation.
 
-This module has no dependency on chord_library.py and doesn't
-touch it. Per the architecture proposal, the two are meant to
-work together later (verified shapes supplementing, not
-replacing, generated candidates) -- that combination step is
-chord_service.py, not built here.
+This module now depends on playability.py (to decide full vs.
+rescue), per the architecture: chord_generator.py finds
+mathematically valid possibilities and uses playability.py to
+judge them; chord_service.py combines/dedupes/ranks; neither
+duplicates the other's logic.
+
+Returns UP TO max_candidates -- never pads the list with
+trivial variants just to reach five.
 """
 
 from itertools import product
@@ -38,6 +42,8 @@ from fretboard import (
     average_fret as fretted_average
 )
 
+from playability import evaluate as evaluate_playability
+
 
 # How far up the neck to search for candidate frets. Banjo
 # chord shapes in the existing verified data top out low on
@@ -45,17 +51,14 @@ from fretboard import (
 # this is generous headroom, not a tight guess.
 FRET_CEILING = 7
 
-# Maximum spread between the lowest and highest FRETTED note
-# in one candidate shape (open and muted strings don't count --
-# see fretboard.hand_span). Keeps candidates physically
-# playable without the brute-force search returning shapes
-# spanning the whole neck.
-MAX_SPAN = 4
-
-# At most one of the 4 melody strings may be muted. This keeps
-# every shape at 3 or 4 sounding notes -- two-note dyads aren't
-# generated yet.
-MAX_MUTED_STRINGS = 1
+# Loose computational bound on the SEARCH, not a playability
+# judgment -- playability.py's own (stricter) span check is
+# what actually decides accept/reject now. This just needs to
+# be wide enough that genuinely "impractical" full voicings
+# still get considered (and can then be rejected and possibly
+# rescued), rather than being pruned before they're ever
+# evaluated at all.
+SEARCH_MAX_SPAN = 6
 
 MAX_CANDIDATES = 5
 
@@ -78,21 +81,9 @@ def _score_candidate(values):
     """
     First-pass playability estimate for one candidate voicing
     (a list of 4 values, one per melody string: an int fret,
-    or None for muted).
-
-    Open strings get a real bonus -- they cost nothing to
-    play. Muting a string is NOT treated the same way: on a
-    banjo, deliberately silencing a string takes extra
-    technique (palm muting, finger contact), unlike an open
-    string which just rings on its own. So muting gets a small
-    penalty instead of the open-string bonus -- it should only
-    win out when it solves a real problem (e.g. removing a
-    string that would otherwise force a wide span), not simply
-    because fewer notes looks "easier" by note count alone.
-
-    This is a simple, explicit heuristic -- not the same
-    scoring as TuningAnalyzer's melody scoring, and not meant
-    to be the last word on chord playability.
+    or None for muted). Used only to order/compare candidates
+    that playability.py has already accepted -- not used to
+    decide accept/reject itself (that's playability.py's job).
     """
 
     open_count = sum(1 for value in values if value == 0)
@@ -111,18 +102,31 @@ def _score_candidate(values):
     )
 
 
+def _sounding_pitch_classes(values, melody_strings):
+    """
+    Distinct chord-tone pitch classes actually sounding in this
+    voicing (muted strings contribute nothing).
+    """
+
+    sounding_pitches = [
+        open_note + value
+        for open_note, value in zip(melody_strings, values)
+        if value is not None
+    ]
+
+    return frozenset(pitch % 12 for pitch in sounding_pitches)
+
+
 def _voicing_signature(values, melody_strings):
     """
     Identity used for duplicate removal: the set of distinct
     chord-tone pitch classes actually sounding, plus the exact
     top note. Two candidates with the same signature sound like
-    the same voicing -- e.g. a 4-note shape and a 3-note muted
-    variant that only removed a doubled chord tone -- so only
-    the better-scoring one should survive.
+    the same voicing, so only the better one should survive.
 
     Deliberately ignores note *count*: a 3-note and 4-note
     voicing with the same signature are considered the same
-    voicing, per the spec's own example.
+    voicing.
     """
 
     sounding_pitches = [
@@ -178,10 +182,6 @@ def _identify_voicing(values, melody_strings, tones):
 
     else:
 
-        # Shouldn't happen -- every fret in a candidate was
-        # chosen because its pitch class is a chord tone (see
-        # generate_candidates) -- but fall back safely rather
-        # than raise if something upstream ever changes.
         inversion_index = None
 
 
@@ -202,6 +202,67 @@ def _identify_voicing(values, melody_strings, tones):
     return inversion, top_note
 
 
+def attempt_rescue(full_values, melody_strings, tones):
+    """
+    Given a full voicing that playability.py has REJECTED, try
+    muting one fretted (nonzero) string at a time to see if the
+    result is both:
+
+    - a valid triad: the remaining sounding pitch classes still
+      cover every required chord tone (muting a string that
+      held a tone no other string provides would leave the
+      chord incomplete -- not offered)
+    - playable: playability.py accepts the reduced shape
+
+    Muting an already-open string is never attempted -- it
+    can't fix a span/spike problem (open strings don't count
+    toward either), so it would just remove a free note for no
+    benefit.
+
+    Returns a list of valid, playable reduced value-lists (each
+    the same length as full_values, with exactly one entry set
+    to None). May be empty if no single-string reduction
+    rescues this voicing.
+    """
+
+    required = frozenset(tones)
+
+    rescues = []
+
+    for i, value in enumerate(full_values):
+
+        if value is None or value == 0:
+
+            # Muting an open string fixes nothing; muting an
+            # already-muted string isn't meaningful here.
+            continue
+
+        reduced = list(full_values)
+
+        reduced[i] = None
+
+        coverage = _sounding_pitch_classes(
+            reduced,
+            melody_strings
+        )
+
+        if not required.issubset(coverage):
+
+            # This reduction drops an essential chord tone --
+            # not a valid triad, not offered.
+            continue
+
+        reduced_shape_text = format_shape(reduced)
+
+        result = evaluate_playability(reduced_shape_text)
+
+        if result.accepted:
+
+            rescues.append(reduced)
+
+    return rescues
+
+
 def generate_candidates(
     tuning,
     root,
@@ -212,8 +273,24 @@ def generate_candidates(
 ):
     """
     Generate up to max_candidates ChordShapes for one chord in
-    one tuning, via brute-force search -- best (highest-scoring)
-    first.
+    one tuning -- USEFUL voicings, not every mathematically
+    valid combination.
+
+    For each full (4-string) combination that covers the
+    required chord tones:
+      - if playability.py accepts it, it's a candidate as-is
+      - if not, try rescuing it by muting one fretted string
+        (see attempt_rescue) -- a rescue is only kept if it's
+        a valid, playable triad
+      - if neither works, that combination contributes nothing
+
+    A rescue is then dropped if it's redundant with an already-
+    accepted full voicing for this same chord: if every pitch
+    class the rescue sounds is already covered by some accepted
+    full voicing, a player could get that exact sound by simply
+    choosing not to play one string of the full voicing --
+    that's their own playing choice, not a separate
+    recommendation.
 
     tuning: a Tuning (only .notes is used -- the 5 open-string
         MIDI values, 5th string to 1st)
@@ -225,15 +302,12 @@ def generate_candidates(
         ChordShape, e.g. "Major"
 
     Each returned ChordShape has .inversion, .top_note,
-    .average_fret, .hand_span, and .generator_score set. None
-    of this is used in scoring/ranking elsewhere in the app --
-    this is groundwork for future melody-note matching, not a
-    ranking change to anything outside this module.
+    .average_fret, .hand_span, and .generator_score set.
 
-    Returns an empty list if no valid combination exists within
-    FRET_CEILING / MAX_SPAN -- that's a legitimate result (some
-    chords may not be reachable on some tunings within a
-    reasonable stretch), not an error.
+    Returns however many genuinely useful candidates exist, up
+    to max_candidates -- never pads the list to reach five, and
+    may return an empty list if nothing in range is playable at
+    all.
     """
 
     tones = chord_tones(root_pc, quality_code)
@@ -265,54 +339,118 @@ def generate_candidates(
         return []
 
 
-    # Each string's options are its valid frets, plus the
-    # option to mute it entirely.
-    per_string_options = [
-        [None] + frets
-        for frets in per_string_frets
+    full_combinations = [
+        combination
+        for combination in product(*per_string_frets)
+        if hand_span(combination) <= SEARCH_MAX_SPAN
     ]
 
-    candidates = []
+    accepted_full = []
 
-    for combination in product(*per_string_options):
+    rescue_candidates = []
 
-        muted_count = combination.count(None)
+    for full_values in full_combinations:
 
-        if muted_count > MAX_MUTED_STRINGS:
+        full_shape_text = format_shape(full_values)
 
-            continue
+        result = evaluate_playability(full_shape_text)
 
-        if hand_span(combination) > MAX_SPAN:
+        if result.accepted:
 
-            continue
+            accepted_full.append(full_values)
 
-        candidates.append(combination)
+        else:
+
+            for reduced in attempt_rescue(
+                full_values,
+                melody_strings,
+                tones
+            ):
+
+                rescue_candidates.append(reduced)
 
 
-    scored = [
-        (candidate, _score_candidate(candidate))
-        for candidate in candidates
+    # Drop rescues that are redundant with an already-accepted
+    # full voicing: if a rescue's coverage is fully contained
+    # in some accepted full voicing's coverage, a player could
+    # get that sound by simply not playing one string of the
+    # full voicing -- not a distinct candidate.
+    full_coverages = [
+        _sounding_pitch_classes(values, melody_strings)
+        for values in accepted_full
     ]
 
-    # Duplicate removal: if two candidates sound the same set
-    # of chord tones with the same top note (e.g. a 4-note
-    # voicing and a 3-note muted variant that only dropped a
-    # doubled tone), keep only the better-scoring one.
+    useful_rescues = []
+
+    for reduced in rescue_candidates:
+
+        coverage = _sounding_pitch_classes(
+            reduced,
+            melody_strings
+        )
+
+        redundant = any(
+            coverage <= full_coverage
+            for full_coverage in full_coverages
+        )
+
+        if not redundant:
+
+            useful_rescues.append(reduced)
+
+
+    # Combine, dedupe by voicing signature (prefer full over
+    # reduced on a tie, then higher generator score), and take
+    # up to max_candidates. Full voicings are listed first so
+    # that a full/reduced tie in the dedup step below prefers
+    # the full voicing, per "a full voicing should normally
+    # outrank and replace its reduced variants."
+    all_candidates = (
+        [(values, True) for values in accepted_full]
+        + [(values, False) for values in useful_rescues]
+    )
+
     best_by_signature = {}
 
-    for values, score in scored:
+    for values, is_full in all_candidates:
 
         signature = _voicing_signature(values, melody_strings)
 
+        score = _score_candidate(values)
+
         existing = best_by_signature.get(signature)
 
-        if existing is None or score > existing[1]:
+        if existing is None:
 
-            best_by_signature[signature] = (values, score)
+            best_by_signature[signature] = (
+                values, is_full, score
+            )
+
+        else:
+
+            _, existing_is_full, existing_score = existing
+
+            prefer_new = (
+                (is_full and not existing_is_full)
+                or (
+                    is_full == existing_is_full
+                    and score > existing_score
+                )
+            )
+
+            if prefer_new:
+
+                best_by_signature[signature] = (
+                    values, is_full, score
+                )
 
     deduped = list(best_by_signature.values())
 
-    deduped.sort(key=lambda pair: pair[1], reverse=True)
+    # Full voicings first, then by score -- never sort a
+    # reduced candidate ahead of an available full one.
+    deduped.sort(
+        key=lambda entry: (not entry[1], -entry[2])
+    )
 
     top = deduped[:max_candidates]
 
@@ -320,7 +458,7 @@ def generate_candidates(
 
     results = []
 
-    for values, score in top:
+    for values, is_full, score in top:
 
         shape_text = format_shape(values)
 
@@ -329,6 +467,8 @@ def generate_candidates(
             melody_strings,
             tones
         )
+
+        voicing_type = "full" if is_full else "reduced/rescue"
 
         results.append(
             ChordShape(
@@ -339,8 +479,8 @@ def generate_candidates(
                 comfort_code=None,
                 comfort_explanation="",
                 comments=(
-                    f"Generated candidate "
-                    f"(playability estimate: {score:.1f})"
+                    f"Generated candidate ({voicing_type}, "
+                    f"playability estimate: {score:.1f})"
                 ),
                 verified=None,
                 inversion=inversion,

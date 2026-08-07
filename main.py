@@ -12,7 +12,6 @@ from chord_generator import generate_candidates
 from chord_service import ChordService
 from playability import evaluate as evaluate_playability
 from tunings import get_tunings
-from fretboard import parse_shape
 
 VERSION = "1.0"
 
@@ -159,12 +158,12 @@ output("--- End Chord Library Statistics ---\n")
 # TEMPORARY: chord generator demo
 # ---------------------------------------------------------
 #
-# Detailed view of the fretboard-search chord generator: one
-# tuning (Open G), a few Major chords, showing every property
-# now computed per candidate (sounding note count, average
-# fret, hand span, inversion, top note, generator score). Not
-# connected to scoring or the report. Safe to delete this
-# block once it's no longer needed.
+# Shows the generator's candidates for a few Major chords in
+# Open G, labeled full vs. reduced/rescue so it's obvious at a
+# glance which voicings are the default (full) and which only
+# exist because a full voicing was impractical (reduced/
+# rescue). Not connected to scoring or the report. Safe to
+# delete this block once it's no longer needed.
 
 output("--- Chord Generator Demo (temporary) ---")
 
@@ -188,19 +187,14 @@ for demo_root, demo_root_pc, demo_quality in [
 
     for match in generated_matches:
 
-        sounding_notes = sum(
-            1 for value in parse_shape(match.shape)
-            if value is not None
+        voicing_type = (
+            "reduced/rescue" if "--" in match.shape else "full"
         )
 
         output(
-            f"    {match.shape}",
-            f" notes={sounding_notes}",
-            f" avg_fret={match.average_fret}",
-            f" span={match.hand_span}",
-            f" {match.inversion}",
-            f" top={match.top_note}",
-            f" score={match.generator_score}"
+            f"    {match.shape:<8}",
+            f" {voicing_type:<15}",
+            f" {match.inversion}, top {match.top_note}"
         )
 
 output("\n--- End Chord Generator Demo ---\n")
