@@ -12,7 +12,11 @@ from chord_generator import generate_candidates
 from chord_service import ChordService
 from playability import evaluate as evaluate_playability
 from tunings import get_tunings
-from music import note_name_to_pitch_class, midi_to_note_name
+from music import (
+    note_name_to_pitch_class,
+    midi_to_note_name,
+    pitch_name
+)
 
 VERSION = "1.0"
 
@@ -338,12 +342,6 @@ output("\n--- End Chord Service Demo ---\n")
 # ChordService -- nothing here is hard-coded. Not connected to
 # scoring, the report, or tuning recommendations. Safe to
 # delete this block once it's no longer needed.
-#
-# Known gap, not fixed by this task: chord_library.py doesn't
-# currently populate top_note on verified shapes (confirmed by
-# inspection), so verified shapes below never show as a melody
-# match even when musically they might be one -- only generated
-# shapes have a real top_note to compare against right now.
 
 output("--- Melody / Chord Shape Demo (temporary) ---")
 
@@ -377,57 +375,76 @@ for melody_note in ["E", "D"]:
             f" top={shape.top_note}{match_label}"
         )
 
-# Small real-data check: pull an actual melody note from a
-# real chord occurrence using the parser's own position data
-# (measure-level -- see Score.melody_note_for_harmony), rather
-# than a hard-coded example, to confirm the extraction side
-# actually works against a real score. Uses a file with real
-# Harmony/chord-symbol data from earlier in this project; only
-# runs if that file happens to be present, since it isn't part
-# of the tracked scores/ folder.
-christmas_song_path = (
-    PROJECT_FOLDER / "The_Christmas_Song__C__cDGBD__.mscz"
+# Real-data check: pull a real chord occurrence and its melody
+# note from an actual tracked score (White Christmas has real
+# Harmony/chord-symbol data), then feed that real root/quality/
+# melody note straight into the real ChordService ranking --
+# nothing in this block is hard-coded, all of it comes from
+# parsing the actual file.
+output("\nReal-data check (White Christmas):")
+
+white_christmas = MuseScoreFile(
+    SCORES_FOLDER / "White Christmas (G (gCGBD)).mscz"
 )
 
-if christmas_song_path.exists():
+white_christmas.open()
+white_christmas.read_melody_notes()
+white_christmas.read_harmonies(4)
 
-    output("\nReal-data check (The Christmas Song, measure 3):")
+major_harmony = None
 
-    christmas_song = MuseScoreFile(christmas_song_path)
+for harmony in white_christmas.score.harmonies:
 
-    christmas_song.open()
-    christmas_song.read_melody_notes()
-    christmas_song.read_harmonies(4)
+    if harmony.quality_code == "":
 
-    for harmony in christmas_song.score.harmonies:
+        major_harmony = harmony
 
-        if harmony.measure == 3:
+        break
 
-            note_midi = (
-                christmas_song.score.melody_note_for_harmony(
-                    harmony
-                )
-            )
+if major_harmony is not None:
 
-            note_name = (
-                midi_to_note_name(note_midi)
-                if note_midi is not None
-                else "none found"
-            )
+    root_name = pitch_name(major_harmony.root_pc)
+
+    melody_midi = white_christmas.score.melody_note_for_harmony(
+        major_harmony
+    )
+
+    melody_note_name = (
+        midi_to_note_name(melody_midi)
+        if melody_midi is not None
+        else None
+    )
+
+    output(
+        f"    Measure {major_harmony.measure}: "
+        f"{major_harmony.symbol} -- melody note "
+        f"{melody_note_name or '(none found)'}"
+    )
+
+    if melody_note_name is not None:
+
+        real_shapes = chord_service.get_shapes_for_melody(
+            tuning=open_g,
+            root=root_name,
+            root_pc=major_harmony.root_pc,
+            quality_code="",
+            quality_display="Major",
+            melody_note=melody_note_name
+        )
+
+        for rank, shape in enumerate(real_shapes, start=1):
 
             output(
-                f"    {harmony.symbol} -> "
-                f"melody note {note_name}"
+                f"      {rank}. {shape.shape}",
+                f"[{shape.source}]",
+                f" top={shape.top_note}"
             )
 
 else:
 
     output(
-        "\n(Real-data check skipped -- "
-        f"{christmas_song_path.name} not found. See "
-        "melody_note_for_harmony() in models.py for how "
-        "this would work against a score with real chord "
-        "symbol data.)"
+        "    No Major-quality chord found in this score's "
+        "Harmony data."
     )
 
 output("\n--- End Melody / Chord Shape Demo ---\n")

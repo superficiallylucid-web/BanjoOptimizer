@@ -40,6 +40,14 @@ matches first, then everything else -- without changing which
 shapes are included or replacing the verified/generated
 ordering with a new numerical score. See its own docstring for
 the exact rule.
+
+Verified library shapes don't come with top_note/inversion
+metadata (chord_library.py never calculates it -- it just loads
+CSV rows as-is), so get_shapes() enriches them using the same
+shared calculation chord_generator.py uses
+(fretboard.calculate_shape_metadata) before returning. This is
+enrichment, not a CSV format change -- chord_library.py itself
+is untouched.
 """
 
 from chord_generator import generate_candidates
@@ -47,6 +55,8 @@ from chord_generator import generate_candidates
 from playability import evaluate as evaluate_playability
 
 from music import note_name_to_pitch_class
+
+from fretboard import calculate_shape_metadata
 
 
 class ChordService:
@@ -88,7 +98,10 @@ class ChordService:
         Each returned ChordShape has .source set to "verified"
         or "generated" (see ChordShape in models.py) so callers
         can tell them apart reliably, regardless of what the
-        `verified` field itself says.
+        `verified` field itself says. Verified shapes also get
+        .inversion/.top_note calculated here (chord_library.py
+        doesn't set them), so melody matching works the same
+        way for verified and generated shapes alike.
         """
 
         verified_shapes = self.chord_library.find(
@@ -100,6 +113,21 @@ class ChordService:
         for shape in verified_shapes:
 
             shape.source = "verified"
+
+            inversion, top_note = calculate_shape_metadata(
+                tuning,
+                shape.shape,
+                root_pc,
+                quality_code
+            )
+
+            if inversion is not None:
+
+                shape.inversion = inversion
+
+            if top_note is not None:
+
+                shape.top_note = top_note
 
 
         generated_shapes = generate_candidates(

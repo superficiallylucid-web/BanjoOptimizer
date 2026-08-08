@@ -31,15 +31,15 @@ from models import ChordShape
 
 from music import (
     chord_tones,
-    tuning_symbol_from_notes,
-    midi_to_note_name
+    tuning_symbol_from_notes
 )
 
 from fretboard import (
     find_frets_for_pitch_classes,
     format_shape,
     hand_span,
-    average_fret as fretted_average
+    average_fret as fretted_average,
+    calculate_shape_metadata
 )
 
 from playability import evaluate as evaluate_playability
@@ -61,20 +61,6 @@ FRET_CEILING = 7
 SEARCH_MAX_SPAN = 6
 
 MAX_CANDIDATES = 5
-
-# Ordered to match how music.chord_tones() builds its interval
-# list: index 0 is always the root, index 1 the third (if the
-# quality has one), index 2 the fifth, index 3 the seventh (for
-# 7th-chord qualities). Which chord tone ends up lowest-sounding
-# in a given voicing determines its inversion -- root in the
-# bass is root position, third in the bass is first inversion,
-# and so on.
-INVERSION_NAMES = [
-    "Root position",
-    "First inversion",
-    "Second inversion",
-    "Third inversion"
-]
 
 
 def _score_candidate(values):
@@ -142,64 +128,6 @@ def _voicing_signature(values, melody_strings):
     top_pitch = max(sounding_pitches)
 
     return (pitch_classes, top_pitch)
-
-
-def _identify_voicing(values, melody_strings, tones):
-    """
-    Given one candidate's per-string values (fret or None for
-    muted) and the tuning's open-string MIDI values, work out
-    the actual sounding pitches for this specific voicing, then
-    identify:
-
-    - inversion: which chord tone is lowest-sounding (root,
-      third, fifth, or seventh), based on its position in
-      `tones` -- tones[0] is always the root, per how
-      music.chord_tones() builds its interval list.
-    - top_note: the highest-sounding pitch, as a display name
-      (e.g. "E4").
-
-    Muted strings contribute no pitch at all -- only actually
-    sounding strings are considered.
-
-    Returns (inversion_name, top_note_name).
-    """
-
-    pitches = [
-        open_note + value
-        for open_note, value in zip(melody_strings, values)
-        if value is not None
-    ]
-
-    lowest_pitch = min(pitches)
-
-    highest_pitch = max(pitches)
-
-    lowest_pitch_class = lowest_pitch % 12
-
-    if lowest_pitch_class in tones:
-
-        inversion_index = tones.index(lowest_pitch_class)
-
-    else:
-
-        inversion_index = None
-
-
-    if (
-        inversion_index is not None
-        and inversion_index < len(INVERSION_NAMES)
-    ):
-
-        inversion = INVERSION_NAMES[inversion_index]
-
-    else:
-
-        inversion = "Unknown inversion"
-
-
-    top_note = midi_to_note_name(highest_pitch)
-
-    return inversion, top_note
 
 
 def attempt_rescue(full_values, melody_strings, tones):
@@ -462,10 +390,11 @@ def generate_candidates(
 
         shape_text = format_shape(values)
 
-        inversion, top_note = _identify_voicing(
-            values,
-            melody_strings,
-            tones
+        inversion, top_note = calculate_shape_metadata(
+            tuning,
+            shape_text,
+            root_pc,
+            quality_code
         )
 
         voicing_type = "full" if is_full else "reduced/rescue"

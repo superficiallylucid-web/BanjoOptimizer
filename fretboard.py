@@ -15,6 +15,8 @@ generator (chord_generator.py) can share one source of truth
 for fretboard math instead of duplicating it.
 """
 
+from music import chord_tones, midi_to_note_name
+
 
 # ---------------------------------------------------------
 # Find possible fret positions for a specific pitch
@@ -283,3 +285,106 @@ def average_fret(values):
         return 0.0
 
     return sum(fretted) / len(fretted)
+
+
+
+# ---------------------------------------------------------
+# Shape voicing metadata (inversion, top note)
+# ---------------------------------------------------------
+#
+# Shared by chord_generator.py (for shapes it generates) and
+# chord_service.py (to enrich verified library shapes, which
+# don't otherwise have this metadata -- chord_library.py never
+# populates it). One implementation, used by both, so there's
+# no risk of the two disagreeing about what a shape's top note
+# or inversion is.
+
+INVERSION_NAMES = [
+    "Root position",
+    "First inversion",
+    "Second inversion",
+    "Third inversion"
+]
+
+
+def calculate_shape_metadata(
+    tuning,
+    shape_text,
+    root_pc,
+    quality_code
+):
+    """
+    Given a tuning, a shape string (e.g. "2012", or "20--2"
+    with a muted string), and a chord's root pitch class plus
+    quality code, compute (inversion, top_note) for that
+    specific voicing.
+
+    - inversion: which chord tone is lowest-sounding (root,
+      third, fifth, or seventh), based on its position in
+      music.chord_tones()'s interval list -- index 0 is always
+      the root.
+    - top_note: display name of the highest-sounding pitch
+      (e.g. "E4").
+
+    Correctly handles fretted notes, open strings, and muted
+    strings -- only strings that are actually sounding (not
+    muted) contribute to either calculation, so this works
+    the same whether a shape has 3 or 4 sounding strings.
+
+    Returns (None, None) if quality_code isn't recognized by
+    music.chord_tones(), or if the shape has no sounding
+    strings at all (e.g. every string muted).
+    """
+
+    tones = chord_tones(root_pc, quality_code)
+
+    if tones is None:
+
+        return None, None
+
+
+    melody_strings = tuning.notes[1:]
+
+    values = parse_shape(shape_text)
+
+    pitches = [
+        open_note + value
+        for open_note, value in zip(melody_strings, values)
+        if value is not None
+    ]
+
+    if not pitches:
+
+        return None, None
+
+
+    lowest_pitch = min(pitches)
+
+    highest_pitch = max(pitches)
+
+    lowest_pitch_class = lowest_pitch % 12
+
+    if lowest_pitch_class in tones:
+
+        inversion_index = tones.index(lowest_pitch_class)
+
+    else:
+
+        inversion_index = None
+
+
+    if (
+        inversion_index is not None
+        and inversion_index < len(INVERSION_NAMES)
+    ):
+
+        inversion = INVERSION_NAMES[inversion_index]
+
+    else:
+
+        inversion = "Unknown inversion"
+
+
+    top_note = midi_to_note_name(highest_pitch)
+
+    return inversion, top_note
