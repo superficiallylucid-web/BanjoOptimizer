@@ -111,6 +111,34 @@ class Score:
     def add_harmony(self, harmony: Harmony):
         self.harmonies.append(harmony)
 
+    def melody_note_for_harmony(self, harmony):
+        """
+        Return the MIDI pitch of the melody note associated
+        with a chord occurrence, using the finest position
+        granularity the parser currently provides: which
+        measure the chord falls in (Harmony has no beat/tick
+        position -- see read_harmonies() in parser.py). Returns
+        the first note (by parse order, which matches time
+        order within a voice) in that same measure, or None if
+        there isn't one.
+
+        This is a measure-level approximation, not a true
+        beat-accurate match. If a measure contains more than
+        one melody note, this doesn't attempt to pick "the"
+        correct one for this specific chord occurrence -- it's
+        the first note in the measure, full stop. Refining this
+        needs beat-level position tracking, which isn't part of
+        the parser yet.
+        """
+
+        for note in self.notes:
+
+            if note.measure == harmony.measure:
+
+                return note.midi
+
+        return None
+
     @property
     def note_count(self):
         return len(self.notes)

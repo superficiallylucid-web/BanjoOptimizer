@@ -12,6 +12,7 @@ from chord_generator import generate_candidates
 from chord_service import ChordService
 from playability import evaluate as evaluate_playability
 from tunings import get_tunings
+from music import note_name_to_pitch_class, midi_to_note_name
 
 VERSION = "1.0"
 
@@ -326,6 +327,110 @@ for demo_root, demo_root_pc, demo_quality in [
         )
 
 output("\n--- End Chord Service Demo ---\n")
+
+# ---------------------------------------------------------
+# TEMPORARY: melody / chord shape demo
+# ---------------------------------------------------------
+#
+# Shows get_shapes_for_melody() reordering the same merged
+# list from the Chord Service Demo above to prefer shapes
+# whose top note matches a given melody note. Calls the real
+# ChordService -- nothing here is hard-coded. Not connected to
+# scoring, the report, or tuning recommendations. Safe to
+# delete this block once it's no longer needed.
+#
+# Known gap, not fixed by this task: chord_library.py doesn't
+# currently populate top_note on verified shapes (confirmed by
+# inspection), so verified shapes below never show as a melody
+# match even when musically they might be one -- only generated
+# shapes have a real top_note to compare against right now.
+
+output("--- Melody / Chord Shape Demo (temporary) ---")
+
+for melody_note in ["E", "D"]:
+
+    shapes = chord_service.get_shapes_for_melody(
+        tuning=open_g,
+        root="C",
+        root_pc=0,
+        quality_code="",
+        quality_display="Major",
+        melody_note=melody_note
+    )
+
+    output(f"\nC Major, melody note {melody_note}:")
+
+    for rank, shape in enumerate(shapes, start=1):
+
+        match_label = ""
+
+        if (
+            note_name_to_pitch_class(shape.top_note)
+            == note_name_to_pitch_class(melody_note)
+        ):
+
+            match_label = "  MELODY MATCH"
+
+        output(
+            f"    {rank}. {shape.shape}",
+            f"[{shape.source}]",
+            f" top={shape.top_note}{match_label}"
+        )
+
+# Small real-data check: pull an actual melody note from a
+# real chord occurrence using the parser's own position data
+# (measure-level -- see Score.melody_note_for_harmony), rather
+# than a hard-coded example, to confirm the extraction side
+# actually works against a real score. Uses a file with real
+# Harmony/chord-symbol data from earlier in this project; only
+# runs if that file happens to be present, since it isn't part
+# of the tracked scores/ folder.
+christmas_song_path = (
+    PROJECT_FOLDER / "The_Christmas_Song__C__cDGBD__.mscz"
+)
+
+if christmas_song_path.exists():
+
+    output("\nReal-data check (The Christmas Song, measure 3):")
+
+    christmas_song = MuseScoreFile(christmas_song_path)
+
+    christmas_song.open()
+    christmas_song.read_melody_notes()
+    christmas_song.read_harmonies(4)
+
+    for harmony in christmas_song.score.harmonies:
+
+        if harmony.measure == 3:
+
+            note_midi = (
+                christmas_song.score.melody_note_for_harmony(
+                    harmony
+                )
+            )
+
+            note_name = (
+                midi_to_note_name(note_midi)
+                if note_midi is not None
+                else "none found"
+            )
+
+            output(
+                f"    {harmony.symbol} -> "
+                f"melody note {note_name}"
+            )
+
+else:
+
+    output(
+        "\n(Real-data check skipped -- "
+        f"{christmas_song_path.name} not found. See "
+        "melody_note_for_harmony() in models.py for how "
+        "this would work against a score with real chord "
+        "symbol data.)"
+    )
+
+output("\n--- End Melody / Chord Shape Demo ---\n")
 
 # ---------------------------------------------------------
 

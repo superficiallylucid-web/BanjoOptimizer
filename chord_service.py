@@ -29,14 +29,24 @@ are dropped entirely (not just deprioritized). Verified library
 shapes are never filtered -- a human already confirmed those,
 so a simple rule-based check has nothing useful to add there.
 
-No comfort scoring, melody matching, chord transitions, or user
-feedback are considered here. Those are separate future
-milestones, not part of this pass.
+No comfort scoring, chord transitions, or user feedback are
+considered here. Those are separate future milestones, not
+part of this pass.
+
+get_shapes_for_melody() adds one more factor on top of the
+above: preferring shapes whose top note matches a given melody
+note (by pitch class). It reorders get_shapes()'s result --
+matches first, then everything else -- without changing which
+shapes are included or replacing the verified/generated
+ordering with a new numerical score. See its own docstring for
+the exact rule.
 """
 
 from chord_generator import generate_candidates
 
 from playability import evaluate as evaluate_playability
+
+from music import note_name_to_pitch_class
 
 
 class ChordService:
@@ -122,3 +132,78 @@ class ChordService:
 
 
         return verified_shapes + new_generated_shapes
+
+
+    def get_shapes_for_melody(
+        self,
+        tuning,
+        root,
+        root_pc,
+        quality_code,
+        quality_display,
+        melody_note
+    ):
+        """
+        Same result as get_shapes(), reordered to prefer shapes
+        whose top note matches melody_note by pitch class.
+
+        melody_note: a note name (e.g. "E", "E4") -- octave is
+            ignored, since only the pitch class matters here
+            (an E melody note is served equally well by a chord
+            shape topping out on E3, E4, or E5). Pass None (or
+            an unparseable value) to skip matching entirely and
+            get exactly get_shapes()'s order back -- that's the
+            explicit fallback for "no identifiable melody note"
+            rather than a special case to handle separately.
+
+        Ordering rule: every shape whose top_note has the same
+        pitch class as melody_note comes first, followed by
+        every shape that doesn't -- but WITHIN each of those
+        two groups, the relative order from get_shapes() is
+        preserved exactly. This is a stable partition, not a
+        new score: it deliberately does not re-rank verified
+        vs. generated shapes against each other beyond what
+        matching/non-matching decides. A matching generated
+        shape can end up ahead of a non-matching verified shape
+        (matching is evaluated first), but two shapes that both
+        match, or both don't, keep whatever order get_shapes()
+        already gave them.
+        """
+
+        shapes = self.get_shapes(
+            tuning,
+            root,
+            root_pc,
+            quality_code,
+            quality_display
+        )
+
+        target_pitch_class = note_name_to_pitch_class(
+            melody_note
+        )
+
+        if target_pitch_class is None:
+
+            return shapes
+
+
+        matching = []
+
+        non_matching = []
+
+        for shape in shapes:
+
+            shape_pitch_class = note_name_to_pitch_class(
+                shape.top_note
+            )
+
+            if shape_pitch_class == target_pitch_class:
+
+                matching.append(shape)
+
+            else:
+
+                non_matching.append(shape)
+
+
+        return matching + non_matching

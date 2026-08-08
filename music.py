@@ -549,3 +549,77 @@ def tuning_symbol_from_notes(notes):
     rest = "".join(letters[1:])
 
     return f"{fifth_string}{rest}"
+
+
+# ---------------------------------------------------------
+# Note name to pitch class
+# ---------------------------------------------------------
+#
+# Inverse of pitch_name(): needed for melody-note matching,
+# where a note name (e.g. "E", "E4", from a ChordShape's
+# top_note or a caller's melody note) needs to be compared by
+# pitch class. Nothing like this existed before -- everywhere
+# else in the project only ever went pitch-class-to-name, never
+# the other direction.
+
+FLAT_TO_SHARP = {
+    "Db": "C#",
+    "Eb": "D#",
+    "Gb": "F#",
+    "Ab": "G#",
+    "Bb": "A#",
+    "Cb": "B",
+    "Fb": "E"
+}
+
+
+def note_name_to_pitch_class(name):
+    """
+    Parse a note name into a 0-11 pitch class. An octave digit,
+    if present, is ignored -- e.g. "E", "E4", and "E5" all
+    return the same pitch class, since pitch-class matching
+    (not octave-specific matching) is what melody-note matching
+    needs.
+
+    Returns None if the name can't be parsed, so callers can
+    treat that as "no identifiable note" rather than guessing.
+    """
+
+    if not name:
+
+        return None
+
+    letter = name[0].upper()
+
+    if letter not in "ABCDEFG":
+
+        return None
+
+    index = 1
+
+    accidental = ""
+
+    while index < len(name) and name[index] in "#b":
+
+        accidental += name[index]
+
+        index += 1
+
+    remainder = name[index:]
+
+    if remainder and not remainder.lstrip("-").isdigit():
+
+        # Anything after the letter/accidental must be an
+        # octave number (or nothing) -- "garbage" isn't a note
+        # name just because it starts with a valid letter.
+        return None
+
+    base = letter + accidental
+
+    base = FLAT_TO_SHARP.get(base, base)
+
+    if base in NOTE_NAMES:
+
+        return NOTE_NAMES.index(base)
+
+    return None
