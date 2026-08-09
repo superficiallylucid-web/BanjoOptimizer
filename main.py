@@ -17,6 +17,11 @@ from music import (
     midi_to_note_name,
     pitch_name
 )
+from fretboard import (
+    sounding_notes,
+    find_melody_occurrences,
+    calculate_shape_metadata
+)
 
 VERSION = "1.0"
 
@@ -448,6 +453,68 @@ else:
     )
 
 output("\n--- End Melody / Chord Shape Demo ---\n")
+
+# ---------------------------------------------------------
+# TEMPORARY: melody occurrence demo
+# ---------------------------------------------------------
+#
+# Shows that "melody match" and "top note match" are NOT the
+# same question. find_melody_occurrences() checks every
+# sounding string, not just the highest -- this uses a shape
+# where the melody note occurs on an inner voice, so it's
+# obvious the two concepts differ. Not connected to ranking,
+# scoring, or the report -- this only demonstrates the new
+# detection capability itself (see get_shapes_for_melody's
+# docstring for why ranking hasn't changed yet). Safe to
+# delete this block once it's no longer needed.
+
+output("--- Melody Occurrence Demo (temporary) ---")
+
+demo_shape = "0000"
+
+demo_melody_note = "B"
+
+all_notes = sounding_notes(open_g, demo_shape)
+
+_, demo_top_note = calculate_shape_metadata(
+    open_g, demo_shape, 7, ""
+)
+
+occurrences = find_melody_occurrences(
+    open_g, demo_shape, demo_melody_note
+)
+
+output(f"\nG Major shape: {demo_shape}")
+
+output(
+    "  All sounding notes:",
+    ", ".join(n.name for n in all_notes)
+)
+
+output(f"  top_note: {demo_top_note}")
+
+output(f"  Requested melody note: {demo_melody_note}")
+
+if occurrences:
+
+    matches = ", ".join(
+        f"string {o.string_index} ({o.name})"
+        for o in occurrences
+    )
+
+    output(f"  Melody match found on: {matches}")
+
+    output(
+        "  -> melody match != top note match:",
+        f"{demo_melody_note} is NOT the top note ({demo_top_note}),",
+        "but it IS genuinely present in this chord"
+    )
+
+else:
+
+    output("  No melody match found.")
+
+output("\n--- End Melody Occurrence Demo ---\n")
 
 # ---------------------------------------------------------
 

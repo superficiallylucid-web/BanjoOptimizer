@@ -175,6 +175,18 @@ class ChordService:
         Same result as get_shapes(), reordered to prefer shapes
         whose top note matches melody_note by pitch class.
 
+        TEMPORARY SIMPLIFICATION: this matches on top_note only
+        -- the single highest-sounding note -- not on whether
+        melody_note occurs anywhere in the shape. A melody note
+        on an inner voice, or doubled across multiple strings,
+        isn't recognized as a match here even though it's
+        musically present in the chord. fretboard.py now has
+        find_melody_occurrences() for that fuller question, but
+        this method hasn't been changed to use it yet -- how
+        occurrence data should affect ranking is a separate,
+        deliberate decision to be made after reviewing that data
+        (not part of this pass).
+
         melody_note: a note name (e.g. "E", "E4") -- octave is
             ignored, since only the pitch class matters here
             (an E melody note is served equally well by a chord

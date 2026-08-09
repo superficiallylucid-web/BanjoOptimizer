@@ -15,7 +15,13 @@ generator (chord_generator.py) can share one source of truth
 for fretboard math instead of duplicating it.
 """
 
-from music import chord_tones, midi_to_note_name
+from collections import namedtuple
+
+from music import (
+    chord_tones,
+    midi_to_note_name,
+    note_name_to_pitch_class
+)
 
 
 # ---------------------------------------------------------
@@ -388,3 +394,100 @@ def calculate_shape_metadata(
     top_note = midi_to_note_name(highest_pitch)
 
     return inversion, top_note
+
+
+
+# ---------------------------------------------------------
+# Sounding notes by string (melody-occurrence support)
+# ---------------------------------------------------------
+#
+# calculate_shape_metadata() above answers "what's the top
+# note / inversion" -- useful chord metadata, but NOT the same
+# question as "does this shape contain the melody note, and
+# where." A melody note can occur on any sounding string, not
+# just the highest one, and a shape can contain the same pitch
+# class on more than one string (e.g. a shape sounding
+# B-D-G-B has the melody note B on two different strings, and
+# neither occurrence has anything to do with top_note, which
+# would report the B on top -- or wouldn't, if D or G happened
+# to be voiced higher). This section answers the "where does
+# this pitch occur" question directly, independent of which
+# note is highest.
+
+SoundingNote = namedtuple(
+    "SoundingNote",
+    ["string_index", "midi", "pitch_class", "name"]
+)
+
+
+def sounding_notes(tuning, shape_text):
+    """
+    Every actually-sounding note in a shape, one entry per
+    non-muted string, in string order (string_index 0 = the
+    4th/lowest melody string, matching the shape format --
+    same convention as everywhere else in this project).
+
+    Muted strings never appear in the result -- they produce
+    no sound, so there's nothing to report for them. Open
+    strings count normally.
+
+    Uses the supplied tuning's own open-string notes -- not
+    hard-coded to Open G or any other specific tuning.
+    """
+
+    melody_strings = tuning.notes[1:]
+
+    values = parse_shape(shape_text)
+
+    notes = []
+
+    for string_index, (open_note, value) in enumerate(
+        zip(melody_strings, values)
+    ):
+
+        if value is None:
+
+            continue
+
+        midi = open_note + value
+
+        notes.append(
+            SoundingNote(
+                string_index=string_index,
+                midi=midi,
+                pitch_class=midi % 12,
+                name=midi_to_note_name(midi)
+            )
+        )
+
+    return notes
+
+
+def find_melody_occurrences(tuning, shape_text, melody_note):
+    """
+    Every sounding string in a shape whose pitch class matches
+    melody_note -- pitch-class based, the same as everywhere
+    else melody matching happens in this project (e.g. "B",
+    "B3", and "B5" are all the same match).
+
+    Unlike top_note, this checks EVERY sounding string, not
+    just the highest one -- a melody note on an inner voice,
+    or doubled across more than one string, is fully reported.
+    Muted strings can never match (see sounding_notes).
+
+    Returns a list of SoundingNote (possibly more than one, or
+    empty if melody_note doesn't occur anywhere in the shape,
+    or can't be parsed).
+    """
+
+    target_pitch_class = note_name_to_pitch_class(melody_note)
+
+    if target_pitch_class is None:
+
+        return []
+
+    return [
+        note
+        for note in sounding_notes(tuning, shape_text)
+        if note.pitch_class == target_pitch_class
+    ]
