@@ -623,3 +623,147 @@ def note_name_to_pitch_class(name):
         return NOTE_NAMES.index(base)
 
     return None
+
+
+# ---------------------------------------------------------
+# Voicing quality: root presence and defining-tone coverage
+# ---------------------------------------------------------
+#
+# Distinguishes "is this a valid collection of chord tones"
+# (chord_tones() already answers that) from "how strongly does
+# this specific set of sounding notes establish the requested
+# chord." A shape can be fully valid and fully playable while
+# still being a weak representation of the chord it's named
+# for -- e.g. a rootless voicing containing only one generic
+# tone, duplicated across strings.
+#
+# This never rejects anything -- it's a ranking signal, not a
+# filter. A rootless voicing that covers a chord's defining
+# tones is explicitly a legitimate, often-used voicing choice
+# (e.g. a rootless dominant-7th built on the 3rd and 7th), not
+# something to discard.
+
+ROOT_PRESENT = "ROOT_PRESENT"
+ROOTLESS_STRONG = "ROOTLESS_STRONG"
+ROOTLESS_WEAK = "ROOTLESS_WEAK"
+
+
+def defining_tones(root_pc, quality_code):
+    """
+    Which chord tones (besides the root) most establish a
+    chord's identity -- derived structurally from the quality's
+    own interval list in CHORD_QUALITIES, not a separate,
+    hardcoded per-chord table.
+
+    Rule: every non-root tone EXCEPT a perfect 5th above the
+    root (interval 7) is "defining." The perfect 5th is present
+    in nearly every quality this project supports and is
+    routinely altered or dropped in real voicings without
+    threatening the chord's identity (jazz guide-tone voicings
+    regularly omit it). Everything else -- the 3rd (major or
+    minor), a sus2/sus4 substitute tone, any kind of 7th, or an
+    ALTERED 5th (a diminished triad's flat 5 is interval 6, not
+    7, so it's never excluded) -- is what actually distinguishes
+    one quality from another.
+
+    Exception: a quality with no non-root tone besides the
+    perfect 5th (i.e. "5", a power chord) falls back to
+    treating that 5th as defining after all -- with only two
+    notes total, excluding it would leave nothing defining at
+    all, which isn't useful.
+
+    Returns None if quality_code isn't recognized.
+    """
+
+    tones = chord_tones(root_pc, quality_code)
+
+    if tones is None:
+
+        return None
+
+    non_root = tones[1:]
+
+    perfect_fifth = (root_pc + 7) % 12
+
+    defining = [
+        tone for tone in non_root
+        if tone != perfect_fifth
+    ]
+
+    if not defining:
+
+        defining = non_root
+
+    return defining
+
+
+def classify_voicing_quality(
+    root_pc,
+    quality_code,
+    sounding_pitch_classes
+):
+    """
+    Classify how strongly a set of actually-sounding pitch
+    classes establishes the requested chord. Distinct from
+    playability (can it be fingered) and from bare chord-tone
+    validity (is every sounding note technically part of the
+    chord). Never rejects anything -- see module notes above.
+
+    Returns (category, score):
+
+    - ROOT_PRESENT: the root itself is sounding. Always the
+      strongest category regardless of what else is present --
+      a voicing that states its own root is never ambiguous
+      about which chord it is.
+    - ROOTLESS_STRONG: the root is absent, but every defining
+      tone (see defining_tones()) IS present -- e.g. a rootless
+      dominant-7th voicing that still has both the 3rd and 7th.
+    - ROOTLESS_WEAK: the root is absent AND at least one
+      defining tone is missing too -- the weakest, most
+      ambiguous case.
+
+    The numeric score adds a small bonus per additional
+    DISTINCT chord tone covered beyond the category itself, so
+    two voicings in the same category aren't scored as
+    identical -- e.g. a rootless-strong voicing that also
+    includes the 5th ranks above a rootless-strong voicing
+    that's just the bare defining tones. Duplicate notes on
+    multiple strings never inflate this -- only distinct pitch
+    classes are counted.
+
+    Returns (None, 0.0) if quality_code isn't recognized.
+    """
+
+    tones = chord_tones(root_pc, quality_code)
+
+    if tones is None:
+
+        return None, 0.0
+
+    defining = defining_tones(root_pc, quality_code)
+
+    distinct = frozenset(sounding_pitch_classes)
+
+    has_root = root_pc in distinct
+
+    if has_root:
+
+        category = ROOT_PRESENT
+
+        base_score = 15.0
+
+    elif frozenset(defining).issubset(distinct):
+
+        category = ROOTLESS_STRONG
+
+        base_score = 6.0
+
+    else:
+
+        category = ROOTLESS_WEAK
+
+        base_score = 0.0
+
+    coverage_bonus = len(distinct & frozenset(tones)) * 2.0
+
+    return category, base_score + coverage_bonus

@@ -21,6 +21,17 @@ mathematically valid possibilities and uses playability.py to
 judge them; chord_service.py combines/dedupes/ranks; neither
 duplicates the other's logic.
 
+Ranking also now factors in voicing QUALITY, not just
+playability: music.classify_voicing_quality() distinguishes a
+shape that states the chord's root from a rootless-but-still-
+strong voicing (covers the chord's defining tones) from a
+rootless-weak one (misses a defining tone too). This never
+rejects anything -- every candidate that reaches this stage
+already passed playability.py -- it's purely a ranking factor,
+same as the existing playability-estimate score. See
+_score_candidate() and generate_candidates() for where the two
+scores combine.
+
 Returns UP TO max_candidates -- never pads the list with
 trivial variants just to reach five.
 """
@@ -31,7 +42,8 @@ from models import ChordShape
 
 from music import (
     chord_tones,
-    tuning_symbol_from_notes
+    tuning_symbol_from_notes,
+    classify_voicing_quality
 )
 
 from fretboard import (
@@ -230,7 +242,14 @@ def generate_candidates(
         ChordShape, e.g. "Major"
 
     Each returned ChordShape has .inversion, .top_note,
-    .average_fret, .hand_span, and .generator_score set.
+    .average_fret, .hand_span, .generator_score,
+    .voicing_quality_category, and .voicing_quality_score set.
+    generator_score is the playability estimate alone (as
+    before); voicing_quality_category/score reflect root
+    presence and defining-tone coverage (see
+    music.classify_voicing_quality()) and are combined with
+    generator_score only for ranking, not stored as a single
+    merged number.
 
     Returns however many genuinely useful candidates exist, up
     to max_candidates -- never pads the list to reach five, and
@@ -328,7 +347,7 @@ def generate_candidates(
 
 
     # Combine, dedupe by voicing signature (prefer full over
-    # reduced on a tie, then higher generator score), and take
+    # reduced on a tie, then higher combined score), and take
     # up to max_candidates. Full voicings are listed first so
     # that a full/reduced tie in the dedup step below prefers
     # the full voicing, per "a full voicing should normally
@@ -344,40 +363,62 @@ def generate_candidates(
 
         signature = _voicing_signature(values, melody_strings)
 
-        score = _score_candidate(values)
+        playability_score = _score_candidate(values)
+
+        coverage = _sounding_pitch_classes(
+            values, melody_strings
+        )
+
+        quality_category, quality_score = classify_voicing_quality(
+            root_pc, quality_code, coverage
+        )
+
+        # Combined score drives ranking (dedup tie-break and
+        # final sort); playability_score and quality_score stay
+        # available separately for the ChordShape fields below,
+        # since they answer different questions (physically
+        # playable vs. how strongly this voicing states the
+        # requested chord) and callers may care about either
+        # one specifically, not just their sum.
+        combined_score = playability_score + quality_score
 
         existing = best_by_signature.get(signature)
 
         if existing is None:
 
             best_by_signature[signature] = (
-                values, is_full, score
+                values, is_full, playability_score,
+                quality_category, quality_score, combined_score
             )
 
         else:
 
-            _, existing_is_full, existing_score = existing
+            _, existing_is_full, _, _, _, existing_combined = (
+                existing
+            )
 
             prefer_new = (
                 (is_full and not existing_is_full)
                 or (
                     is_full == existing_is_full
-                    and score > existing_score
+                    and combined_score > existing_combined
                 )
             )
 
             if prefer_new:
 
                 best_by_signature[signature] = (
-                    values, is_full, score
+                    values, is_full, playability_score,
+                    quality_category, quality_score,
+                    combined_score
                 )
 
     deduped = list(best_by_signature.values())
 
-    # Full voicings first, then by score -- never sort a
-    # reduced candidate ahead of an available full one.
+    # Full voicings first, then by combined score -- never
+    # sort a reduced candidate ahead of an available full one.
     deduped.sort(
-        key=lambda entry: (not entry[1], -entry[2])
+        key=lambda entry: (not entry[1], -entry[5])
     )
 
     top = deduped[:max_candidates]
@@ -386,7 +427,10 @@ def generate_candidates(
 
     results = []
 
-    for values, is_full, score in top:
+    for (
+        values, is_full, playability_score,
+        quality_category, quality_score, combined_score
+    ) in top:
 
         shape_text = format_shape(values)
 
@@ -409,14 +453,18 @@ def generate_candidates(
                 comfort_explanation="",
                 comments=(
                     f"Generated candidate ({voicing_type}, "
-                    f"playability estimate: {score:.1f})"
+                    f"playability estimate: "
+                    f"{playability_score:.1f}, "
+                    f"voicing quality: {quality_category})"
                 ),
                 verified=None,
                 inversion=inversion,
                 top_note=top_note,
                 average_fret=round(fretted_average(values), 2),
                 hand_span=hand_span(values),
-                generator_score=round(score, 2)
+                generator_score=round(playability_score, 2),
+                voicing_quality_category=quality_category or "",
+                voicing_quality_score=round(quality_score, 2)
             )
         )
 

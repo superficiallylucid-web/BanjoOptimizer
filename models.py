@@ -288,7 +288,20 @@ class ChordShape:
     generator_score: chord_generator.py's own playability
         estimate for this specific voicing, kept for reference/
         debugging. Distinct from playability.py's score, which
-        is a separate, later evaluation.
+        is a separate, later evaluation. Also distinct from
+        voicing_quality_score below -- this one is purely about
+        physical playability (span, open strings, etc.), not
+        about how well the sounding notes establish the chord.
+    voicing_quality_category: one of "ROOT_PRESENT",
+        "ROOTLESS_STRONG", "ROOTLESS_WEAK", or "" (not yet
+        computed). See music.classify_voicing_quality() for the
+        exact rule. Never used to reject a shape -- a rootless
+        voicing covering a chord's defining tones is a
+        legitimate voicing choice, not an invalid one.
+    voicing_quality_score: numeric score behind the category
+        above, used as one ranking input alongside
+        generator_score. Higher is a stronger representation of
+        the requested chord.
     """
 
     tuning: str
@@ -318,6 +331,10 @@ class ChordShape:
     hand_span: int = 0
 
     generator_score: float = 0.0
+
+    voicing_quality_category: str = ""
+
+    voicing_quality_score: float = 0.0
 
 
 # ---------------------------------------------------------
