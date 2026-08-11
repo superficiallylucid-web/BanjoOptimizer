@@ -393,6 +393,7 @@ white_christmas = MuseScoreFile(
 )
 
 white_christmas.open()
+white_christmas.read_time_signature()
 white_christmas.read_melody_notes()
 white_christmas.read_harmonies(4)
 
@@ -596,10 +597,14 @@ if my_favorite_things_path.exists():
     mft = MuseScoreFile(my_favorite_things_path)
 
     mft.open()
+    mft.read_time_signature()
     mft.read_melody_notes()
     mft.read_harmonies(4)
 
-    output(f"\n{'Measure':<10}{'Chord':<8}{'Shape':<8}Melody")
+    output(
+        f"\n{'Measure':<10}{'Beat':<7}{'Chord':<8}"
+        f"{'Shape':<8}Melody"
+    )
 
     # The specific examples from the investigation -- not a
     # dump of all 62 harmonies with a shape, which would be
@@ -625,9 +630,15 @@ if my_favorite_things_path.exists():
             else "?"
         )
 
+        # Beats are tracked 0-indexed internally (0.0 = the
+        # downbeat); +1 here just for the musician-facing
+        # display convention ("beat 1", not "beat 0").
+        beat_display = harmony.beat + 1
+
         output(
-            f"{harmony.measure:<10}{harmony.symbol:<8}"
-            f"{harmony.shape:<8}{melody_name}"
+            f"{harmony.measure:<10}{beat_display:<7.1f}"
+            f"{harmony.symbol:<8}{harmony.shape:<8}"
+            f"{melody_name}"
         )
 
     output("\n--- End FretDiagram Ground Truth Demo ---\n")

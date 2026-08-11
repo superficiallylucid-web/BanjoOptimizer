@@ -22,6 +22,15 @@ class Harmony:
     Represents one chord symbol found in the score
     (e.g. "Cmaj7" at measure 2).
 
+    beat: position within the measure, in quarter-note beats
+        (0.0 = the downbeat), computed by accumulating note/
+        rest durations through the voice -- see
+        parser.read_harmonies(). Does not account for tuplets
+        (none have been seen in any file this project has
+        parsed yet -- see parser._duration_value()); a score
+        using them would see beat drift after the tuplet, not
+        an exact value.
+
     shape: the actual fingering the player used at this chord
         occurrence, read directly from the score's own
         <FretDiagram> data (when present) -- ground truth for
@@ -59,6 +68,8 @@ class Harmony:
     tones: list[int] = field(default_factory=list)
 
     shape: str = ""
+
+    beat: float = 0.0
 
 
 # ---------------------------------------------------------
@@ -141,22 +152,34 @@ class Score:
     def melody_note_for_harmony(self, harmony):
         """
         Return the MIDI pitch of the melody note associated
-        with a chord occurrence, using the finest position
-        granularity the parser currently provides: which
-        measure the chord falls in (Harmony has no beat/tick
-        position -- see read_harmonies() in parser.py). Returns
-        the first note (by parse order, which matches time
-        order within a voice) in that same measure, or None if
-        there isn't one.
+        with a chord occurrence.
 
-        This is a measure-level approximation, not a true
-        beat-accurate match. If a measure contains more than
-        one melody note, this doesn't attempt to pick "the"
-        correct one for this specific chord occurrence -- it's
-        the first note in the measure, full stop. Refining this
-        needs beat-level position tracking, which isn't part of
-        the parser yet.
+        Both Note.beat and Harmony.beat are now populated by
+        the parser (accumulated note/rest durations through the
+        voice -- see parser.read_staff_notes()/read_harmonies()),
+        so this first looks for a note at the EXACT same
+        (measure, beat) as the harmony -- beats are rounded to
+        4 decimal places on the way in, so this is a direct
+        equality check, not a fuzzy one.
+
+        Falls back to the first note in the same measure (the
+        old, purely measure-level behavior) only if no note
+        shares the harmony's exact beat -- e.g. a chord change
+        that doesn't line up with a new note onset. That
+        fallback is still an approximation, same as before;
+        the exact-beat path is the real improvement here.
+
+        Returns None if there's no note in the measure at all.
         """
+
+        for note in self.notes:
+
+            if (
+                note.measure == harmony.measure
+                and note.beat == harmony.beat
+            ):
+
+                return note.midi
 
         for note in self.notes:
 

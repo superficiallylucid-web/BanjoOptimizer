@@ -7,6 +7,30 @@ from models import Score, Note, Harmony
 from music import tpc_to_name, tpc_to_pitch_class, chord_tones, chord_display_symbol
 
 
+# ---------------------------------------------------------
+# Beat/duration tracking
+# ---------------------------------------------------------
+#
+# Quarter-note-beat value for each MuseScore durationType
+# string. Used to accumulate a running beat position through
+# a voice (see MuseScoreFile._duration_value below) -- e.g.
+# an eighth note is half a quarter-note beat.
+#
+# "measure" (a whole-bar rest) isn't a fixed value -- it
+# depends on the actual time signature -- so it's handled
+# separately in _duration_value rather than listed here.
+
+DURATIONS = {
+    "whole": 4.0,
+    "half": 2.0,
+    "quarter": 1.0,
+    "eighth": 0.5,
+    "16th": 0.25,
+    "32nd": 0.125,
+    "64th": 0.0625,
+}
+
+
 class MuseScoreFile:
     """
     Reads a MuseScore .mscz file and extracts musical information.
@@ -191,6 +215,88 @@ class MuseScoreFile:
 
     # -----------------------------------------------------
 
+    def _duration_value(self, element):
+        """
+        Duration of one Chord or Rest element, in quarter-note
+        beats (e.g. an eighth note is 0.5), from its
+        durationType + dots.
+
+        A whole-bar rest (durationType "measure") is computed
+        from the actual time signature rather than a fixed
+        value, so it's correct for whatever meter the score is
+        in. Falls back to assuming 4/4 if read_time_signature()
+        hasn't been called yet (self.time_signature is still
+        "Unknown") -- an honest fallback, not a silent wrong
+        answer for scores actually in a different meter, so
+        callers should call read_time_signature() first when
+        precision matters.
+
+        Does not account for tuplets -- none have been seen in
+        any file this project has parsed yet (confirmed by
+        inspection of My Favorite Things). A tuplet would cause
+        beat positions to drift after it rather than being
+        exactly correct; a known, documented limitation, not a
+        full solution.
+
+        Returns 0.0 if durationType is missing or unrecognized.
+        """
+
+        duration_type_element = element.find(
+            "{*}durationType"
+        )
+
+        if duration_type_element is None:
+
+            return 0.0
+
+        duration_type = duration_type_element.text
+
+        if duration_type == "measure":
+
+            try:
+
+                numerator, denominator = (
+                    self.time_signature.split("/")
+                )
+
+                base = int(numerator) * (
+                    4 / int(denominator)
+                )
+
+            except (ValueError, AttributeError):
+
+                base = 4.0
+
+        else:
+
+            base = DURATIONS.get(duration_type, 0.0)
+
+
+        dots_element = element.find("{*}dots")
+
+        if dots_element is not None:
+
+            dot_count = int(dots_element.text)
+
+            multiplier = 1.0
+
+            addition = 0.5
+
+            for _ in range(dot_count):
+
+                multiplier += addition
+
+                addition /= 2
+
+            base *= multiplier
+
+
+        return base
+
+
+
+    # -----------------------------------------------------
+
     def read_staff_notes(self, staff_number):
 
         # print(
@@ -205,6 +311,10 @@ class MuseScoreFile:
         current_staff = 0
 
         measure = 0
+
+        beat = 0.0
+
+        current_chord_beat = 0.0
 
 
         for element in self.root.iter():
@@ -225,6 +335,20 @@ class MuseScoreFile:
             if tag == "Measure":
 
                 measure += 1
+
+                beat = 0.0
+
+
+            if tag == "Chord":
+
+                current_chord_beat = round(beat, 4)
+
+                beat += self._duration_value(element)
+
+
+            if tag == "Rest":
+
+                beat += self._duration_value(element)
 
 
             if tag == "Note":
@@ -265,7 +389,8 @@ class MuseScoreFile:
                     self.score.add_note(
                         Note(
                             midi=pitch,
-                            measure=measure
+                            measure=measure,
+                            beat=current_chord_beat
                         )
                     )
 
@@ -339,11 +464,11 @@ class MuseScoreFile:
         content. Pass the same staff_number you used for
         read_staff_notes.
 
-        Note: this records which measure each chord symbol
-        falls in, but not its exact beat position within the
-        measure (durations aren't tracked yet). Good enough
-        for a chord *progression*; not yet precise enough to
-        say which melody note lines up with which chord.
+        Note: this records each chord symbol's exact beat
+        position within the measure (accumulated from note/
+        rest durations, same mechanism as read_staff_notes) --
+        see Harmony.beat in models.py. Doesn't account for
+        tuplets (see MuseScoreFile._duration_value).
 
         Also captures each Harmony's paired <FretDiagram>, when
         the score has one -- see Harmony.shape in models.py.
@@ -359,6 +484,8 @@ class MuseScoreFile:
         current_staff = 0
 
         measure = 0
+
+        beat = 0.0
 
         # A Harmony and its FretDiagram are usually adjacent in
         # document order, but not always in a fixed direction --
@@ -388,6 +515,18 @@ class MuseScoreFile:
             if tag == "Measure":
 
                 measure += 1
+
+                beat = 0.0
+
+
+            if tag == "Chord":
+
+                beat += self._duration_value(element)
+
+
+            if tag == "Rest":
+
+                beat += self._duration_value(element)
 
 
             if tag == "Harmony":
@@ -446,7 +585,8 @@ class MuseScoreFile:
                     root_pc=root_pc,
                     quality_code=quality_code,
                     symbol=symbol,
-                    tones=tones if tones else []
+                    tones=tones if tones else [],
+                    beat=round(beat, 4)
                 )
 
                 self.harmonies.append(harmony)
