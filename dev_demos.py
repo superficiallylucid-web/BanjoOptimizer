@@ -29,6 +29,8 @@ from parser import MuseScoreFile
 from chord_library import ChordLibrary
 from chord_generator import generate_candidates
 from chord_service import ChordService, diagnose_melody_realization
+from chord_vocabulary_analysis import analyze_score_for_tuning
+from melody_box_analysis import analyze_melody_boxes
 from playability import evaluate as evaluate_playability
 from tunings import get_tunings
 from music import (
@@ -702,5 +704,235 @@ def run_all_demos():
         output(f"  Diagnosis: {result.diagnosis.category}")
 
     output("\n--- End Shape Selection Demo ---\n")
+
+    # ---------------------------------------------------------
+    # TEMPORARY: tuning chord vocabulary comparison demo
+    # ---------------------------------------------------------
+    #
+    # Evidence for comparing how well two tunings serve the
+    # same score's actual chord vocabulary -- see
+    # chord_vocabulary_analysis.py. No verdict is computed here;
+    # this just makes the raw evidence visible for a human to
+    # judge. Uses My Favorite Things (aEADE) as a stand-in for
+    # Aureolin, which hasn't been provided -- this demonstrates
+    # and validates the analysis capability on real data, ready
+    # to point at Aureolin once it's available. Not connected
+    # to tuning-recommendation scoring in any way.
+
+    my_favorite_things_path_for_vocab = (
+        PROJECT_FOLDER / "My_Favorite_Things__Em__aEADE__.mscz"
+    )
+
+    if my_favorite_things_path_for_vocab.exists():
+
+        output(
+            "--- Tuning Chord Vocabulary Comparison "
+            "(temporary) ---"
+        )
+
+        output(
+            "\n(No Aureolin file has been provided -- using "
+            "My Favorite Things as real-data evidence for the "
+            "same aDADE vs aEADE comparison, on the same "
+            "practical questions.)"
+        )
+
+        vocab_score_file = MuseScoreFile(
+            my_favorite_things_path_for_vocab
+        )
+
+        vocab_score_file.open()
+        vocab_score_file.read_time_signature()
+        vocab_score_file.read_melody_notes()
+        vocab_score_file.read_harmonies(4)
+
+        vocab_service = ChordService(ChordLibrary())
+
+        a_dade = get_tunings()["Double D"]         # aDADE
+
+        a_eade = get_tunings()["A Modal Sawmill"]  # aEADE
+
+        analysis_dade = analyze_score_for_tuning(
+            vocab_score_file.score, a_dade, vocab_service
+        )
+
+        analysis_eade = analyze_score_for_tuning(
+            vocab_score_file.score, a_eade, vocab_service
+        )
+
+        output(
+            f"\n{'Tuning':<10}{'Direct':<8}{'Indirect':<10}"
+            f"{'None':<7}{'NoMelody':<10}{'NoShape':<9}"
+        )
+
+        for analysis in (analysis_dade, analysis_eade):
+
+            output(
+                f"{analysis.tuning_symbol:<10}"
+                f"{analysis.direct_count:<8}"
+                f"{analysis.indirect_count:<10}"
+                f"{analysis.no_realization_count:<7}"
+                f"{analysis.no_melody_note_count:<10}"
+                f"{analysis.no_usable_shape_count:<9}"
+            )
+
+        # Existing shape-quality info already available per
+        # selected shape (average_fret, hand_span) -- not a new
+        # metric, just surfaced here since tier/quality/count
+        # alone don't show it.
+        for label, analysis in (
+            ("aDADE", analysis_dade),
+            ("aEADE", analysis_eade)
+        ):
+
+            fretted = [
+                o.selected_shape for o in analysis.occurrences
+                if o.selected_shape
+            ]
+
+            if fretted:
+
+                mean_fret = (
+                    sum(s.average_fret for s in fretted)
+                    / len(fretted)
+                )
+
+                mean_span = (
+                    sum(s.hand_span for s in fretted)
+                    / len(fretted)
+                )
+
+                output(
+                    f"{label}: mean average_fret="
+                    f"{mean_fret:.2f}, mean hand_span="
+                    f"{mean_span:.2f} (n={len(fretted)})"
+                )
+
+        output(
+            "\nPer-chord differences (same tier/quality, "
+            "different shape):"
+        )
+
+        for od, oe in zip(
+            analysis_dade.occurrences, analysis_eade.occurrences
+        ):
+
+            dade_shape = od.selected_shape.shape if od.selected_shape else None
+
+            eade_shape = oe.selected_shape.shape if oe.selected_shape else None
+
+            if dade_shape != eade_shape:
+
+                output(
+                    f"  {od.chord_symbol} (melody "
+                    f"{od.melody_note}): aDADE={dade_shape} "
+                    f"vs aEADE={eade_shape}"
+                )
+
+        output(
+            "\n--- End Tuning Chord Vocabulary Comparison ---\n"
+        )
+
+    else:
+
+        output(
+            "\n(Tuning chord vocabulary comparison skipped -- "
+            f"{my_favorite_things_path_for_vocab.name} not "
+            "found.)"
+        )
+
+    # ---------------------------------------------------------
+    # TEMPORARY: melody box analysis demo
+    # ---------------------------------------------------------
+    #
+    # Diagnostic-only measurement -- no scoring, no "best"
+    # position or realization chosen. Shows a few representative
+    # boxes from the real Aureolin file, comparing aDADE and
+    # aEADE against the SAME reference melody. Not connected to
+    # scoring, the report, or tuning recommendations. Kept
+    # deliberately compact -- see melody_box_analysis.py itself,
+    # or call analyze_melody_boxes() directly, for full detail.
+
+    aureolin_eade_path = PROJECT_FOLDER / "Aureolin__Bm__aEADE__.mscz"
+
+    if aureolin_eade_path.exists():
+
+        output("--- Melody Box Analysis Demo (temporary) ---")
+
+        aureolin_file = MuseScoreFile(aureolin_eade_path)
+
+        aureolin_file.open()
+        aureolin_file.read_time_signature()
+        aureolin_file.read_melody_notes()
+        aureolin_file.read_harmonies(6)  # reference material
+
+        vocab_service_for_boxes = ChordService(ChordLibrary())
+
+        a_dade_for_boxes = get_tunings()["Double D"]
+
+        a_eade_for_boxes = get_tunings()["A Modal Sawmill"]
+
+        boxes_dade = analyze_melody_boxes(
+            aureolin_file.score, a_dade_for_boxes,
+            vocab_service_for_boxes
+        )
+
+        boxes_eade = analyze_melody_boxes(
+            aureolin_file.score, a_eade_for_boxes,
+            vocab_service_for_boxes
+        )
+
+        for label, tuning_symbol, boxes in (
+            ("aDADE", "aDADE", boxes_dade),
+            ("aEADE", "aEADE", boxes_eade),
+        ):
+
+            box = boxes[0]  # first box only, for readability
+
+            output(
+                f"\n[{label}] Box: {box.chord.symbol} "
+                f"(m{box.chord.measure}) -> "
+                f"next chord {box.next_chord.symbol if box.next_chord else '(end)'}"
+            )
+
+            output(
+                f"  shape: {box.chord_shape.shape if box.chord_shape else '(none)'}, "
+                f"{len(box.notes)} melody notes in box"
+            )
+
+            sustaining = [
+                r for r in box.position_runs
+                if r.breaks_at_note_index is None
+            ]
+
+            breaking = [
+                r for r in box.position_runs
+                if r.breaks_at_note_index is not None
+                and r.notes_played > 0
+            ]
+
+            output(
+                f"  positions that play the whole box: "
+                f"{sorted(r.position for r in sustaining)}"
+            )
+
+            for run in sorted(
+                breaking, key=lambda r: -r.notes_played
+            )[:3]:
+
+                output(
+                    f"  position {run.position}: plays "
+                    f"{run.notes_played}/{len(box.notes)} notes, "
+                    f"then needs one of {sorted(run.destination_positions)}"
+                )
+
+        output("\n--- End Melody Box Analysis Demo ---\n")
+
+    else:
+
+        output(
+            "\n(Melody box analysis demo skipped -- "
+            f"{aureolin_eade_path.name} not found.)"
+        )
 
     # ---------------------------------------------------------

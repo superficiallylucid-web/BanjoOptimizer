@@ -520,3 +520,241 @@ class ShapeSelectionResult:
     diagnosis: MelodyRealizationDiagnostic
 
     all_shapes_ranked: list = field(default_factory=list)
+
+
+# ---------------------------------------------------------
+# Chord vocabulary analysis (tuning comparison evidence)
+# ---------------------------------------------------------
+#
+# Evidence-gathering for comparing how well two tunings serve
+# the same score's chord vocabulary -- e.g. aDADE vs aEADE on
+# a specific arrangement. Deliberately just evidence: no score,
+# no "winner," no change to tuning-recommendation logic. See
+# chord_vocabulary_analysis.py.
+
+@dataclass
+class ChordOccurrenceAnalysis:
+    """
+    One distinct chord+melody combination from a score's
+    practical vocabulary (see
+    chord_vocabulary_analysis.extract_chord_vocabulary()),
+    analyzed against one specific tuning.
+
+    occurrence_count: how many times this exact combination
+        (same chord, same melody pitch class) appears in the
+        score -- shown for transparency, not used to weight
+        anything (see module notes on why repetition isn't
+        weighted).
+    example_measure: the first measure this combination
+        occurs at, so a human can go look at it in the score.
+    melody_note: display name (e.g. "B3") of the melody pitch
+        class this combination pairs the chord with, or None
+        if no melody note was found for any occurrence of this
+        chord+position combination.
+    usable_shape_count: how many playable shapes ChordService
+        found for this chord in this tuning (verified +
+        generated, after playability filtering) -- 0 means the
+        chord itself has no usable voicing in this tuning at
+        all, independent of melody.
+    selected_shape: the shape select_shape_for_melody() (or,
+        with no melody_note, the top of get_shapes()) would
+        actually offer -- None only if usable_shape_count is 0.
+    realization_tier: DIRECT_REALIZATION / INDIRECT_REALIZATION
+        / NO_REALIZATION for selected_shape, or "" if there was
+        no melody_note to evaluate against.
+    voicing_quality_category: selected_shape's own
+        ROOT_PRESENT / ROOTLESS_STRONG / ROOTLESS_WEAK (see
+        music.classify_voicing_quality()), or "" if there's no
+        selected_shape.
+    """
+
+    root: str
+
+    quality_code: str
+
+    quality_display: str | None
+
+    chord_symbol: str
+
+    melody_note: str | None
+
+    occurrence_count: int
+
+    example_measure: int
+
+    usable_shape_count: int
+
+    selected_shape: ChordShape | None
+
+    realization_tier: str
+
+    voicing_quality_category: str
+
+
+@dataclass
+class TuningChordAnalysis:
+    """
+    Aggregated ChordOccurrenceAnalysis results for one score
+    analyzed against one tuning -- see
+    chord_vocabulary_analysis.analyze_score_for_tuning().
+
+    Counts are simple tallies over `occurrences` (one entry per
+    distinct chord+melody combination, not per raw occurrence
+    in the score -- see module notes), included for convenience
+    since a human reading the report will want them, not as any
+    kind of composite score. Comparing two TuningChordAnalysis
+    results side by side is the actual evidence; nothing here
+    declares one tuning better than another.
+    """
+
+    tuning_symbol: str
+
+    occurrences: list[ChordOccurrenceAnalysis] = field(
+        default_factory=list
+    )
+
+    direct_count: int = 0
+
+    indirect_count: int = 0
+
+    no_realization_count: int = 0
+
+    no_melody_note_count: int = 0
+
+    no_usable_shape_count: int = 0
+
+
+# ---------------------------------------------------------
+# Melody box analysis (hand-position measurement)
+# ---------------------------------------------------------
+#
+# Diagnostic-only measurement of the melody passage between one
+# chord occurrence and the next ("box"), and which strict
+# four-fret hand positions can play through it without moving.
+# See melody_box_analysis.py for the functions that produce
+# these. No scoring, no "best" position or realization chosen
+# here -- these are deliberately just measurements to inspect.
+
+@dataclass
+class NoteRealization:
+    """
+    One string/fret way to play a single melody note. fret=0
+    means an open string.
+    """
+
+    string_index: int
+
+    fret: int
+
+
+@dataclass
+class BoxMelodyNote:
+    """
+    One melody note within a box, with every playable
+    realization (see fretboard.find_positions(), reused
+    unchanged) and which hand positions those realizations
+    make available.
+
+    has_open_realization: True if ANY realization is an open
+        string -- an open-string note is playable from every
+        hand position and never forces a position change.
+    fretted_positions: the set of hand positions (identified by
+        index-finger fret) reachable via a FRETTED realization
+        of this note specifically -- see
+        melody_box_analysis.positions_covering_fret(). Does NOT
+        include "every position," even when
+        has_open_realization is True -- callers should check
+        has_open_realization separately for that case.
+    """
+
+    midi: int
+
+    measure: int
+
+    beat: float
+
+    realizations: list[NoteRealization] = field(
+        default_factory=list
+    )
+
+    has_open_realization: bool = False
+
+    fretted_positions: set[int] = field(default_factory=set)
+
+
+@dataclass
+class PositionRun:
+    """
+    How far one candidate starting hand position can continue
+    through a box before it can no longer realize the next
+    note, under the strict four-fret model.
+
+    position: the index-finger fret identifying this hand
+        position.
+    notes_played: how many consecutive notes from the start of
+        the box this position can play before failing (or the
+        full box length if it never fails).
+    breaks_at_note_index: index into the box's notes list where
+        this position first fails, or None if it plays the
+        whole box.
+    breaking_realizations: the fretted realizations of the note
+        that broke this position (empty if it never breaks) --
+        shown for context, not because any one of them is
+        preferred.
+    destination_positions: every OTHER hand position that could
+        play the breaking note (empty if it never breaks). This
+        is a one-level-deep report -- it does not recursively
+        track how far each destination position could continue
+        from there.
+    """
+
+    position: int
+
+    notes_played: int
+
+    breaks_at_note_index: int | None = None
+
+    breaking_realizations: list[NoteRealization] = field(
+        default_factory=list
+    )
+
+    destination_positions: set[int] = field(default_factory=set)
+
+
+@dataclass
+class MelodyBox:
+    """
+    The melody passage from one chord occurrence through the
+    note right before the next chord occurrence (or through the
+    end of the score, for the final chord).
+
+    chord: the Harmony this box starts at.
+    next_chord: the Harmony that ends this box, or None if this
+        is the score's last chord occurrence.
+    notes: every melody note in the box, in order, each with
+        its own realizations (see BoxMelodyNote).
+    chord_shape: the chord shape associated with this box's
+        starting chord, if one was supplied during analysis --
+        None if no chord service was used, or none was
+        available. Existing, unmodified ChordShape data; not a
+        new hand-position model for the chord itself (see
+        melody_box_analysis module notes on this limitation).
+    position_runs: one PositionRun per candidate starting
+        position -- every hand position capable of playing at
+        least one note in this box via a fretted realization
+        (the union of every note's fretted_positions). Empty if
+        the box has no fretted notes at all (e.g. entirely open
+        strings).
+    """
+
+    chord: Harmony
+
+    next_chord: Harmony | None
+
+    notes: list[BoxMelodyNote] = field(default_factory=list)
+
+    chord_shape: ChordShape | None = None
+
+    position_runs: list[PositionRun] = field(
+        default_factory=list
+    )
