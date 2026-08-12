@@ -174,7 +174,8 @@ else:
         analyzer = TuningAnalyzer(
             score.notes,
             score.key,
-            score.harmonies
+            score.harmonies,
+            score.score.notes
         )
 
 

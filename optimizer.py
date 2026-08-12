@@ -2,12 +2,18 @@ from tunings import get_tunings
 
 from music import get_key_profile
 
-from models import TuningResult
+from models import TuningResult, Score
 
 from fretboard import (
     find_positions,
     best_position as choose_best_position
 )
+
+from playing_model import analyze_tuning_playing_model
+
+from chord_service import ChordService
+
+from chord_library import ChordLibrary
 
 
 # ---------------------------------------------------------
@@ -95,18 +101,42 @@ class TuningAnalyzer:
     # over the total.
     FIFTH_TRANSITION_CAP = 20
 
+    # Playing Model integration (see playing_model.py /
+    # DESIGN.md). analyze_tuning_playing_model()'s total_score
+    # sums one term per melody phrase, so like movement_score
+    # above, it scales with song length -- normalized here to
+    # an average per-phrase score before this weight is applied,
+    # for the same reason: an unweighted per-song total would
+    # silently swamp every other component on a long piece.
+    # Deliberately small and conservative for this first
+    # integration step -- not tuned against real scores beyond
+    # confirming it stays a modest, subordinate contribution
+    # (see DESIGN.md).
+    PLAYING_MODEL_WEIGHT = 0.05
 
-    def __init__(self, notes, key="Unknown", harmonies=None):
+
+    def __init__(
+        self, notes, key="Unknown", harmonies=None, melody_notes=None
+    ):
         """
         harmonies: optional list of Harmony objects (see
         models.py -- already produced by
         parser.read_harmonies(), not re-parsed here) for the
-        same score. Stored as-is for a future integration step
-        (the Playing Model, see playing_model.py/DESIGN.md) --
-        score_tuning() does not read this yet, so passing it
-        has no effect on the score. Defaults to None so every
-        existing caller/test that constructs
-        TuningAnalyzer(notes, key) is unaffected.
+        same score. Stored as-is; used by the Playing Model
+        integration (see playing_model_bonus()) when present.
+        Defaults to None so every existing caller/test that
+        constructs TuningAnalyzer(notes, key) is unaffected.
+
+        melody_notes: optional list of Note objects (see
+        models.py) for the same score -- the SAME data
+        parser.read_melody_notes() already builds on the
+        underlying Score object (accessible as
+        MuseScoreFile.score.notes), just also passed here.
+        Needed only by the Playing Model, for real beat-level
+        melody timing -- `notes` (the existing dict-format
+        list used by every pre-existing score component) has
+        no beat information at all. Not duplicated or
+        re-derived here, only passed through.
         """
 
         self.notes = notes
@@ -114,6 +144,10 @@ class TuningAnalyzer:
         self.key = key
 
         self.harmonies = harmonies if harmonies is not None else []
+
+        self.melody_notes = (
+            melody_notes if melody_notes is not None else []
+        )
 
 
 
@@ -475,6 +509,12 @@ class TuningAnalyzer:
 
 
 
+        score += self.playing_model_bonus(
+            tuning
+        )
+
+
+
         advantages, tradeoffs = classify_reasons(reasons)
 
         return TuningResult(
@@ -785,3 +825,64 @@ class TuningAnalyzer:
 
 
         return score
+
+
+
+    # -------------------------------------------------
+
+    def playing_model_bonus(self, tuning):
+        """
+        Small additive contribution from the chord-centered
+        Playing Model (see playing_model.py / DESIGN.md) --
+        how well this tuning's playable chord shapes and melody
+        locations work together, given the score's real
+        chord/harmony context.
+
+        Zero when no harmony/melody context is available (every
+        existing caller/score without chord symbols is
+        unaffected), or if the Playing Model itself can't
+        produce a result for any reason -- this integration must
+        never break or change scoring for scores it can't help
+        with. Any unexpected failure here is treated the same as
+        "no contribution," not as a scoring error.
+
+        Normalized to an average per-phrase score (see
+        PLAYING_MODEL_WEIGHT's own comment for why) and scaled
+        by PLAYING_MODEL_WEIGHT before being added to the
+        existing tuning score -- deliberately small relative to
+        the ~100-130 range existing scores occupy on real test
+        scores.
+        """
+
+        if not self.harmonies or not self.melody_notes:
+
+            return 0.0
+
+        try:
+
+            temp_score = Score(
+                notes=self.melody_notes,
+                harmonies=self.harmonies
+            )
+
+            chord_service = ChordService(ChordLibrary())
+
+            playing_model_result = analyze_tuning_playing_model(
+                temp_score, tuning, chord_service
+            )
+
+            phrase_count = len(playing_model_result.phrases)
+
+            if phrase_count == 0:
+
+                return 0.0
+
+            average_phrase_score = (
+                playing_model_result.total_score / phrase_count
+            )
+
+            return average_phrase_score * self.PLAYING_MODEL_WEIGHT
+
+        except Exception:
+
+            return 0.0

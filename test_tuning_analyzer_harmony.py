@@ -121,7 +121,10 @@ def test_score_tuning_unaffected_by_harmonies_argument():
     results_with = with_harmony.analyze()
 
     # Same top-3 modern recommendations, same order, same
-    # scores -- confirms harmonies has zero effect on scoring.
+    # scores -- harmonies ALONE (without melody_notes, also
+    # not supplied here) has no effect on scoring; the Playing
+    # Model integration (see test_playing_model_integration.py)
+    # requires both to produce any contribution at all.
     top_without = [
         (r.name, r.score) for r in results_without["modern"][:3]
     ]
