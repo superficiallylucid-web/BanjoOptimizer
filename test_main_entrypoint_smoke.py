@@ -20,6 +20,10 @@ import subprocess
 
 import sys
 
+import shutil
+
+import zipfile
+
 from pathlib import Path
 
 
@@ -86,3 +90,50 @@ def test_full_import_chain_resolves():
     assert hasattr(music, "quality_code_to_display_name")
 
     assert callable(music.quality_code_to_display_name)
+
+
+def test_main_py_generates_mscz_files():
+    """
+    Regression test for BO-14: score_generator.py existed and
+    was tested in isolation (see test_score_generator.py), but
+    main.py never actually called it -- a normal `python
+    main.py` run produced zero .mscz output. Runs main.py as a
+    real subprocess and confirms output/generated/ actually
+    contains at least one .mscz file afterward -- the only way
+    to catch "the code exists but nothing calls it," which no
+    amount of testing generate_mscz() directly can catch.
+    """
+
+    generated_folder = PROJECT_ROOT / "output" / "generated"
+
+    if generated_folder.exists():
+
+        shutil.rmtree(generated_folder)
+
+    result = subprocess.run(
+        [sys.executable, "main.py"],
+        cwd=PROJECT_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=60
+    )
+
+    assert result.returncode == 0, (
+        f"main.py exited with an error:\n{result.stderr}"
+    )
+
+    assert generated_folder.exists(), (
+        "output/generated/ was not created by a normal "
+        "main.py run"
+    )
+
+    generated_files = list(generated_folder.glob("*.mscz"))
+
+    assert len(generated_files) > 0, (
+        "main.py ran but produced no .mscz files in "
+        "output/generated/"
+    )
+
+    with zipfile.ZipFile(generated_files[0]) as archive:
+
+        assert archive.testzip() is None

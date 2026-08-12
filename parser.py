@@ -196,6 +196,50 @@ class MuseScoreFile:
 
     # -----------------------------------------------------
 
+    def read_tab_tuning(self):
+        """
+        Read the actual open-string tuning embedded in the
+        score's own <StringData> (Part/Instrument level) --
+        never trust a filename or title for this, only the
+        real embedded data (see tunings.identify_tuning()'s own
+        docstring, which this is the natural reading
+        counterpart to -- that function existed already; this
+        is what actually feeds it from a real file).
+
+        Returns a list of 5 open-string MIDI values (5th string
+        to 1st, matching Tuning.notes' own convention exactly --
+        confirmed directly against real StringData), or None if
+        no StringData was found (e.g. a non-tab instrument).
+
+        First version: returns the FIRST StringData found in the
+        file. Every real score this project has worked with has
+        exactly one fretted instrument, so this hasn't needed to
+        be more selective yet -- a score with more than one
+        fretted instrument isn't handled specially.
+        """
+
+        for element in self.root.iter():
+
+            if element.tag.split("}")[-1] != "StringData":
+
+                continue
+
+            values = [
+                int(child.text)
+                for child in element
+                if child.tag.split("}")[-1] == "string"
+            ]
+
+            if values:
+
+                return values
+
+        return None
+
+
+
+    # -----------------------------------------------------
+
     def read_time_signature(self):
 
         # print(

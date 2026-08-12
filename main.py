@@ -7,6 +7,8 @@ from output import output, clear_output
 from parser import MuseScoreFile
 from optimizer import TuningAnalyzer
 from recommendations import apply_shared_features, apply_confidence
+from score_generator import generate_mscz
+from tunings import get_tunings
 
 VERSION = "1.0"
 
@@ -34,6 +36,7 @@ class Tee:
 
 SCORES_FOLDER = PROJECT_FOLDER / "scores"
 OUTPUT_FOLDER = PROJECT_FOLDER / "output"
+GENERATED_FOLDER = OUTPUT_FOLDER / "generated"
 
 OUTPUT_FOLDER.mkdir(exist_ok=True)
 
@@ -264,6 +267,50 @@ else:
 
 
             rank += 1
+
+
+        # ---------------------------------------------------------
+        # Generate a playable .mscz for each recommended tuning
+        # (see score_generator.py) -- uses the SAME top_results
+        # already computed above, not a second recommendation
+        # process. Requires the source score to have an existing
+        # TAB staff for score_generator.py to re-fret (see its own
+        # docstring) -- a source with no TAB at all (BO creating a
+        # banjo arrangement from scratch) isn't handled by the
+        # current algorithm, which this step doesn't change; that
+        # case is reported per-tuning below rather than crashing
+        # the run.
+        # ---------------------------------------------------------
+
+        output(
+            "Generating playable scores...\n"
+        )
+
+        for item in top_results:
+
+            try:
+
+                target_tuning = get_tunings()[item.name]
+
+                generated_path, _, _ = generate_mscz(
+                    score,
+                    target_tuning,
+                    staff_used,
+                    GENERATED_FOLDER
+                )
+
+                output(
+                    f"   Generated: {generated_path.name}"
+                )
+
+            except Exception as error:
+
+                output(
+                    f"   Could not generate a score for "
+                    f"{item.name}: {error}"
+                )
+
+        print()
 
 
 
