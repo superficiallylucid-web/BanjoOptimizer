@@ -71,13 +71,19 @@ import copy
 
 import re
 
+import os
+
+import base64
+
 import zipfile
 
 import xml.etree.ElementTree as ET
 
 from pathlib import Path
 
-from fretboard import find_positions, best_position
+from fretboard import find_positions, best_position, parse_shape
+
+from music import quality_code_to_display_name, pitch_name
 
 
 def _sanitize_filename(text):
@@ -294,8 +300,255 @@ def _apply_tuning_to_string_data(root, tuning):
     return updated_count
 
 
+# ---------------------------------------------------------
+# Chord shape (FretDiagram) generation -- BO-15
+# ---------------------------------------------------------
+#
+# NOTE ON STRING NUMBERING (different from Note's <string>!):
+# A <FretDiagram>'s <string no="N"> uses this project's OWN
+# internal convention directly -- N=0 is the 4th string, N=3
+# the 1st -- confirmed directly against a real, known "0220"
+# (E5) diagram: no=0/no=3 both marked open (matching E3/E4 open
+# strings), no=1/no=2 both fret 2 (matching the two B/E notes
+# at fret 2). This is the OPPOSITE of Note's <string> attribute
+# (see _retune_melody_notes' own docstring, which IS reversed).
+# No conversion is applied here -- do not add one by analogy to
+# the Note-writing code above; that would be wrong.
+#
+# frets/fretOffset/autoplace/offset are all confirmed OPTIONAL
+# by direct inspection of real files -- several genuine
+# FretDiagrams in production scores omit <frets> entirely, and
+# still more omit <autoplace>/<offset>. This code always writes
+# shapes as ABSOLUTE frets (no <fretOffset>) and omits <frets>
+# entirely, letting MuseScore use its own default display
+# window -- the simplest choice that real data confirms is
+# valid, not a guess.
+#
+# eid is confirmed present on every real FretDiagram (23
+# characters, matching base64url-encoded 17 random bytes,
+# unpadded). A new one is generated in that same format when
+# creating a fresh element; an existing element's eid is
+# preserved when updating it in place.
+#
+# KNOWN LIMITATION, not attempted: a chosen shape containing a
+# muted string (e.g. "--012") is skipped rather than written --
+# no real FretDiagram with a muted-string marker has been found
+# in any file this project has inspected, so there's no
+# confirmed representation to reuse, and inventing one would
+# violate this task's own explicit instruction not to invent a
+# new representation.
+
+def _generate_eid():
+    """
+    A plausible, syntactically-matching eid -- see module notes
+    above for how the real format was determined. Only needs to
+    be unique within the file; MuseScore's own eid semantics
+    beyond that aren't relied on here.
+    """
+
+    return base64.urlsafe_b64encode(os.urandom(17)).decode(
+        "ascii"
+    ).rstrip("=")
+
+
+def _set_fret_diagram_content(fret_diagram_element, values):
+    """
+    (Re)write a <FretDiagram> element's content for `values`
+    (parse_shape() output -- one entry per string, int fret,
+    0 for open, or None for muted). Clears any existing
+    children first, so this works identically whether
+    fret_diagram_element is freshly created or being updated in
+    place. Preserves an existing <eid> if there was one;
+    generates a new one otherwise.
+
+    Returns False (and leaves the element untouched) if `values`
+    contains a muted string -- see module notes on why that's
+    not attempted.
+    """
+
+    if any(value is None for value in values):
+
+        return False
+
+    existing_eid_element = fret_diagram_element.find("{*}eid")
+
+    eid_text = (
+        existing_eid_element.text
+        if existing_eid_element is not None
+        else _generate_eid()
+    )
+
+    fret_diagram_element.clear()
+
+    strings_element = ET.SubElement(fret_diagram_element, "strings")
+
+    strings_element.text = str(len(values))
+
+    eid_element = ET.SubElement(fret_diagram_element, "eid")
+
+    eid_element.text = eid_text
+
+    inner_element = ET.SubElement(fret_diagram_element, "fretDiagram")
+
+    for string_index, fret in enumerate(values):
+
+        string_element = ET.SubElement(inner_element, "string")
+
+        string_element.set("no", str(string_index))
+
+        if fret == 0:
+
+            marker_element = ET.SubElement(
+                string_element, "marker"
+            )
+
+            marker_element.text = "circle"
+
+        elif fret is not None and fret > 0:
+
+            dot_element = ET.SubElement(string_element, "dot")
+
+            dot_element.set("fret", str(fret))
+
+            dot_element.text = "normal"
+
+    return True
+
+
+def _apply_chord_shapes(staff_element, harmonies, tuning, chord_service):
+    """
+    For each chord symbol on staff_element, obtain a playable
+    shape for `tuning` via the EXISTING chord_service.get_shapes()
+    (unmodified -- the top-ranked result is used directly, no
+    new selection logic) and write it into the corresponding
+    <FretDiagram>, creating one if none exists.
+
+    harmonies: the ALREADY-PARSED list of Harmony objects for
+    this exact staff (see parser.read_harmonies()) -- root_pc/
+    quality_code aren't re-derived from the raw XML here (that
+    would duplicate parser.py's own parsing). Matched to the
+    raw <Harmony> XML elements by POSITION: both were built by
+    walking the same staff in the same document order, so the
+    Nth XML <Harmony> corresponds to harmonies[N]. If the counts
+    don't match for any reason, this is treated as unsafe to
+    proceed and no chord shapes are written at all, rather than
+    risk pairing a shape with the wrong chord symbol.
+
+    Returns (applied_count, skipped_count) -- skipped_count
+    covers every case this deliberately doesn't attempt:
+    unrecognized quality code, no usable shape for this tuning,
+    or a muted-string shape (see module notes).
+    """
+
+    xml_harmony_elements = [
+        element for element in staff_element.iter()
+        if element.tag.split("}")[-1] == "Harmony"
+    ]
+
+    if len(xml_harmony_elements) != len(harmonies):
+
+        return 0, len(harmonies)
+
+    parent_map = {
+        child: parent
+        for parent in staff_element.iter()
+        for child in parent
+    }
+
+    applied_count = 0
+
+    skipped_count = 0
+
+    for xml_harmony, harmony in zip(xml_harmony_elements, harmonies):
+
+        root_name = pitch_name(harmony.root_pc)
+
+        quality_display = quality_code_to_display_name(
+            harmony.quality_code
+        )
+
+        if quality_display is None:
+
+            skipped_count += 1
+
+            continue
+
+        shapes = chord_service.get_shapes(
+            tuning,
+            root_name,
+            harmony.root_pc,
+            harmony.quality_code,
+            quality_display
+        )
+
+        if not shapes:
+
+            skipped_count += 1
+
+            continue
+
+        chosen_shape = shapes[0]
+
+        values = parse_shape(chosen_shape.shape)
+
+        parent = parent_map[xml_harmony]
+
+        siblings = list(parent)
+
+        harmony_index = siblings.index(xml_harmony)
+
+        existing_fret_diagram = None
+
+        if (
+            harmony_index + 1 < len(siblings)
+            and siblings[harmony_index + 1].tag.split("}")[-1]
+            == "FretDiagram"
+        ):
+
+            existing_fret_diagram = siblings[harmony_index + 1]
+
+        elif (
+            harmony_index - 1 >= 0
+            and siblings[harmony_index - 1].tag.split("}")[-1]
+            == "FretDiagram"
+        ):
+
+            # Confirmed real (if rare) case: a FretDiagram can
+            # precede its Harmony in document order -- see
+            # parser.py's own read_harmonies() docstring, which
+            # handles the same bidirectional case when reading.
+            existing_fret_diagram = siblings[harmony_index - 1]
+
+        if existing_fret_diagram is not None:
+
+            wrote = _set_fret_diagram_content(
+                existing_fret_diagram, values
+            )
+
+        else:
+
+            new_element = ET.Element("FretDiagram")
+
+            wrote = _set_fret_diagram_content(new_element, values)
+
+            if wrote:
+
+                parent.insert(harmony_index + 1, new_element)
+
+        if wrote:
+
+            applied_count += 1
+
+        else:
+
+            skipped_count += 1
+
+    return applied_count, skipped_count
+
+
 def generate_mscz(
-    score_file, tuning, staff_number, output_folder, filename=None
+    score_file, tuning, staff_number, output_folder, filename=None,
+    chord_service=None
 ):
     """
     Generate a new .mscz for `tuning`, based on the already-
@@ -317,7 +570,17 @@ def generate_mscz(
     existing output-folder convention (see main.py's
     OUTPUT_FOLDER).
 
-    Returns (output_path, retuned_note_count, string_data_count).
+    chord_service: optional chord_service.ChordService. When
+    given, a playable chord shape (via its EXISTING
+    get_shapes(), top-ranked result, unmodified) is written into
+    the corresponding <FretDiagram> for each chord symbol on the
+    TAB staff -- see _apply_chord_shapes()'s own docstring.
+    When None (the default), chord shapes are left untouched,
+    same as before this parameter existed -- fully backward
+    compatible with every existing caller/test.
+
+    Returns (output_path, retuned_note_count, string_data_count,
+    chord_shapes_applied, chord_shapes_skipped).
     """
 
     output_folder = Path(output_folder)
@@ -348,6 +611,45 @@ def generate_mscz(
     string_data_count = _apply_tuning_to_string_data(
         root_copy, tuning
     )
+
+    chord_shapes_applied = 0
+
+    chord_shapes_skipped = 0
+
+    if chord_service is not None:
+
+        # actual_staff_number may differ from the melody staff
+        # the caller originally read harmonies for (see
+        # _find_tab_staff_element's own docstring -- White
+        # Christmas is a real example where they differ), so
+        # harmonies are re-read here specifically for the
+        # resolved TAB staff, via the EXISTING read_harmonies()
+        # -- not re-derived by hand, which would duplicate
+        # parser.py's own parsing. This runs on score_file's
+        # ORIGINAL (unmodified) tree, purely for reading; its
+        # own .harmonies/.score.harmonies are saved and restored
+        # immediately after, so the caller's already-parsed
+        # state is left exactly as it was, matching this
+        # function's own "never mutate the caller's state" rule
+        # above.
+        saved_harmonies = score_file.harmonies
+
+        saved_score_harmonies = score_file.score.harmonies
+
+        score_file.read_harmonies(actual_staff_number)
+
+        staff_harmonies = list(score_file.harmonies)
+
+        score_file.harmonies = saved_harmonies
+
+        score_file.score.harmonies = saved_score_harmonies
+
+        chord_shapes_applied, chord_shapes_skipped = (
+            _apply_chord_shapes(
+                staff_element, staff_harmonies, tuning,
+                chord_service
+            )
+        )
 
     if filename is None:
 
@@ -386,4 +688,7 @@ def generate_mscz(
                         name, source_zip.read(name)
                     )
 
-    return output_path, retuned_count, string_data_count
+    return (
+        output_path, retuned_count, string_data_count,
+        chord_shapes_applied, chord_shapes_skipped
+    )

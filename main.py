@@ -9,6 +9,8 @@ from optimizer import TuningAnalyzer
 from recommendations import apply_shared_features, apply_confidence
 from score_generator import generate_mscz
 from tunings import get_tunings
+from chord_service import ChordService
+from chord_library import ChordLibrary
 
 VERSION = "1.0"
 
@@ -286,21 +288,35 @@ else:
             "Generating playable scores...\n"
         )
 
+        generation_chord_service = ChordService(ChordLibrary())
+
         for item in top_results:
 
             try:
 
                 target_tuning = get_tunings()[item.name]
 
-                generated_path, _, _ = generate_mscz(
+                (
+                    generated_path, retuned_count, _,
+                    shapes_applied, shapes_skipped
+                ) = generate_mscz(
                     score,
                     target_tuning,
                     staff_used,
-                    GENERATED_FOLDER
+                    GENERATED_FOLDER,
+                    chord_service=generation_chord_service
                 )
 
                 output(
-                    f"   Generated: {generated_path.name}"
+                    f"   Generated: {generated_path.name} "
+                    f"({retuned_count} melody notes, "
+                    f"{shapes_applied} chord shapes"
+                    + (
+                        f", {shapes_skipped} chord symbols "
+                        "skipped"
+                        if shapes_skipped else ""
+                    )
+                    + ")"
                 )
 
             except Exception as error:
