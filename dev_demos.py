@@ -31,6 +31,7 @@ from chord_generator import generate_candidates
 from chord_service import ChordService, diagnose_melody_realization
 from chord_vocabulary_analysis import analyze_score_for_tuning
 from melody_box_analysis import analyze_melody_boxes
+from playing_model import analyze_tuning_playing_model
 from playability import evaluate as evaluate_playability
 from tunings import get_tunings
 from music import (
@@ -933,6 +934,84 @@ def run_all_demos():
         output(
             "\n(Melody box analysis demo skipped -- "
             f"{aureolin_eade_path.name} not found.)"
+        )
+
+    # ---------------------------------------------------------
+    # TEMPORARY: chord-centered Playing Model demo
+    # ---------------------------------------------------------
+    #
+    # Diagnostic-only -- see playing_model.py and DESIGN.md.
+    # Not wired into tuning-recommendation scoring. Shows the
+    # canonical E5 phrase from My Favorite Things, plus overall
+    # tuning-level scores for aDADE vs aEADE for comparison.
+
+    mft_path_for_playing_model = (
+        PROJECT_FOLDER / "My_Favorite_Things__Em__aEADE__.mscz"
+    )
+
+    if mft_path_for_playing_model.exists():
+
+        output("--- Playing Model Demo (temporary) ---")
+
+        mft_for_playing_model = MuseScoreFile(
+            mft_path_for_playing_model
+        )
+
+        mft_for_playing_model.open()
+        mft_for_playing_model.read_time_signature()
+        mft_for_playing_model.read_melody_notes()
+        mft_for_playing_model.read_harmonies(4)
+
+        service_for_playing_model = ChordService(ChordLibrary())
+
+        a_eade_for_pm = get_tunings()["A Modal Sawmill"]
+
+        a_dade_for_pm = get_tunings()["Double D"]
+
+        eade_pm_result = analyze_tuning_playing_model(
+            mft_for_playing_model.score,
+            a_eade_for_pm,
+            service_for_playing_model
+        )
+
+        dade_pm_result = analyze_tuning_playing_model(
+            mft_for_playing_model.score,
+            a_dade_for_pm,
+            service_for_playing_model
+        )
+
+        e5_phrase = eade_pm_result.phrases[0]
+
+        output(
+            f"\nCanonical phrase: {e5_phrase.chord.symbol} "
+            f"shape={e5_phrase.chord_shape.shape if e5_phrase.chord_shape else None} "
+            f"score={e5_phrase.score:.2f}"
+        )
+
+        for combo in e5_phrase.box_notes[:4]:
+
+            output(
+                f"  midi={combo.midi} contained={combo.contained_in_chord} "
+                f"free_finger={combo.free_finger} score={combo.score:.2f}"
+            )
+
+        output(
+            f"\naEADE total playing-model score: "
+            f"{eade_pm_result.total_score:.2f}"
+        )
+
+        output(
+            f"aDADE total playing-model score: "
+            f"{dade_pm_result.total_score:.2f}"
+        )
+
+        output("\n--- End Playing Model Demo ---\n")
+
+    else:
+
+        output(
+            "\n(Playing Model demo skipped -- "
+            f"{mft_path_for_playing_model.name} not found.)"
         )
 
     # ---------------------------------------------------------

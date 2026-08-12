@@ -106,6 +106,14 @@ else:
         output(f"Using Staff {staff_used}")
         score.estimate_key()
 
+        # Read harmonies from the same staff melody was read
+        # from -- matches this project's established convention
+        # (the banjo TAB staff carries both). Stored on
+        # TuningAnalyzer for a future integration step (the
+        # Playing Model); score_tuning() doesn't read it yet, so
+        # this has no effect on the current score/recommendations.
+        score.read_harmonies(staff_used)
+
 
         output(
             "================================"
@@ -165,7 +173,8 @@ else:
        
         analyzer = TuningAnalyzer(
             score.notes,
-            score.key
+            score.key,
+            score.harmonies
         )
 
 

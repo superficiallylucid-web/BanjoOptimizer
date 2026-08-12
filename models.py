@@ -761,3 +761,98 @@ class MelodyBox:
     position_runs: list[PositionRun] = field(
         default_factory=list
     )
+
+
+# ---------------------------------------------------------
+# Chord-centered Playing Model
+# ---------------------------------------------------------
+#
+# See playing_model.py and DESIGN.md. Structured results for
+# evaluating melody locations in combination with playable
+# chord shapes, rather than as two independent systems.
+
+@dataclass
+class ChordShapePlayability:
+    """
+    Intrinsic playability of one chord shape, independent of
+    melody. See playing_model.analyze_chord_shape_playability().
+    Higher score = more playable. Simple, documented heuristics
+    -- not a physical hand model.
+    """
+
+    shape: str
+
+    finger_count: int
+
+    span: int
+
+    geometry_penalty: float
+
+    open_strings: list[int] = field(default_factory=list)
+
+    score: float = 0.0
+
+
+@dataclass
+class MelodyChordCombination:
+    """
+    One melody note evaluated against one candidate chord
+    shape -- the central unit of the Playing Model (section 5).
+    """
+
+    midi: int
+
+    contained_in_chord: bool
+
+    realization: NoteRealization | None
+
+    free_finger: bool
+
+    score: float = 0.0
+
+
+@dataclass
+class PhraseSolution:
+    """
+    One chord-centered phrase: a candidate chord shape and how
+    well it, together with its playability, serves the melody
+    immediately before (lead-in) and after (box) its own chord
+    occurrence -- section 6.
+    """
+
+    chord: Harmony
+
+    chord_shape: ChordShape | None
+
+    shape_playability: ChordShapePlayability | None
+
+    lead_in: list[MelodyChordCombination] = field(
+        default_factory=list
+    )
+
+    box_notes: list[MelodyChordCombination] = field(
+        default_factory=list
+    )
+
+    fifth_string_bonus: float = 0.0
+
+    score: float = 0.0
+
+
+@dataclass
+class TuningPlayingModelResult:
+    """
+    Aggregated Playing Model result for one score analyzed
+    against one tuning -- section 12. A diagnostic score,
+    comparable across tunings, but not (yet) blended into
+    optimizer.py's own tuning score -- see playing_model.py's
+    module docstring for why.
+    """
+
+    tuning_symbol: str
+
+    phrases: list[PhraseSolution] = field(default_factory=list)
+
+    continuity_bonus: float = 0.0
+
+    total_score: float = 0.0

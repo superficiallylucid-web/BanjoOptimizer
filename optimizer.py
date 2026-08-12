@@ -96,11 +96,24 @@ class TuningAnalyzer:
     FIFTH_TRANSITION_CAP = 20
 
 
-    def __init__(self, notes, key="Unknown"):
+    def __init__(self, notes, key="Unknown", harmonies=None):
+        """
+        harmonies: optional list of Harmony objects (see
+        models.py -- already produced by
+        parser.read_harmonies(), not re-parsed here) for the
+        same score. Stored as-is for a future integration step
+        (the Playing Model, see playing_model.py/DESIGN.md) --
+        score_tuning() does not read this yet, so passing it
+        has no effect on the score. Defaults to None so every
+        existing caller/test that constructs
+        TuningAnalyzer(notes, key) is unaffected.
+        """
 
         self.notes = notes
 
         self.key = key
+
+        self.harmonies = harmonies if harmonies is not None else []
 
 
 
