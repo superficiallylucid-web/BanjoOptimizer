@@ -6,7 +6,7 @@ from output import output, clear_output
 
 from parser import MuseScoreFile
 from optimizer import TuningAnalyzer
-from recommendations import apply_shared_features
+from recommendations import apply_shared_features, apply_confidence
 
 VERSION = "1.0"
 
@@ -187,6 +187,24 @@ else:
             results["modern"][:3]
         )
 
+        top_results = apply_confidence(top_results)
+
+
+        if top_results and top_results[0].shared_features:
+
+            output(
+                "All of these:"
+            )
+
+            for feature in top_results[0].shared_features:
+
+                output(
+                    "   -",
+                    feature
+                )
+
+            print()
+
 
         for item in top_results:
 
@@ -215,6 +233,21 @@ else:
                         "   -",
                         tradeoff
                     )
+
+            # A small gap to the nearest other option shown
+            # here is a genuine near-tie worth flagging -- an
+            # arbitrary but simple, self-relative threshold
+            # (5% of this result's own score), not a change to
+            # scoring/ranking itself.
+            if (
+                item.confidence is not None
+                and item.confidence < 0.05 * item.score
+            ):
+
+                output(
+                    "   (Very close alternative to another "
+                    "option above)"
+                )
 
 
             print()

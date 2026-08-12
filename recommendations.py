@@ -1,18 +1,22 @@
 """
 recommendations.py
 
-Group-level step for a set of recommended TuningResults.
+Group-level steps for a set of recommended TuningResults.
 
 A single TuningResult (from TuningAnalyzer.score_tuning) only
 knows about itself, so it can't know which of its advantages
 are actually shared by every other tuning it's being shown
-alongside. That's a property of the group being displayed
-together, not of any one tuning -- so it's handled here,
-after scoring, rather than inside the scorer.
+alongside, or how close its score is to theirs. Those are
+properties of the group being displayed together, not of any
+one tuning -- so they're handled here, after scoring, rather
+than inside the scorer.
 
-This does not change scoring, selection, or order. It only
-moves already-computed advantages into shared_features when
-every recommendation in the group has them in common.
+Neither function here changes scoring, selection, or order.
+apply_shared_features() moves already-computed advantages into
+shared_features when every recommendation in the group has
+them in common. apply_confidence() computes each result's
+score gap to its nearest neighbor in the group, for flagging
+genuine near-ties in the report.
 """
 
 
@@ -60,5 +64,54 @@ def apply_shared_features(results):
             for advantage in result.advantages
             if advantage not in shared
         ]
+
+    return results
+
+
+def apply_confidence(results):
+    """
+    Given a list of TuningResults being shown together (already
+    sorted by score, highest first -- the order this project's
+    scoring produces and this function relies on but never
+    changes), compute each result's confidence: the score gap
+    to its nearest neighbor (the previous or next result) in
+    this SAME shown group.
+
+    A small gap means a near-tie with another option actually
+    being shown alongside it; a large gap means a clear
+    standout. This is purely a presentation annotation over
+    already-computed scores -- it does not change score, order,
+    or which results are selected.
+
+    confidence is left None for a single-result group (nothing
+    to compare against) or if scoring produced fewer than 2
+    results.
+    """
+
+    if len(results) < 2:
+
+        for result in results:
+
+            result.confidence = None
+
+        return results
+
+    for index, result in enumerate(results):
+
+        gaps = []
+
+        if index > 0:
+
+            gaps.append(
+                abs(result.score - results[index - 1].score)
+            )
+
+        if index + 1 < len(results):
+
+            gaps.append(
+                abs(result.score - results[index + 1].score)
+            )
+
+        result.confidence = min(gaps)
 
     return results

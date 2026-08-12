@@ -261,10 +261,13 @@ class TuningResult:
         with the other recommendations it was shown alongside.
         Populated by a group-level step (see recommendations.py),
         not by scoring a single tuning in isolation.
-    confidence: placeholder for a future score-margin-based
-        confidence value (e.g. for grouping near-tied
-        recommendations). Not yet computed -- None until that
-        logic exists.
+    confidence: score gap to this result's nearest neighbor in
+        the group it's shown alongside -- a small value means a
+        genuine near-tie with another shown option. Populated by
+        a group-level step (see recommendations.apply_confidence()),
+        same as shared_features; None until that step runs, or
+        for a single-result group with nothing to compare
+        against.
     """
 
     name: str
