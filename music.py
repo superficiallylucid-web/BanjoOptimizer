@@ -767,3 +767,49 @@ def classify_voicing_quality(
     coverage_bonus = len(distinct & frozenset(tones)) * 2.0
 
     return category, base_score + coverage_bonus
+
+
+
+# ---------------------------------------------------------
+# Quality code -> chord library display name
+# ---------------------------------------------------------
+#
+# chord_tones() and CHORD_QUALITIES use one naming convention
+# for chord quality ("", "m", "maj7", "mb5", ...); the verified
+# chord_library.py CSV data uses a different one for its
+# Quality column ("Major", "minor", "Maj 7", "dim", ...) --
+# confirmed directly against the real CSV. Nothing has bridged
+# these two before now; anywhere a chord is extracted from a
+# real score (root_pc + quality_code, from Harmony) needs to
+# be looked up against the verified library, this mapping is
+# the missing link.
+#
+# Deliberately only covers quality codes CHORD_QUALITIES
+# already recognizes -- not a new theory system, just naming
+# reconciliation for what already exists on both sides.
+
+QUALITY_CODE_TO_DISPLAY_NAME = {
+    "": "Major",
+    "m": "minor",
+    "7": "Dom 7",
+    "m7": "min 7",
+    "maj7": "Maj 7",
+    "mb5": "dim",
+    "5": "5 (no 3rd)",
+    "sus2": "sus2",
+    "sus4": "sus4",
+}
+
+
+def quality_code_to_display_name(quality_code):
+    """
+    Return the chord_library.py CSV-style display name for a
+    quality_code (e.g. "maj7" -> "Maj 7"), or None if the code
+    isn't recognized. A None result isn't an error -- callers
+    should treat it the same as any other "no data available
+    for this chord" case (e.g. pass it straight through to
+    ChordService, which will simply find no verified/generated
+    shapes for an unrecognized quality).
+    """
+
+    return QUALITY_CODE_TO_DISPLAY_NAME.get(quality_code)
