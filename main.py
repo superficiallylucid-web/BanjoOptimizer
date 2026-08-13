@@ -7,7 +7,7 @@ from output import output, clear_output
 from parser import MuseScoreFile
 from optimizer import TuningAnalyzer
 from recommendations import apply_shared_features, apply_confidence
-from score_generator import generate_mscz
+from score_generator import generate_chord_diagrams_only
 from tunings import get_tunings
 from chord_service import ChordService
 from chord_library import ChordLibrary
@@ -275,13 +275,20 @@ else:
         # Generate a playable .mscz for each recommended tuning
         # (see score_generator.py) -- uses the SAME top_results
         # already computed above, not a second recommendation
-        # process. Requires the source score to have an existing
-        # TAB staff for score_generator.py to re-fret (see its own
-        # docstring) -- a source with no TAB at all (BO creating a
-        # banjo arrangement from scratch) isn't handled by the
-        # current algorithm, which this step doesn't change; that
-        # case is reported per-tuning below rather than crashing
-        # the run.
+        # process.
+        #
+        # Currently using generate_chord_diagrams_only() ("Plan
+        # B"): adds banjo chord shape diagrams above the existing
+        # chord symbols on the score's own notation staff, without
+        # creating a TAB staff and without touching melody notes/
+        # frets/strings/pitches or any existing TAB elsewhere in
+        # the score. Adopted after repeated, unresolved MuseScore
+        # "Incomplete measure" errors on the full TAB-generation
+        # path (generate_mscz(), still defined in score_generator.py
+        # and intended to be revisited later) -- each confirmed
+        # structural gap found and fixed did not resolve the
+        # underlying issue, so this narrower, lower-risk approach
+        # was adopted instead.
         # ---------------------------------------------------------
 
         output(
@@ -297,20 +304,18 @@ else:
                 target_tuning = get_tunings()[item.name]
 
                 (
-                    generated_path, retuned_count, _,
-                    shapes_applied, shapes_skipped
-                ) = generate_mscz(
+                    generated_path, shapes_applied, shapes_skipped
+                ) = generate_chord_diagrams_only(
                     score,
                     target_tuning,
                     staff_used,
                     GENERATED_FOLDER,
-                    chord_service=generation_chord_service
+                    generation_chord_service
                 )
 
                 output(
                     f"   Generated: {generated_path.name} "
-                    f"({retuned_count} melody notes, "
-                    f"{shapes_applied} chord shapes"
+                    f"({shapes_applied} chord shapes"
                     + (
                         f", {shapes_skipped} chord symbols "
                         "skipped"

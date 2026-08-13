@@ -126,11 +126,26 @@ def _find_staff_element(root, staff_number):
 
 def _staff_has_tab_notes(staff_element):
     """
-    True if staff_element contains at least one Note with both
-    <fret> and <string> -- i.e. it's actually a TAB-notated
-    staff with persisted position data, not just a standard-
-    notation staff that happens to carry the same melody.
+    True if the SUBSTANTIAL MAJORITY of staff_element's Notes
+    have both <fret> and <string> -- i.e. it's genuinely a TAB-
+    notated staff with persisted position data throughout, not
+    just a standard-notation staff that happens to carry a few
+    stray fret/string values.
+
+    Confirmed real reason this needs a majority threshold, not
+    "at least one": a real source file was found with 2 stray
+    fret-tagged notes out of 197 on its Piano (standard
+    notation) staff -- almost certainly leftover noise from an
+    earlier edit, not an actual TAB arrangement. A genuine TAB
+    staff has fret/string on essentially all of its notes (100%
+    in every real TAB staff this project has inspected); a
+    50% threshold cleanly separates the two cases without being
+    fragile to a handful of stray values either way.
     """
+
+    total_notes = 0
+
+    fretted_notes = 0
 
     for note_element in staff_element.iter():
 
@@ -138,74 +153,533 @@ def _staff_has_tab_notes(staff_element):
 
             continue
 
+        total_notes += 1
+
         if (
             note_element.find("{*}fret") is not None
             and note_element.find("{*}string") is not None
         ):
 
-            return True
+            fretted_notes += 1
 
-    return False
+    if total_notes == 0:
+
+        return False
+
+    return (fretted_notes / total_notes) >= 0.5
 
 
-def _find_tab_staff_element(root, staff_number):
+# ---------------------------------------------------------
+# Creating a TAB staff from scratch -- BO-15-FIX / BO-16
+# ---------------------------------------------------------
+#
+# Used when the source score has NO existing staff with TAB
+# data at all (the normal case -- most real input scores have
+# never been arranged for banjo). Reproduces the structure of a
+# REAL, known-good banjo-tablature Part -- not invented.
+#
+# A banjo-tablature Part has exactly ONE definition <Staff>,
+# not two. An earlier version of this code created a second,
+# "linked companion" pitched-notation staff, based on an
+# incorrect generalization from files where a user had
+# separately, optionally added one after the fact. Confirmed
+# wrong by direct comparison against a real reference file:
+# MuseScore's own "add instrument" workflow, with nothing else
+# done manually, produces one staff, no linkedTo at all -- and
+# the extra, structurally-unexpected second staff was the
+# actual cause of MuseScore reporting "Incomplete measure" on
+# every generated file (see BO-16 investigation).
+
+_TAB_PART_TEMPLATE = """<Part id="{part_id}">
+<Staff>
+<eid>{tab_staff_eid}</eid>
+<StaffType group="tablature">
+<name>tab5StrSimple</name>
+<lines>4</lines>
+<lineDistance>1.5</lineDistance>
+<clef>0</clef>
+<stemless>1</stemless>
+<timesig>0</timesig>
+<color r="148" g="148" b="148" a="255" />
+<durations>0</durations>
+<durationFontName>MuseScore Tab Modern</durationFontName>
+<durationFontSize>15</durationFontSize>
+<durationFontY>0</durationFontY>
+<fretUseTextStyle>1</fretUseTextStyle>
+<fretTextStyle>tab_fret_number</fretTextStyle>
+<linesThrough>0</linesThrough>
+<minimStyle>0</minimStyle>
+<onLines>1</onLines>
+<showRests>0</showRests>
+<stemsDown>1</stemsDown>
+<stemsThrough>0</stemsThrough>
+<upsideDown>0</upsideDown>
+<useNumbers>1</useNumbers>
+</StaffType>
+<defaultClef>G8vb</defaultClef>
+</Staff>
+<trackName>Banjo</trackName>
+<preferSharpFlat>none</preferSharpFlat>
+<Instrument id="banjo-tablature">
+<trackName>Banjo (tablature)</trackName>
+<minPitchP>48</minPitchP>
+<maxPitchP>87</maxPitchP>
+<minPitchA>48</minPitchA>
+<maxPitchA>87</maxPitchA>
+<instrumentId>pluck.banjo</instrumentId>
+<clef>G8vb</clef>
+<singleNoteDynamics>0</singleNoteDynamics>
+<glissandoStyle>portamento</glissandoStyle>
+<StringData>
+<frets>24</frets>
+<string>{s0}</string>
+<string>{s1}</string>
+<string>{s2}</string>
+<string>{s3}</string>
+<string>{s4}</string>
+</StringData>
+<Channel>
+<program value="105" />
+<synti>Fluid</synti>
+</Channel>
+<Channel name="harmony">
+<program value="0" />
+<synti>Fluid</synti>
+</Channel>
+</Instrument>
+</Part>"""
+
+
+def _build_tab_part_element(tuning, part_id):
     """
-    Locate the content <Staff> element to retune, starting from
-    staff_number (the melody staff read_melody_notes() picked).
+    Build a new <Part> element for a banjo-tablature
+    instrument, using tuning.notes for StringData. See module
+    notes above for where this structure came from -- a single
+    definition Staff, no linked companion (confirmed against a
+    real MuseScore-created reference: adding a banjo instrument
+    normally creates exactly one staff, not two).
+    """
 
-    read_melody_notes()'s own "first non-empty staff" heuristic
-    is the right choice for extracting melody PITCH (any staff
-    carrying the tune works equally well for that), but it can
-    pick a standard-notation staff with no persisted <fret>/
-    <string> data at all -- confirmed with a real file (White
-    Christmas: Part order is Piano-then-Banjo, so the first
-    non-empty staff is Piano, which has none). When that
-    happens, this searches the OTHER content staves for one
-    that actually has TAB data, and uses that instead.
+    xml_text = _TAB_PART_TEMPLATE.format(
+        part_id=part_id,
+        tab_staff_eid=_generate_eid(),
+        s0=tuning.notes[0],
+        s1=tuning.notes[1],
+        s2=tuning.notes[2],
+        s3=tuning.notes[3],
+        s4=tuning.notes[4]
+    )
 
-    Returns (staff_element, actual_staff_number_used), or
-    (None, None) if no staff with TAB data exists at all.
+    return ET.fromstring(xml_text)
+
+
+def _next_part_id(root):
+    """
+    A Part id that doesn't collide with any existing one.
+    Real Part ids observed are small integers, not necessarily
+    matching document order -- this just picks one higher than
+    every existing id, which is always safe regardless of what
+    order they're in.
+    """
+
+    existing_ids = []
+
+    for element in root.iter():
+
+        if element.tag.split("}")[-1] != "Part":
+
+            continue
+
+        try:
+
+            existing_ids.append(int(element.attrib.get("id", 0)))
+
+        except ValueError:
+
+            continue
+
+    return max(existing_ids, default=0) + 1
+
+
+def _next_staff_ids(root, count):
+    """
+    `count` content-<Staff> ids that don't collide with any
+    existing one, continuing sequentially after the highest
+    existing id -- matching the pattern every real file this
+    project has inspected uses (ids assigned sequentially,
+    without gaps).
+    """
+
+    highest = 0
+
+    for element in root.iter():
+
+        if element.tag.split("}")[-1] != "Staff":
+
+            continue
+
+        try:
+
+            highest = max(highest, int(element.attrib.get("id", 0)))
+
+        except (TypeError, ValueError):
+
+            continue
+
+    return [highest + 1 + i for i in range(count)]
+
+
+def _regenerate_eids(element):
+    """
+    Replace every <eid> text value found anywhere within
+    element's subtree with a freshly generated one (see
+    _generate_eid()).
+
+    Root cause this exists for -- confirmed by direct comparison
+    against a real, working file: <eid> values must be globally
+    unique across the ENTIRE file, with NO exception for linked
+    staff pairs (a real TAB staff and its own linked companion
+    have zero shared content eids; the linked relationship is
+    established purely at the Part-definition level via
+    <linkedTo>, never by sharing content-level eids). A deep
+    copy of an existing staff's content carries over its
+    original eids verbatim, producing duplicates the moment
+    that copy exists anywhere else in the file -- MuseScore
+    reported this as "Incomplete measure: Found 0/1" on every
+    newly created staff, which this fixes.
+    """
+
+    for descendant in element.iter():
+
+        if descendant.tag.split("}")[-1] == "eid":
+
+            descendant.text = _generate_eid()
+
+
+def _find_source_concert_key(source_staff_element):
+    """
+    The concertKey value to use for the new staff's own first
+    measure -- see _normalize_copied_content()'s own docstring
+    for why this is needed at all.
+
+    Uses the FIRST explicit <KeySig> found anywhere in the
+    source staff, if any (a source that changes key partway
+    through would still want its OPENING key here, and this is
+    the first one encountered in document order). If the source
+    has no explicit KeySig at all -- confirmed real case: it
+    then relies on MuseScore's own implicit default, which is
+    concertKey 0 (C major/A minor, no sharps or flats) -- that
+    default is used here too, since that's genuinely the source
+    staff's own (implicit) key, not an invented one.
+    """
+
+    for element in source_staff_element.iter():
+
+        if element.tag.split("}")[-1] != "KeySig":
+
+            continue
+
+        concert_key_element = element.find("{*}concertKey")
+
+        if concert_key_element is not None:
+
+            return concert_key_element.text
+
+    return "0"
+
+
+def _normalize_copied_content(new_staff, concert_key):
+    """
+    Fix structural differences confirmed (by direct, exhaustive
+    comparison against a real MuseScore-created reference file)
+    between a staff's own raw content and what a real "paste
+    into a new staff" operation actually produces, that a plain
+    deep copy doesn't account for:
+
+    - A <Measure>'s own DIRECT children other than <voice> --
+      confirmed 100% consistent across every measure in a real
+      reference file (34/34 source measures have their own
+      <eid>/<stretch>/<LayoutBreak>; 0/34 of the newly-pasted
+      staff's measures have any of them). A real paste creates
+      fresh Measure wrappers around the pasted voice content,
+      not literal clones of the source measure's own metadata.
+      This was the actual remaining cause of "Incomplete
+      measure" persisting even after every WITHIN-voice fix
+      below was already correct -- an earlier structural
+      comparison checked voice content only and missed this
+      entirely.
+    - A new staff's first measure needs its own explicit
+      <KeySig> inside its voice, even when the SOURCE staff
+      never states one anywhere (relying on the implicit
+      default instead). Inserted as the first child of the
+      first measure's voice, before <TimeSig>, matching the
+      real reference's own child order exactly.
+    - <Tempo> is NOT duplicated onto a new staff in a real file
+      (it stays on whichever staff originally had it) -- every
+      <Tempo> found anywhere in the copied voice content is
+      removed.
+    - <Segment> elements present in the SOURCE staff's own raw
+      voice content are NOT carried over by a real paste
+      operation either -- confirmed by direct comparison: the
+      real reference file's source (Piano) staff has this
+      element in places its own newly-pasted Banjo staff does
+      not, even though the actual musical content (Chord/
+      Harmony/FretDiagram) at those positions is otherwise
+      identical.
+    - Frame elements (<VBox> etc) that sit as DIRECT SIBLINGS
+      of <Measure> at the STAFF level -- typically a title/
+      subtitle frame before the first measure -- are NOT
+      carried over either. Confirmed by direct comparison: the
+      source (Piano) staff's first direct child is <VBox>, but
+      the real pasted Banjo staff's first direct child is
+      <Measure> -- straight to musical content, no frame at
+      all. This was missed by every earlier structural
+      verification here, because those all compared Measure
+      elements to each other by position/index, which can never
+      reveal an EXTRA sibling element sitting alongside them at
+      the staff level.
+    """
+
+    for child in list(new_staff):
+
+        if child.tag.split("}")[-1] != "Measure":
+
+            new_staff.remove(child)
+
+    measures = [
+        child for child in new_staff
+        if child.tag.split("}")[-1] == "Measure"
+    ]
+
+    for measure in measures:
+
+        for child in list(measure):
+
+            if child.tag.split("}")[-1] != "voice":
+
+                measure.remove(child)
+
+    parent_map = {
+        child: parent
+        for parent in new_staff.iter() for child in parent
+    }
+
+    for element in list(new_staff.iter()):
+
+        tag = element.tag.split("}")[-1]
+
+        if tag not in ("Tempo", "Segment"):
+
+            continue
+
+        parent = parent_map.get(element)
+
+        if parent is not None:
+
+            parent.remove(element)
+
+    if not measures:
+
+        return
+
+    first_measure = measures[0]
+
+    for voice in first_measure:
+
+        if voice.tag.split("}")[-1] != "voice":
+
+            continue
+
+        has_keysig = any(
+            child.tag.split("}")[-1] == "KeySig"
+            for child in voice
+        )
+
+        if has_keysig:
+
+            continue
+
+        keysig_element = ET.Element("KeySig")
+
+        eid_element = ET.SubElement(keysig_element, "eid")
+
+        eid_element.text = _generate_eid()
+
+        concert_key_element = ET.SubElement(
+            keysig_element, "concertKey"
+        )
+
+        concert_key_element.text = concert_key
+
+        voice.insert(0, keysig_element)
+
+
+def _build_tab_content_staff(source_staff_element, new_staff_id):
+    """
+    Build a new content <Staff id="..."> for the TAB, from a
+    deep copy of source_staff_element's own content (Measures,
+    Chords, Notes, Rests, Harmony -- whatever it already has).
+    Notes keep their existing <pitch>/<tpc> unchanged; no
+    <fret>/<string> is added here -- that happens afterward via
+    the EXISTING _retune_melody_notes(), reused unmodified, so
+    fret/string assignment for a brand-new staff uses the exact
+    same logic (find_positions()/best_position()) as re-fretting
+    an existing one, not a second, separate mechanism.
+
+    Every <eid> in the copied content is regenerated -- see
+    _regenerate_eids()'s own docstring for why this is required,
+    not optional. The copied content is also normalized -- see
+    _normalize_copied_content()'s own docstring for the real
+    structural differences this accounts for.
+    """
+
+    concert_key = _find_source_concert_key(source_staff_element)
+
+    new_staff = copy.deepcopy(source_staff_element)
+
+    new_staff.set("id", str(new_staff_id))
+
+    _regenerate_eids(new_staff)
+
+    _normalize_copied_content(new_staff, concert_key)
+
+    return new_staff
+
+
+def _create_tab_staff(root, source_staff_element, tuning):
+    """
+    Build and insert a brand-new banjo-tablature Part + a single
+    content Staff into `root`, from source_staff_element's own
+    melody content (which has no TAB data at all -- see module
+    notes). Only one staff -- confirmed against a real
+    MuseScore-created reference file (adding a banjo instrument
+    the normal way creates exactly one staff, no linked
+    companion; an earlier version of this function created a
+    second, unnecessary linked staff, which was the actual cause
+    of MuseScore's "Incomplete measure" errors on generated
+    files).
+
+    Returns the new content-Staff element, ready for the caller
+    to run _retune_melody_notes()/_apply_chord_shapes() on
+    exactly as it would for an already-existing TAB staff.
+    """
+
+    score_element = root.find("{*}Score")
+
+    part_id = _next_part_id(root)
+
+    new_part = _build_tab_part_element(tuning, part_id)
+
+    score_element.append(new_part)
+
+    [new_staff_id] = _next_staff_ids(root, 1)
+
+    content_staff = _build_tab_content_staff(
+        source_staff_element, new_staff_id
+    )
+
+    score_element.append(content_staff)
+
+    return content_staff
+
+
+def _find_notation_staff_element(root, staff_number):
+    """
+    Locate the NOTATION (non-TAB) content <Staff> to use as the
+    generation source, starting from staff_number (the melody
+    staff read_melody_notes() picked for SCORING purposes --
+    unchanged, still used for extracting melody PITCH, which
+    works equally well from either a notation or TAB staff, so
+    nothing about scoring is affected by this function).
+
+    Existing TAB anywhere in the score -- whether on this exact
+    staff or any other -- is NEVER used, modified, or reused as
+    a shortcut. This was an earlier, incorrect assumption (an
+    existing TAB staff found elsewhere in the document used to
+    be retuned in place instead of generating fresh content) --
+    corrected per explicit clarification: whether a score
+    happens to already contain TAB must not change what BO
+    produces or how. The notation is always the source; any
+    existing TAB is inert, irrelevant information, ignored
+    completely, exactly as if it were never there.
+
+    The only thing this checks for is the rare case where
+    staff_number ITSELF happens to already be a TAB staff --
+    i.e. read_melody_notes()'s own "first non-empty staff"
+    heuristic landed on TAB content rather than the intended
+    notation. When that happens, the other content staves are
+    searched for the first genuine notation staff (has real
+    melodic content, and is NOT majority-fretted) to use
+    instead.
+
+    Returns (staff_element, staff_number_used), or (None, None)
+    if no notation staff can be found at all.
     """
 
     given_staff = _find_staff_element(root, staff_number)
 
-    if given_staff is not None and _staff_has_tab_notes(given_staff):
+    if given_staff is not None and not _staff_has_tab_notes(
+        given_staff
+    ):
 
         return given_staff, staff_number
 
-    # Fall back: walk every content <Staff> and use the first
-    # one that actually has fret/string data.
-    current_staff = 0
+    current_staff_number = 0
 
     for element in root.iter():
 
-        tag = element.tag.split("}")[-1]
-
-        if tag != "Staff":
+        if element.tag.split("}")[-1] != "Staff":
 
             continue
 
-        current_staff += 1
+        current_staff_number += 1
 
-        if _staff_has_tab_notes(element):
+        if element is given_staff:
 
-            return element, current_staff
+            continue
+
+        has_notes = any(
+            child.tag.split("}")[-1] == "Note"
+            for child in element.iter()
+        )
+
+        if has_notes and not _staff_has_tab_notes(element):
+
+            return element, current_staff_number
 
     return None, None
 
 
 def _retune_melody_notes(staff_element, tuning):
     """
-    Update every TAB-notated <Note> under staff_element to a
-    new <fret>/<string> for `tuning`, choosing the position via
-    the existing fretboard.find_positions()/best_position()
-    (unchanged). Notes without <fret>/<string> (e.g. on a
-    linked standard-notation staff) are left alone. A note on
-    the 5th string (<string>4</string>) is left alone -- see
-    module docstring.
+    Set every melody <Note> under staff_element to a <fret>/
+    <string> for `tuning`, choosing the position via the
+    existing fretboard.find_positions()/best_position()
+    (unchanged) either way. Handles both real cases:
 
-    Returns the number of notes actually retuned, for the
-    caller to report/verify.
+    - The note already has <fret>/<string> (an existing TAB
+      staff being re-fretted for a new tuning) -- updated in
+      place.
+    - The note has neither (content freshly copied from a
+      standard-notation staff that's never had TAB data --
+      see _create_tab_staff()) -- <fret>/<string> are created
+      and appended, in the confirmed real child order (after
+      <tpc>, matching every real TAB Note this project has
+      inspected).
+
+    A note with only ONE of the two present (malformed/
+    unexpected) is left alone rather than guessed at.
+
+    A note already on the 5th string (<string>4</string>) is
+    left untouched -- handled separately everywhere else in
+    this project. This only applies to the update case; a
+    freshly-created note is never assigned to the 5th string --
+    there's no existing signal for when a melody note should
+    become a drone note, and inventing one is out of scope here
+    (documented limitation, not an oversight).
+
+    Returns the number of notes actually set, for the caller to
+    report/verify.
     """
 
     open_notes = tuning.notes[1:]
@@ -220,19 +694,26 @@ def _retune_melody_notes(staff_element, tuning):
 
         pitch_element = note_element.find("{*}pitch")
 
+        if pitch_element is None:
+
+            continue
+
         fret_element = note_element.find("{*}fret")
 
         string_element = note_element.find("{*}string")
 
-        if (
-            pitch_element is None
-            or fret_element is None
-            or string_element is None
-        ):
+        has_fret = fret_element is not None
 
+        has_string = string_element is not None
+
+        if has_fret != has_string:
+
+            # Malformed/unexpected -- exactly one of the pair
+            # present. Not seen in any real data; skip rather
+            # than guess.
             continue
 
-        if string_element.text == "4":
+        if has_fret and string_element.text == "4":
 
             # 5th string -- handled separately everywhere else
             # in this project; left untouched here too.
@@ -246,12 +727,18 @@ def _retune_melody_notes(staff_element, tuning):
 
             # No realization exists on the new tuning within
             # find_positions()'s own range -- leave this note's
-            # existing fret/string as-is rather than guess.
-            # Documented limitation: this can happen for a
-            # pitch outside the new tuning's practical range.
+            # existing fret/string (if any) as-is rather than
+            # guess. Documented limitation: this can happen for
+            # a pitch outside the new tuning's practical range.
             continue
 
         chosen = best_position(positions)
+
+        if not has_fret:
+
+            fret_element = ET.SubElement(note_element, "fret")
+
+            string_element = ET.SubElement(note_element, "string")
 
         fret_element.text = str(chosen["fret"])
 
@@ -260,44 +747,6 @@ def _retune_melody_notes(staff_element, tuning):
         retuned_count += 1
 
     return retuned_count
-
-
-def _apply_tuning_to_string_data(root, tuning):
-    """
-    Replace every <StringData>'s open-string pitches with
-    tuning.notes -- see module docstring for why the ordering
-    already matches with no conversion needed.
-
-    Returns the number of StringData elements updated.
-    """
-
-    updated_count = 0
-
-    for element in root.iter():
-
-        if element.tag.split("}")[-1] != "StringData":
-
-            continue
-
-        string_children = [
-            child for child in element
-            if child.tag.split("}")[-1] == "string"
-        ]
-
-        if len(string_children) != len(tuning.notes):
-
-            # Not a 5-string instrument's StringData (or an
-            # unexpected shape) -- leave it alone rather than
-            # guess at a mismatched mapping.
-            continue
-
-        for child, pitch in zip(string_children, tuning.notes):
-
-            child.text = str(pitch)
-
-        updated_count += 1
-
-    return updated_count
 
 
 # ---------------------------------------------------------
@@ -557,13 +1006,13 @@ def generate_mscz(
     an in-memory COPY, never mutating the caller's own parsed
     state).
 
-    staff_number: the melody staff to retune -- pass the same
-    value read_melody_notes() returned. If that staff doesn't
-    actually have persisted TAB (fret/string) data -- it can be
-    a standard-notation staff carrying the same melody (see
-    _find_tab_staff_element()'s own docstring for a real
-    example) -- the actual staff with TAB data is found and
-    used automatically instead.
+    staff_number: the melody staff to use as the generation
+    source -- pass the same value read_melody_notes() returned.
+    A brand-new banjo-tablature Part and Staff are ALWAYS
+    created from that staff's own notation content -- see
+    _create_tab_staff()'s own docstring. Any existing TAB
+    elsewhere in the score is never used or modified; see
+    _find_notation_staff_element()'s own docstring for why.
 
     filename: optional explicit output filename. Defaults to
     "{title} - {tuning.name}.mscz", matching this project's
@@ -595,22 +1044,33 @@ def generate_mscz(
 
     root_copy = tree_copy.getroot()
 
-    staff_element, actual_staff_number = _find_tab_staff_element(
-        root_copy, staff_number
+    source_staff_element, source_staff_number = (
+        _find_notation_staff_element(root_copy, staff_number)
     )
 
-    if staff_element is None:
+    if source_staff_element is None:
 
         raise ValueError(
-            "No staff with TAB (fret/string) data was found in "
-            "this score -- nothing to retune."
+            "No notation (non-TAB) staff was found in this "
+            "score -- nothing to generate a banjo arrangement "
+            "from."
         )
+
+    staff_element = _create_tab_staff(
+        root_copy, source_staff_element, tuning
+    )
 
     retuned_count = _retune_melody_notes(staff_element, tuning)
 
-    string_data_count = _apply_tuning_to_string_data(
-        root_copy, tuning
-    )
+    # The new Part's own StringData was already populated
+    # correctly with tuning.notes at creation time (see
+    # _build_tab_part_element()) -- there is nothing else to
+    # update here. Deliberately NOT walking the whole tree for
+    # every <StringData> element: any pre-existing TAB elsewhere
+    # in the score has its own StringData, and per the explicit
+    # clarification that existing TAB must never be modified,
+    # that must be left exactly as it was.
+    string_data_count = 1
 
     chord_shapes_applied = 0
 
@@ -618,25 +1078,24 @@ def generate_mscz(
 
     if chord_service is not None:
 
-        # actual_staff_number may differ from the melody staff
-        # the caller originally read harmonies for (see
-        # _find_tab_staff_element's own docstring -- White
-        # Christmas is a real example where they differ), so
-        # harmonies are re-read here specifically for the
-        # resolved TAB staff, via the EXISTING read_harmonies()
-        # -- not re-derived by hand, which would duplicate
-        # parser.py's own parsing. This runs on score_file's
-        # ORIGINAL (unmodified) tree, purely for reading; its
-        # own .harmonies/.score.harmonies are saved and restored
-        # immediately after, so the caller's already-parsed
-        # state is left exactly as it was, matching this
-        # function's own "never mutate the caller's state" rule
-        # above.
+        # source_staff_number may differ from staff_number (see
+        # _find_notation_staff_element()'s own docstring -- the
+        # rare case where staff_number itself was accidentally a
+        # TAB staff), so harmonies are re-read here specifically
+        # for the correct source staff, via the EXISTING
+        # read_harmonies() -- not re-derived by hand, which would
+        # duplicate parser.py's own parsing. This runs on
+        # score_file's ORIGINAL (unmodified) tree, purely for
+        # reading; its own .harmonies/.score.harmonies are saved
+        # and restored immediately after, so the caller's
+        # already-parsed state is left exactly as it was,
+        # matching this function's own "never mutate the
+        # caller's state" rule above.
         saved_harmonies = score_file.harmonies
 
         saved_score_harmonies = score_file.score.harmonies
 
-        score_file.read_harmonies(actual_staff_number)
+        score_file.read_harmonies(source_staff_number)
 
         staff_harmonies = list(score_file.harmonies)
 
@@ -659,7 +1118,28 @@ def generate_mscz(
             f"{title} - {tuning.name}"
         ) + ".mscz"
 
-    output_path = output_folder / filename
+    output_path = _save_score_copy(
+        root_copy, score_file, output_folder, filename
+    )
+
+    return (
+        output_path, retuned_count, string_data_count,
+        chord_shapes_applied, chord_shapes_skipped
+    )
+
+
+def _save_score_copy(root_copy, score_file, output_folder, filename):
+    """
+    Write root_copy (an edited in-memory copy of score_file's
+    own tree) to output_folder/filename as a new .mscz -- every
+    other file in the original archive (styles, thumbnails,
+    settings) is copied through unchanged; only the .mscx is
+    replaced with the edited content.
+
+    Returns the output Path.
+    """
+
+    output_path = Path(output_folder) / filename
 
     new_mscx_bytes = ET.tostring(
         root_copy, encoding="UTF-8", xml_declaration=True
@@ -688,7 +1168,186 @@ def generate_mscz(
                         name, source_zip.read(name)
                     )
 
-    return (
-        output_path, retuned_count, string_data_count,
-        chord_shapes_applied, chord_shapes_skipped
+    return output_path
+
+
+# ---------------------------------------------------------
+# Chord-diagrams-only generation -- BO-19 (Plan B)
+# ---------------------------------------------------------
+#
+# A deliberately narrower alternative to generate_mscz(): does
+# NOT create a TAB staff, does NOT touch melody notes/frets/
+# strings/pitches, and never touches Measure/voice content at
+# all -- only inserts/updates <FretDiagram> elements next to the
+# EXISTING notation staff's own <Harmony> elements, reusing
+# _apply_chord_shapes() completely unmodified (the same function
+# generate_mscz() already uses). Because nothing about Measure
+# structure, duration, or staff creation is touched, this avoids
+# the entire class of problems generate_mscz()'s TAB-creation
+# path has run into.
+#
+# Success criterion, explicitly: a valid MuseScore file
+# containing useful, tuning-appropriate fretboard diagrams above
+# the existing chord symbols -- not sophisticated automatic
+# fingering, and not a TAB staff.
+
+def _find_title_frame(staff_element):
+    """
+    The staff's own <VBox> (title/subtitle frame), if it has
+    one -- always a direct child of the staff, before the first
+    <Measure> (see _normalize_copied_content()'s own docstring
+    for how this was confirmed). Returns None if the staff has
+    no such frame.
+    """
+
+    for child in staff_element:
+
+        if child.tag.split("}")[-1] == "VBox":
+
+            return child
+
+    return None
+
+
+def _add_tuning_text(staff_element, tuning):
+    """
+    Add a clearly-labeled text line stating the actual tuning
+    notation (tuning.symbol, e.g. "gDGBD") to the score's own
+    title frame -- required so the tuning is visibly present in
+    the score itself, not only inferable from the filename or a
+    tuning NAME alone (a name like "G Modal Sawmill" doesn't by
+    itself tell a player which strings go where).
+
+    Appends a new <Text> to the staff's existing <VBox> if it
+    has one, without touching anything already there; creates a
+    minimal new VBox (matching the structure confirmed real
+    scores actually use) if the staff has none.
+    """
+
+    vbox = _find_title_frame(staff_element)
+
+    if vbox is None:
+
+        vbox = ET.Element("VBox")
+
+        height_element = ET.SubElement(vbox, "height")
+
+        height_element.text = "4"
+
+        eid_element = ET.SubElement(vbox, "eid")
+
+        eid_element.text = _generate_eid()
+
+        staff_element.insert(0, vbox)
+
+    text_element = ET.SubElement(vbox, "Text")
+
+    eid_element = ET.SubElement(text_element, "eid")
+
+    eid_element.text = _generate_eid()
+
+    style_element = ET.SubElement(text_element, "style")
+
+    style_element.text = "subtitle"
+
+    content_element = ET.SubElement(text_element, "text")
+
+    content_element.text = (
+        f"Banjo tuning: {tuning.symbol} ({tuning.name})"
     )
+
+
+def generate_chord_diagrams_only(
+    score_file, tuning, staff_number, output_folder,
+    chord_service, filename=None
+):
+    """
+    Plan B: add banjo chord shape diagrams for `tuning` above
+    the existing chord symbols on the score's own notation
+    staff, leaving everything else -- melody notes, frets,
+    strings, pitches, lyrics, formatting, and any existing TAB
+    staff -- completely untouched. Does not create a TAB staff.
+
+    chord_service is REQUIRED here (unlike generate_mscz(),
+    where it's optional) -- producing chord diagrams is this
+    function's entire purpose.
+
+    staff_number: the melody staff to use as the chord-symbol
+    source -- pass the same value read_melody_notes() returned.
+    Any existing TAB elsewhere in the score is ignored, exactly
+    as generate_mscz() does (see _find_notation_staff_element()'s
+    own docstring) -- this function only ever reads/writes the
+    notation staff itself, never any TAB staff, existing or
+    otherwise.
+
+    filename: optional explicit output filename. Defaults to
+    "{title} - {tuning.name} ({tuning.symbol}).mscz" -- the
+    tuning's actual notation (symbol) is always included, not
+    only its name, per the explicit requirement that the tuning
+    must be visible in the score and/or filename, never only
+    inferable from a name alone.
+
+    Returns (output_path, chord_shapes_applied,
+    chord_shapes_skipped).
+    """
+
+    output_folder = Path(output_folder)
+
+    output_folder.mkdir(exist_ok=True)
+
+    tree_copy = copy.deepcopy(score_file.tree)
+
+    root_copy = tree_copy.getroot()
+
+    notation_staff_element, notation_staff_number = (
+        _find_notation_staff_element(root_copy, staff_number)
+    )
+
+    if notation_staff_element is None:
+
+        raise ValueError(
+            "No notation (non-TAB) staff was found in this "
+            "score -- nothing to add chord diagrams to."
+        )
+
+    # Read harmonies specifically for the resolved notation
+    # staff (see generate_mscz()'s own docstring for why this
+    # can differ from staff_number and must be re-read rather
+    # than assumed) via the EXISTING read_harmonies(), saving
+    # and restoring score_file's own state so this function
+    # never mutates the caller's already-parsed data, matching
+    # generate_mscz()'s own rule.
+    saved_harmonies = score_file.harmonies
+
+    saved_score_harmonies = score_file.score.harmonies
+
+    score_file.read_harmonies(notation_staff_number)
+
+    staff_harmonies = list(score_file.harmonies)
+
+    score_file.harmonies = saved_harmonies
+
+    score_file.score.harmonies = saved_score_harmonies
+
+    chord_shapes_applied, chord_shapes_skipped = (
+        _apply_chord_shapes(
+            notation_staff_element, staff_harmonies, tuning,
+            chord_service
+        )
+    )
+
+    _add_tuning_text(notation_staff_element, tuning)
+
+    if filename is None:
+
+        title = score_file.score.title or "Untitled"
+
+        filename = _sanitize_filename(
+            f"{title} - {tuning.name} ({tuning.symbol})"
+        ) + ".mscz"
+
+    output_path = _save_score_copy(
+        root_copy, score_file, output_folder, filename
+    )
+
+    return output_path, chord_shapes_applied, chord_shapes_skipped

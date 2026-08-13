@@ -72,7 +72,21 @@ FRET_CEILING = 7
 # evaluated at all.
 SEARCH_MAX_SPAN = 6
 
-MAX_CANDIDATES = 5
+MAX_CANDIDATES = 10
+
+# Raised from 5 after fixing the ranking key above (voicing
+# quality now takes priority over playability -- see that
+# fix's own comment). A real, confirmed side effect of that fix
+# alone: when several ROOT_PRESENT voicings exist for a chord,
+# they now correctly fill the top ranks ahead of any rootless
+# voicing, which can push a still-useful, lower-quality-but-
+# valid voicing (e.g. a rootless-strong shape with a genuinely
+# easier fingering) out of a 5-slot cap even though it was
+# never a bug -- just no longer artificially inflated to the
+# very top by playability alone. 10 keeps that variety visible
+# without being an arbitrary large number: for a typical chord
+# in a typical tuning, the full candidate pool this project
+# actually generates rarely exceeds this.
 
 
 def _score_candidate(values):
@@ -373,14 +387,37 @@ def generate_candidates(
             root_pc, quality_code, coverage
         )
 
-        # Combined score drives ranking (dedup tie-break and
-        # final sort); playability_score and quality_score stay
-        # available separately for the ChordShape fields below,
-        # since they answer different questions (physically
-        # playable vs. how strongly this voicing states the
-        # requested chord) and callers may care about either
-        # one specifically, not just their sum.
-        combined_score = playability_score + quality_score
+        # Ranking key drives ordering (dedup tie-break and final
+        # sort): voicing QUALITY first, playability second -- a
+        # voicing that correctly states the requested chord must
+        # never be outranked by one that's merely easier to play
+        # but omits a defining chord tone.
+        #
+        # This replaces an earlier additive combined_score
+        # (playability_score + quality_score), which was a real,
+        # confirmed bug: _score_candidate's open-string bonus is
+        # +10 PER open string, uncapped, while
+        # classify_voicing_quality's entire possible spread
+        # within ROOT_PRESENT is only ~4-8 points for a typical
+        # triad/7th chord (2.0 per additional covered tone). A
+        # single extra open string was therefore enough to
+        # completely swamp the quality signal -- e.g. for C
+        # major in aEADE tuning, "0320" (missing the 5th
+        # entirely -- sounds E,C,E,E, no G at all) scored higher
+        # than "3320" (a complete C-E-G voicing) purely because
+        # of one extra open string, despite being a musically
+        # incomplete voicing. Traced directly: playability=14.00
+        # vs 3.67, quality=19.0 vs 21.0 -- the ~10 point
+        # playability gap dwarfed the 2 point quality gap.
+        #
+        # A lexicographic key removes this failure mode
+        # entirely, for any chord and any tuning, without
+        # hardcoding specific chords or tunings: playability can
+        # only ever break a tie between voicings of EQUAL
+        # quality, never override a real quality difference.
+        # playability_score/quality_score stay available
+        # separately for the ChordShape fields below.
+        ranking_key = (quality_score, playability_score)
 
         existing = best_by_signature.get(signature)
 
@@ -388,12 +425,12 @@ def generate_candidates(
 
             best_by_signature[signature] = (
                 values, is_full, playability_score,
-                quality_category, quality_score, combined_score
+                quality_category, quality_score, ranking_key
             )
 
         else:
 
-            _, existing_is_full, _, _, _, existing_combined = (
+            _, existing_is_full, _, _, _, existing_ranking_key = (
                 existing
             )
 
@@ -401,7 +438,7 @@ def generate_candidates(
                 (is_full and not existing_is_full)
                 or (
                     is_full == existing_is_full
-                    and combined_score > existing_combined
+                    and ranking_key > existing_ranking_key
                 )
             )
 
@@ -410,15 +447,20 @@ def generate_candidates(
                 best_by_signature[signature] = (
                     values, is_full, playability_score,
                     quality_category, quality_score,
-                    combined_score
+                    ranking_key
                 )
 
     deduped = list(best_by_signature.values())
 
-    # Full voicings first, then by combined score -- never
-    # sort a reduced candidate ahead of an available full one.
+    # Full voicings first, then by ranking key (quality, then
+    # playability) descending -- never sort a reduced candidate
+    # ahead of an available full one, and never let playability
+    # override a real quality difference (see ranking_key's own
+    # comment above).
     deduped.sort(
-        key=lambda entry: (not entry[1], -entry[5])
+        key=lambda entry: (
+            not entry[1], -entry[5][0], -entry[5][1]
+        )
     )
 
     top = deduped[:max_candidates]
@@ -429,7 +471,7 @@ def generate_candidates(
 
     for (
         values, is_full, playability_score,
-        quality_category, quality_score, combined_score
+        quality_category, quality_score, ranking_key
     ) in top:
 
         shape_text = format_shape(values)

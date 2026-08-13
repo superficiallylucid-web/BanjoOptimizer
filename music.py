@@ -742,6 +742,8 @@ def classify_voicing_quality(
 
     defining = defining_tones(root_pc, quality_code)
 
+    defining_set = frozenset(defining)
+
     distinct = frozenset(sounding_pitch_classes)
 
     has_root = root_pc in distinct
@@ -764,7 +766,32 @@ def classify_voicing_quality(
 
         base_score = 0.0
 
-    coverage_bonus = len(distinct & frozenset(tones)) * 2.0
+    # Every covered tone contributes to the bonus, but the
+    # perfect 5th -- the one interval defining_tones() itself
+    # deliberately excludes from "defining" (see that function's
+    # own docstring: routinely altered or dropped in real
+    # voicings without threatening the chord's identity) -- now
+    # contributes LESS than root or any defining tone. Without
+    # this, a voicing that drops a genuinely defining tone (e.g.
+    # Cmaj7's 7th) but happens to keep the 5th scored identically
+    # to one that keeps every defining tone but drops the 5th,
+    # which contradicts this project's own stated preference for
+    # retaining root and defining tones first when a chord has no
+    # complete practical voicing available (see chord_generator.py
+    # module notes on impractical chords).
+    covered = distinct & frozenset(tones)
+
+    coverage_bonus = 0.0
+
+    for pitch_class in covered:
+
+        if pitch_class == root_pc or pitch_class in defining_set:
+
+            coverage_bonus += 2.0
+
+        else:
+
+            coverage_bonus += 0.5
 
     return category, base_score + coverage_bonus
 

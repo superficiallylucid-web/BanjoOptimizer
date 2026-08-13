@@ -211,12 +211,18 @@ class MuseScoreFile:
         confirmed directly against real StringData), or None if
         no StringData was found (e.g. a non-tab instrument).
 
-        First version: returns the FIRST StringData found in the
-        file. Every real score this project has worked with has
-        exactly one fretted instrument, so this hasn't needed to
-        be more selective yet -- a score with more than one
-        fretted instrument isn't handled specially.
+        Returns the LAST StringData found in the file, not the
+        first. A score can now genuinely have more than one
+        fretted instrument -- a source that already contained
+        TAB, plus a freshly BO-generated one -- since existing
+        TAB is deliberately preserved and ignored, never removed
+        or modified (see score_generator.py's own docs). New
+        content is always appended after whatever already
+        existed, so the last StringData in document order is
+        always the one BO most recently generated.
         """
+
+        string_data_values = None
 
         for element in self.root.iter():
 
@@ -232,9 +238,9 @@ class MuseScoreFile:
 
             if values:
 
-                return values
+                string_data_values = values
 
-        return None
+        return string_data_values
 
 
 

@@ -99,19 +99,36 @@ def test_direct_melody_realization():
 # not B3.
 
 def test_melody_present_as_inner_voice():
+    """
+    Uses C major (not Cmaj7/"0220") as the example, following
+    the chord-generator ranking fix that made voicing quality
+    take priority over playability (see chord_generator.py's
+    own comment on ranking_key) -- the old "0220" example
+    stopped demonstrating "inner voice" once fixed: "0757" now
+    correctly outranks it and achieves DIRECT_REALIZATION for
+    B3 (matching by pitch class -- 0757 sounds B4, the octave-
+    agnostic match classify_melody_realization is designed to
+    do), which is a genuine improvement, not a regression. This
+    is a different but equally real case: C major's own top-
+    ranked shape ("0350") is complete and correct (E-C-G-E,
+    verified against chord_tones()) but still doesn't put C4 as
+    its lead voice (G4 is higher) -- a real, common case where
+    even a musically correct shape has the melody note as an
+    inner voice rather than the top note.
+    """
 
     assert (
-        classify_melody_realization(A_MODAL_SAWMILL, "0220", "B3")
+        classify_melody_realization(A_MODAL_SAWMILL, "0350", "C4")
         == INDIRECT_REALIZATION
     )
 
     service = _service()
 
     result = service.select_shape_for_melody(
-        A_MODAL_SAWMILL, "C", 0, "maj7", "Maj 7", "B3"
+        A_MODAL_SAWMILL, "C", 0, "", "Major", "C4"
     )
 
-    assert result.selected_shape.shape == "0220"
+    assert result.selected_shape.shape == "0350"
 
     assert result.realization_tier == INDIRECT_REALIZATION
 
