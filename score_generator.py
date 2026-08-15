@@ -810,6 +810,38 @@ def _set_fret_diagram_content(fret_diagram_element, values):
     place. Preserves an existing <eid> if there was one;
     generates a new one otherwise.
 
+    Writes MuseScore's "Visible frets" (XML <frets>) as 4 for
+    every diagram (BO-19 -- confirmed via direct inspection of a
+    real example score that this is a SEPARATE property from
+    <strings>, easy to confuse since both happened to read 4 in
+    that file).
+
+    Also sets MuseScore's "Fret Number" (XML <fretOffset>) so a
+    shape doesn't display as an unlabeled block of empty frets
+    when it starts above the nut. BO-19, confirmed via the same
+    real example score:
+
+    - Open strings (fret 0) are always ignored when finding the
+      "lowest fret" -- they display exactly as before regardless
+      (an open-string <marker>, never affected by fretOffset).
+    - If the lowest FRETTED (non-open) value across the shape is
+      1 or there are no fretted strings at all, <fretOffset> is
+      left unset -- the normal first-position display.
+    - If the lowest fretted value is 2 or higher, <fretOffset>
+      is set to (lowest_fret - 1) -- confirmed directly: a real
+      example with <fretOffset>2</fretOffset> is the intended
+      encoding for a shape whose lowest fret is 3 (MuseScore's
+      UI "Fret Number" is fretOffset + 1 -- 1-indexed display of
+      a 0-indexed-from-the-nut offset).
+    - Critically, once fretOffset is set, each <dot fret="N">
+      becomes RELATIVE to it (N = absolute_fret - fretOffset),
+      not absolute -- confirmed directly against that same real
+      example (fretOffset=2 paired with dot values 1/2/3
+      representing absolute frets 3/4/5, not frets 1/2/3). Open
+      strings are entirely unaffected by this -- their <marker>
+      is written the same way regardless of fretOffset, since
+      they were never assigned a fret to make relative.
+
     Returns False (and leaves the element untouched) if `values`
     contains a muted string -- see module notes on why that's
     not attempted.
@@ -827,7 +859,33 @@ def _set_fret_diagram_content(fret_diagram_element, values):
         else _generate_eid()
     )
 
+    fretted_values = [
+        fret for fret in values if fret is not None and fret > 0
+    ]
+
+    lowest_fretted = min(fretted_values, default=None)
+
+    if lowest_fretted is not None and lowest_fretted >= 2:
+
+        fret_offset_value = lowest_fretted - 1
+
+    else:
+
+        fret_offset_value = 0
+
     fret_diagram_element.clear()
+
+    if fret_offset_value > 0:
+
+        fret_offset_element = ET.SubElement(
+            fret_diagram_element, "fretOffset"
+        )
+
+        fret_offset_element.text = str(fret_offset_value)
+
+    frets_element = ET.SubElement(fret_diagram_element, "frets")
+
+    frets_element.text = "4"
 
     strings_element = ET.SubElement(fret_diagram_element, "strings")
 
@@ -857,7 +915,9 @@ def _set_fret_diagram_content(fret_diagram_element, values):
 
             dot_element = ET.SubElement(string_element, "dot")
 
-            dot_element.set("fret", str(fret))
+            dot_element.set(
+                "fret", str(fret - fret_offset_value)
+            )
 
             dot_element.text = "normal"
 

@@ -253,6 +253,13 @@ def test_cmaj7_diagram_accurately_represents_selected_notes():
 
     assert fret_diagram is not None
 
+    fret_offset_element = fret_diagram.find("{*}fretOffset")
+
+    fret_offset = (
+        int(fret_offset_element.text)
+        if fret_offset_element is not None else 0
+    )
+
     written_values = {}
 
     for element in fret_diagram.iter():
@@ -265,9 +272,12 @@ def test_cmaj7_diagram_accurately_represents_selected_notes():
 
         elif tag == "dot":
 
+            # BO-19: dot fret values are RELATIVE to fretOffset
+            # when it's set -- add it back to get the absolute
+            # fret, matching what was actually selected.
             written_values[string_no] = int(
                 element.attrib["fret"]
-            )
+            ) + fret_offset
 
         elif tag == "marker":
 
