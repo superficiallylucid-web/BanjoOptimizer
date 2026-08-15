@@ -223,7 +223,8 @@ def generate_candidates(
     root_pc,
     quality_code,
     quality_display,
-    max_candidates=MAX_CANDIDATES
+    max_candidates=MAX_CANDIDATES,
+    melody_pitches=None
 ):
     """
     Generate up to max_candidates ChordShapes for one chord in
@@ -254,6 +255,26 @@ def generate_candidates(
         music.chord_tones(), e.g. "" for major, "m" for minor
     quality_display: how the quality should read in the
         ChordShape, e.g. "Major"
+
+    melody_pitches: optional set/list of exact MIDI values
+        (BO-20) -- when given, the normal per-string search
+        (0..FRET_CEILING) is extended, per string, to ALSO
+        include whichever single fret on that string would
+        produce one of these exact pitches, even beyond
+        FRET_CEILING, PROVIDED that pitch is itself one of this
+        chord's own tones (a melody pitch that isn't a chord
+        tone at all can't participate in a valid "covers every
+        chord tone" combination anyway, the same as any other
+        pitch that isn't a chord tone). This exists so a chord
+        shape that genuinely supports a specific melody note
+        isn't missed purely because that note sits above the
+        normal search ceiling -- everything found this way still
+        goes through the exact same hand-span and
+        playability.py acceptance checks as every other
+        candidate, so this never bypasses practicality, only
+        widens what gets a chance to be considered. None (the
+        default) reproduces the exact prior search range, for
+        every existing caller that doesn't pass this.
 
     Each returned ChordShape has .inversion, .top_note,
     .average_fret, .hand_span, .generator_score,
@@ -291,6 +312,37 @@ def generate_candidates(
         )
         for open_note in melody_strings
     ]
+
+    if melody_pitches:
+
+        for string_index, open_note in enumerate(melody_strings):
+
+            for pitch in melody_pitches:
+
+                fret = pitch - open_note
+
+                if fret <= FRET_CEILING or fret > 22:
+
+                    # Already in range, unreachable on this
+                    # string, or beyond a full neck -- nothing
+                    # to add.
+                    continue
+
+                if (pitch % 12) not in tones:
+
+                    # Not a chord tone -- can't be part of a
+                    # valid "covers every chord tone"
+                    # combination regardless.
+                    continue
+
+                if fret not in per_string_frets[string_index]:
+
+                    per_string_frets[string_index].append(fret)
+
+        for frets in per_string_frets:
+
+            frets.sort()
+
 
     if any(not frets for frets in per_string_frets):
 

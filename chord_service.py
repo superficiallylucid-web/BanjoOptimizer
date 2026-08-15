@@ -54,12 +54,16 @@ from chord_generator import generate_candidates
 
 from playability import evaluate as evaluate_playability
 
-from music import note_name_to_pitch_class, chord_tones
+from music import (
+    note_name_to_pitch_class, chord_tones,
+    ROOT_PRESENT, ROOTLESS_STRONG, ROOTLESS_WEAK
+)
 
 from fretboard import (
     calculate_shape_metadata,
     find_melody_occurrences,
     classify_melody_realization,
+    sounding_notes,
     DIRECT_REALIZATION,
     INDIRECT_REALIZATION
 )
@@ -221,7 +225,8 @@ class ChordService:
         root,
         root_pc,
         quality_code,
-        quality_display
+        quality_display,
+        melody_pitches=None
     ):
         """
         Return one merged, deduplicated list of ChordShapes
@@ -238,6 +243,14 @@ class ChordService:
             library CSV for the verified lookup to match.
         root_pc, quality_code: used only for chord generation,
             e.g. 0, "" for C major.
+        melody_pitches: optional set/list of exact MIDI values,
+            forwarded unchanged to generate_candidates() (BO-20)
+            -- see that function's own docstring for exactly
+            what this does (widens the per-string search when
+            needed to reach a specific melody pitch; never
+            affects verified/library shapes, and never bypasses
+            playability.py's own acceptance check). None (the
+            default) reproduces the exact prior behavior.
 
         Each returned ChordShape has .source set to "verified"
         or "generated" (see ChordShape in models.py) so callers
@@ -279,7 +292,8 @@ class ChordService:
             root=root,
             root_pc=root_pc,
             quality_code=quality_code,
-            quality_display=quality_display
+            quality_display=quality_display,
+            melody_pitches=melody_pitches
         )
 
         verified_shape_strings = {
@@ -304,6 +318,98 @@ class ChordService:
 
 
         return verified_shapes + new_generated_shapes
+
+
+    def get_shapes_for_exact_melody_pitch(
+        self,
+        tuning,
+        root,
+        root_pc,
+        quality_code,
+        quality_display,
+        melody_pitches
+    ):
+        """
+        Same result as get_shapes(), reordered to strongly
+        prefer shapes that sound at least one of melody_pitches
+        somewhere among their sounding notes -- BO-20.
+
+        melody_pitches: a set/list of EXACT MIDI values (e.g.
+        the melody note(s) occurring at a chord's exact musical
+        onset -- pass more than one when multiple melody notes
+        share that same location, such as a block chord within
+        the melody line itself; see
+        score_generator._melody_notes_at_harmony_onset(), which
+        is what actually builds this set from real melody data).
+        Pass None or an empty collection to get exactly
+        get_shapes()'s order back unchanged -- the explicit
+        fallback for "no melody note at this chord's location."
+
+        Deliberately compares EXACT pitch (MIDI value), not
+        merely pitch class -- unlike get_shapes_for_melody()
+        above, which matches by pitch class for a different,
+        pre-existing purpose (melody-realization diagnostics,
+        where "some octave of this note" is the right question).
+        Here, a chord shape is meant to directly SUPPORT a
+        specific melody note being played at that moment, so it
+        needs to sound that exact note, not just some octave of
+        it. Reuses fretboard.sounding_notes() unmodified -- no
+        new pitch representation introduced.
+
+        Ranking: within EACH existing voicing-quality CATEGORY
+        (ROOT_PRESENT / ROOTLESS_STRONG / ROOTLESS_WEAK -- the
+        existing coarse "how musically appropriate is this
+        voicing" measure, see music.classify_voicing_quality()),
+        shapes containing a melody pitch are moved ahead of ones
+        that don't. This is a STABLE reordering -- Python's own
+        sorted() guarantee -- so get_shapes()'s own ordering
+        (quality score, then playability, then verified-before-
+        generated) is otherwise preserved exactly WITHIN each
+        (category, melody-match) group: a shape's fine-grained
+        ranking among its peers never changes, only whether
+        melody-matching ones within the SAME category move ahead
+        of non-matching ones in that same category.
+
+        Deliberately does NOT let melody-matching reach across
+        categories: a ROOT_PRESENT shape without the melody note
+        still outranks a ROOTLESS shape WITH it -- a clearly
+        superior, complete voicing is never sacrificed for an
+        incomplete one just because the incomplete one happens
+        to contain the melody pitch.
+        """
+
+        shapes = self.get_shapes(
+            tuning, root, root_pc, quality_code, quality_display,
+            melody_pitches=melody_pitches
+        )
+
+        pitches = set(melody_pitches) if melody_pitches else set()
+
+        if not pitches:
+
+            return shapes
+
+        category_rank = {
+            ROOT_PRESENT: 2,
+            ROOTLESS_STRONG: 1,
+            ROOTLESS_WEAK: 0
+        }
+
+        def sort_key(shape):
+
+            rank = category_rank.get(
+                shape.voicing_quality_category, -1
+            )
+
+            notes = sounding_notes(tuning, shape.shape)
+
+            contains_melody_pitch = any(
+                note.midi in pitches for note in notes
+            )
+
+            return (-rank, not contains_melody_pitch)
+
+        return sorted(shapes, key=sort_key)
 
 
     def get_shapes_for_melody(

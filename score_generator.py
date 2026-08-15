@@ -924,13 +924,63 @@ def _set_fret_diagram_content(fret_diagram_element, values):
     return True
 
 
-def _apply_chord_shapes(staff_element, harmonies, tuning, chord_service):
+def _melody_notes_at_harmony_onset(harmony, melody_notes):
+    """
+    Every melody Note (see models.py) occurring at exactly the
+    same musical location (measure + beat) as harmony's own
+    onset -- BO-20. Matched by (measure, beat), the same units
+    both Harmony and Note already use (see Harmony's own
+    docstring in models.py: beat is quarter-note position
+    within the measure, computed identically for both by
+    parser.py's duration-accumulation logic), so no new
+    representation is introduced here.
+
+    Returns a (possibly empty) list -- more than one Note can
+    legitimately share the exact same onset (e.g. a block chord
+    within the melody line itself, or overlapping voices); every
+    one of them counts as "the melody note(s) at this chord's
+    location," not just an arbitrarily-chosen first match. Empty
+    means no melody note exists at this chord's exact onset --
+    callers should fall back to the existing, non-melody-aware
+    selection for that case, not search nearby.
+    """
+
+    matches = []
+
+    for note in melody_notes:
+
+        if note.measure != harmony.measure:
+
+            continue
+
+        if abs(note.beat - harmony.beat) < 0.001:
+
+            matches.append(note)
+
+    return matches
+
+
+def _apply_chord_shapes(
+    staff_element, harmonies, tuning, chord_service,
+    melody_notes=None
+):
     """
     For each chord symbol on staff_element, obtain a playable
-    shape for `tuning` via the EXISTING chord_service.get_shapes()
-    (unmodified -- the top-ranked result is used directly, no
-    new selection logic) and write it into the corresponding
-    <FretDiagram>, creating one if none exists.
+    shape for `tuning` via chord_service and write it into the
+    corresponding <FretDiagram>, creating one if none exists.
+
+    melody_notes: optional list of melody Note objects (BO-20) --
+    when given, each chord's shape selection prefers a voicing
+    that contains the exact pitch of whatever melody note(s)
+    occur at that chord's own musical onset (see
+    _melody_notes_at_harmony_onset() and
+    chord_service.get_shapes_for_exact_melody_pitch() for the
+    matching/ranking logic itself -- this function only wires
+    the two together). Falls back to the existing, non-melody-
+    aware chord_service.get_shapes() when melody_notes is None,
+    or when no melody note exists at a given chord's exact
+    onset -- unchanged behavior for both of those cases,
+    matching every prior task's own tests exactly.
 
     harmonies: the ALREADY-PARSED list of Harmony objects for
     this exact staff (see parser.read_harmonies()) -- root_pc/
@@ -982,13 +1032,40 @@ def _apply_chord_shapes(staff_element, harmonies, tuning, chord_service):
 
             continue
 
-        shapes = chord_service.get_shapes(
-            tuning,
-            root_name,
-            harmony.root_pc,
-            harmony.quality_code,
-            quality_display
-        )
+        melody_pitches = None
+
+        if melody_notes is not None:
+
+            onset_notes = _melody_notes_at_harmony_onset(
+                harmony, melody_notes
+            )
+
+            if onset_notes:
+
+                melody_pitches = {
+                    note.midi for note in onset_notes
+                }
+
+        if melody_pitches:
+
+            shapes = chord_service.get_shapes_for_exact_melody_pitch(
+                tuning,
+                root_name,
+                harmony.root_pc,
+                harmony.quality_code,
+                quality_display,
+                melody_pitches
+            )
+
+        else:
+
+            shapes = chord_service.get_shapes(
+                tuning,
+                root_name,
+                harmony.root_pc,
+                harmony.quality_code,
+                quality_display
+            )
 
         if not shapes:
 
@@ -1389,10 +1466,31 @@ def generate_chord_diagrams_only(
 
     score_file.score.harmonies = saved_score_harmonies
 
+    # Same save/restore pattern as harmonies above, and for the
+    # same reason: notation_staff_number can differ from
+    # whatever staff the caller originally read melody notes
+    # for (the rare case where read_melody_notes() itself landed
+    # on a TAB staff -- see _find_notation_staff_element()'s own
+    # docstring), so melody notes are re-read here specifically
+    # for the correct staff via the EXISTING read_staff_notes()
+    # -- not re-derived by hand -- with the caller's own
+    # already-parsed state saved and restored around it (BO-20).
+    saved_notes = score_file.notes
+
+    saved_score_notes = score_file.score.notes
+
+    score_file.read_staff_notes(notation_staff_number)
+
+    staff_melody_notes = list(score_file.score.notes)
+
+    score_file.notes = saved_notes
+
+    score_file.score.notes = saved_score_notes
+
     chord_shapes_applied, chord_shapes_skipped = (
         _apply_chord_shapes(
             notation_staff_element, staff_harmonies, tuning,
-            chord_service
+            chord_service, melody_notes=staff_melody_notes
         )
     )
 
