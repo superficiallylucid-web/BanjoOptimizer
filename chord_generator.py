@@ -313,27 +313,46 @@ def generate_candidates(
         for open_note in melody_strings
     ]
 
-    if melody_pitches:
+    melody_pitch_classes_that_are_chord_tones = {
+        pitch % 12 for pitch in (melody_pitches or [])
+        if (pitch % 12) in tones
+    } if melody_pitches else set()
 
+    if melody_pitch_classes_that_are_chord_tones:
+
+        # A melody note needing a high fret on ONE string often
+        # means the whole shape needs to sit up the neck to stay
+        # practical (BO-21-FOLLOWUP: a melody note at fret 12
+        # was only reachable at all via a shape using frets
+        # 10/10/12 together -- confirmed directly, hand_span=2,
+        # genuinely comfortable). Widening the search for only
+        # the single matching fret on the single matching string
+        # (the original approach) can't find that: every
+        # combination pairing a high fret there with the normal
+        # low-position options everywhere else has a huge hand
+        # span and never survives the filter below. So every
+        # string's search is widened to the full practical neck
+        # (up to 22 frets, matching this project's own existing
+        # full-neck outer bound elsewhere) for chord-tone-
+        # producing frets, not just the one melody pitch's own
+        # exact fret -- the existing hand-span/playability
+        # filters, unchanged, still do the actual practicality
+        # filtering from this wider pool exactly as they always
+        # have.
+        #
+        # Only done at all when the melody pitch is genuinely a
+        # chord tone (checked above) -- if it isn't, no shape
+        # could ever contain it regardless of how far the search
+        # reaches, so widening would only add unrelated
+        # candidates and needlessly change the ranking even when
+        # melody-awareness can't help this chord at all.
         for string_index, open_note in enumerate(melody_strings):
 
-            for pitch in melody_pitches:
+            wider_frets = find_frets_for_pitch_classes(
+                open_note, tones, 22
+            )
 
-                fret = pitch - open_note
-
-                if fret <= FRET_CEILING or fret > 22:
-
-                    # Already in range, unreachable on this
-                    # string, or beyond a full neck -- nothing
-                    # to add.
-                    continue
-
-                if (pitch % 12) not in tones:
-
-                    # Not a chord tone -- can't be part of a
-                    # valid "covers every chord tone"
-                    # combination regardless.
-                    continue
+            for fret in wider_frets:
 
                 if fret not in per_string_frets[string_index]:
 

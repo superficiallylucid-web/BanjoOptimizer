@@ -181,22 +181,34 @@ def find_frets_for_pitch_classes(
 
 
 # ---------------------------------------------------------
-# Shape string parsing (supports muted strings)
+# Shape string parsing (supports muted strings and, since
+# BO-21-FOLLOWUP, frets 10 and above)
 # ---------------------------------------------------------
 #
 # A chord shape string is one token per string, 4th string to
 # 1st. Most tokens are a single fret digit (0-9); a muted
-# string is the two characters "--". No delimiter is needed
-# between tokens, since a fret is always a single digit in
-# this project and "-" never means anything else -- scanning
-# left to right, a "-" unambiguously starts a 2-character mute
-# token, and any other character is a 1-character fret digit.
+# string is the two characters "--"; a fret of 10 or higher is
+# wrapped in parentheses, e.g. "(10)" or "(12)" -- scanning
+# left to right, "-" unambiguously starts a 2-character mute
+# token, "(" unambiguously starts a multi-digit fret token
+# (read until the matching ")"), and any other character is a
+# 1-character fret digit. Parentheses never appeared in any
+# shape string before this, so every existing shape (including
+# every verified shape in the chord library CSVs) keeps parsing
+# exactly as before.
+#
+# Added because a real melody note can require a high-neck
+# fret to be represented at all -- confirmed directly: the
+# final chord of a real score needed fret 12 on one string
+# (BO-21-FOLLOWUP), which the prior single-digit-only format
+# could not encode (format_shape([0,10,10,12]) previously
+# produced the corrupted, ambiguous string "0101012").
 #
 # This keeps every existing fully-fretted shape (e.g. "2012",
 # including every shape already in the verified chord library
 # CSVs) in exactly the same format as before -- parse_shape()
-# reads those correctly with no muted tokens at all. Only
-# shapes that actually mute a string use the longer format.
+# reads those correctly with no muted or multi-digit tokens at
+# all. Only shapes that actually need one use the longer format.
 
 MUTE = "--"
 
@@ -204,7 +216,10 @@ MUTE = "--"
 def parse_shape(shape_text):
     """
     Parse a shape string into a list of one value per string:
-    an int fret number, or None for a muted string.
+    an int fret number, or None for a muted string. Handles
+    single-digit frets (e.g. "2"), muted strings ("--"), and
+    multi-digit frets wrapped in parentheses (e.g. "(12)") --
+    see this module's own notes above.
     """
 
     values = []
@@ -219,6 +234,14 @@ def parse_shape(shape_text):
 
             i += 2
 
+        elif shape_text[i] == "(":
+
+            close_index = shape_text.index(")", i)
+
+            values.append(int(shape_text[i + 1:close_index]))
+
+            i = close_index + 1
+
         else:
 
             values.append(int(shape_text[i]))
@@ -231,7 +254,10 @@ def parse_shape(shape_text):
 def format_shape(values):
     """
     Inverse of parse_shape(): build a shape string from a list
-    of fret numbers / None (muted).
+    of fret numbers / None (muted). A fret of 10 or higher is
+    wrapped in parentheses (e.g. "(12)") -- see this module's
+    own notes above on why, and on why this never changes the
+    output for any single-digit shape.
     """
 
     parts = []
@@ -241,6 +267,10 @@ def format_shape(values):
         if value is None:
 
             parts.append(MUTE)
+
+        elif value >= 10:
+
+            parts.append(f"({value})")
 
         else:
 

@@ -395,9 +395,11 @@ def test_full_pipeline_notation_only_uses_treble_clef_melody():
 
     service = _service()
 
-    output_path, applied, skipped = generate_chord_diagrams_only(
-        p, DOUBLE_D, staff_used, "output", service,
-        filename="test_bo20_notation_only.mscz"
+    output_path, applied, skipped, exceptions = (
+        generate_chord_diagrams_only(
+            p, DOUBLE_D, staff_used, "output", service,
+            filename="test_bo20_notation_only.mscz"
+        )
     )
 
     try:
@@ -461,7 +463,7 @@ def test_bo19_fret_number_and_visible_frets_still_correct():
 
     service = _service()
 
-    applied, skipped = _apply_chord_shapes(
+    applied, skipped, exceptions = _apply_chord_shapes(
         staff, [harmony], DOUBLE_D, service,
         melody_notes=melody_notes
     )
@@ -476,8 +478,9 @@ def test_bo19_fret_number_and_visible_frets_still_correct():
 
     fret_offset_element = fret_diagram.find("{*}fretOffset")
 
-    # The melody-driven shape here uses fret 8 -- well above 4,
-    # so BO-19's fretOffset behavior must be active.
+    # BO-20's own search-widening means the actual lowest fret
+    # used here can vary; whatever it is, BO-19's fretOffset
+    # behavior must still apply correctly to it.
     dots_absolute = {}
 
     fret_offset = (
@@ -507,10 +510,19 @@ def test_bo19_fret_number_and_visible_frets_still_correct():
 
             dots_absolute[string_no] = 0
 
-    assert 72 - DOUBLE_D.notes[4] in dots_absolute.values(), (
-        "expected the melody-driven fret (matching C5 on the "
-        "1st string) to appear among the written absolute fret "
-        "values"
+    open_notes = DOUBLE_D.notes[1:]  # 4th to 1st
+
+    sounding_midi_values = {
+        open_notes[string_no] + fret
+        for string_no, fret in dots_absolute.items()
+    }
+
+    assert 72 in sounding_midi_values, (
+        "expected the melody pitch C5 (72) to appear among the "
+        "shape's actual sounding notes, on whichever string the "
+        "selected shape happens to put it -- the melody note "
+        "doesn't have to land on any particular string (see "
+        "score_generator.py's own module notes on this)"
     )
 
     lowest_fretted = min(
