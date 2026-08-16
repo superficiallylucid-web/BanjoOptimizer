@@ -297,6 +297,8 @@ else:
 
         generation_chord_service = ChordService(ChordLibrary())
 
+        all_melody_exceptions = []
+
         for item in top_results:
 
             try:
@@ -304,7 +306,8 @@ else:
                 target_tuning = get_tunings()[item.name]
 
                 (
-                    generated_path, shapes_applied, shapes_skipped
+                    generated_path, shapes_applied, shapes_skipped,
+                    melody_exceptions
                 ) = generate_chord_diagrams_only(
                     score,
                     target_tuning,
@@ -321,8 +324,15 @@ else:
                         "skipped"
                         if shapes_skipped else ""
                     )
+                    + (
+                        f", {len(melody_exceptions)} melody/chord "
+                        "exceptions"
+                        if melody_exceptions else ""
+                    )
                     + ")"
                 )
+
+                all_melody_exceptions.extend(melody_exceptions)
 
             except Exception as error:
 
@@ -332,6 +342,51 @@ else:
                 )
 
         print()
+
+        # -----------------------------------------------------
+        # Melody/Chord Exceptions -- BO-21. A chord had a melody
+        # note at its own onset, but no practical chord shape
+        # containing that exact pitch existed, so the normal
+        # best fallback shape was used and marked red in the
+        # generated FretDiagram (see score_generator.py's own
+        # _apply_chord_shapes()/_set_fret_diagram_content() for
+        # the detection/marking itself -- this is purely
+        # reporting what those already found). Only printed when
+        # at least one exists, matching this project's own
+        # existing convention of not printing empty sections.
+        # -----------------------------------------------------
+
+        if all_melody_exceptions:
+
+            output(
+                "Melody/Chord Exceptions\n"
+                "-----------------------\n"
+            )
+
+            for index, exception in enumerate(
+                all_melody_exceptions, start=1
+            ):
+
+                output(
+                    f"{index}. Measure {exception['measure']}, "
+                    f"beat {exception['beat']}"
+                )
+
+                output(f"   Chord: {exception['chord_symbol']}")
+
+                output(f"   Melody: {exception['melody_pitch']}")
+
+                output(
+                    f"   Selected shape: "
+                    f"{exception['selected_shape']}"
+                )
+
+                output(f"   Tuning: {exception['tuning_symbol']}")
+
+                output(
+                    "   No practical chord shape containing "
+                    "the melody pitch was found.\n"
+                )
 
 
 
