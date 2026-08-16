@@ -64,9 +64,12 @@ from fretboard import (
     find_melody_occurrences,
     classify_melody_realization,
     sounding_notes,
+    parse_shape,
     DIRECT_REALIZATION,
     INDIRECT_REALIZATION
 )
+
+from playing_model import _chord_working_fret
 
 from models import (
     MelodyRealizationMatch,
@@ -207,6 +210,50 @@ def diagnose_melody_realization(
     )
 
 
+POSITION_DISTANCE_CAP = 5  # frets; matches playing_model.py's
+# own CONTINUITY_MOVE_DAMPENING_START, reused for consistency
+# rather than inventing a new number. Caps how much a candidate
+# can be penalized for being far from the melody's preferred
+# position -- this is a TIEBREAK among candidates already tied
+# on category and melody-pitch-containment (see
+# get_shapes_for_exact_melody_pitch()'s own docstring), so
+# capping it here is defensive, not load-bearing: it can never
+# reach past those two priorities regardless, but a cap keeps
+# it from ever growing large enough to swamp the further,
+# lower-priority playability tiebreak below it either.
+
+
+def _capped_position_distance(shape, preferred_melody_fret):
+    """
+    BO-22: distance between a candidate ChordShape's own working
+    fret (playing_model._chord_working_fret() -- REUSED
+    unmodified, not a competing definition) and
+    preferred_melody_fret, capped at POSITION_DISTANCE_CAP.
+
+    Returns 0 (neutral -- no distance penalty) when
+    preferred_melody_fret is None (no playable melody position
+    was determined) or when the shape has no working fret at all
+    (an all-open shape has no hand position to be distant from,
+    matching playing_model._continuity_bonus()'s own handling of
+    this same case).
+    """
+
+    if preferred_melody_fret is None:
+
+        return 0
+
+    working_fret = _chord_working_fret(parse_shape(shape.shape))
+
+    if working_fret is None:
+
+        return 0
+
+    return min(
+        abs(working_fret - preferred_melody_fret),
+        POSITION_DISTANCE_CAP
+    )
+
+
 class ChordService:
     """
     Combines a ChordLibrary (verified/player data) with the
@@ -327,12 +374,17 @@ class ChordService:
         root_pc,
         quality_code,
         quality_display,
-        melody_pitches
+        melody_pitches,
+        preferred_melody_fret=None
     ):
         """
         Same result as get_shapes(), reordered to strongly
         prefer shapes that sound at least one of melody_pitches
-        somewhere among their sounding notes -- BO-20.
+        somewhere among their sounding notes -- BO-20. Also
+        prefers, as a narrower tiebreak among otherwise-equal
+        candidates, a chord shape whose own working position is
+        close to where the melody note is likely actually being
+        played -- BO-22.
 
         melody_pitches: a set/list of EXACT MIDI values (e.g.
         the melody note(s) occurring at a chord's exact musical
@@ -356,26 +408,74 @@ class ChordService:
         it. Reuses fretboard.sounding_notes() unmodified -- no
         new pitch representation introduced.
 
-        Ranking: within EACH existing voicing-quality CATEGORY
-        (ROOT_PRESENT / ROOTLESS_STRONG / ROOTLESS_WEAK -- the
-        existing coarse "how musically appropriate is this
-        voicing" measure, see music.classify_voicing_quality()),
-        shapes containing a melody pitch are moved ahead of ones
-        that don't. This is a STABLE reordering -- Python's own
-        sorted() guarantee -- so get_shapes()'s own ordering
-        (quality score, then playability, then verified-before-
-        generated) is otherwise preserved exactly WITHIN each
-        (category, melody-match) group: a shape's fine-grained
-        ranking among its peers never changes, only whether
-        melody-matching ones within the SAME category move ahead
-        of non-matching ones in that same category.
+        preferred_melody_fret: BO-22, optional -- the fret the
+        melody note is likely actually played at (see
+        score_generator._apply_chord_shapes(), which computes
+        this via the EXISTING fretboard.find_positions()/
+        best_position(), not a new position representation).
+        None (the default) disables this tiebreak entirely,
+        reproducing BO-20/21's own prior ranking exactly -- the
+        explicit fallback for "no playable melody position could
+        be determined."
 
-        Deliberately does NOT let melody-matching reach across
-        categories: a ROOT_PRESENT shape without the melody note
-        still outranks a ROOTLESS shape WITH it -- a clearly
-        superior, complete voicing is never sacrificed for an
-        incomplete one just because the incomplete one happens
-        to contain the melody pitch.
+        Ranking, in priority order (BO-22-FOLLOWUP fixed a real
+        defect in step 3/4's original ordering -- see below):
+
+        1. Voicing quality CATEGORY (ROOT_PRESENT /
+           ROOTLESS_STRONG / ROOTLESS_WEAK -- see
+           music.classify_voicing_quality()). Never crossed by
+           anything below -- a clearly superior, complete
+           voicing is never sacrificed for an inferior one, no
+           matter how well the inferior one matches the melody
+           pitch or its position.
+        2. Exact melody-pitch containment, WITHIN the same
+           category (BO-20's own priority, unchanged).
+        3. The finer-grained voicing_quality_score itself (BO-22-
+           FOLLOWUP, NEW position in the ordering): within the
+           same category and melody-match outcome, a candidate
+           with a HIGHER quality_score (e.g. one that happens to
+           include the non-defining 5th, or otherwise covers more
+           of the chord) is preferred before position is ever
+           consulted. This closes a real bug found by direct
+           investigation: for Cmaj7 in aEADE with melody B4, a
+           complete C-E-G-B voicing (quality_score 21.5) was
+           previously losing to an incomplete C-E-B voicing
+           (quality_score 21.0) purely because the incomplete one
+           happened to sit one fret closer to the melody's
+           preferred position -- step 3 previously only checked
+           category (coarse), never the finer quality_score that
+           actually distinguished the two candidates, so a real,
+           meaningful quality difference was being swallowed into
+           the "tied" bucket that position then decided. The
+           fix does not touch how quality_score itself is
+           computed (music.classify_voicing_quality(), unchanged)
+           -- only where it participates in this ranking.
+        4. Positional compatibility (BO-22): among candidates
+           still tied after all three priorities above, prefer
+           the one whose own working fret (see
+           playing_model._chord_working_fret() -- REUSED
+           unmodified, not a competing definition: a chord's
+           lowest FRETTED position, ignoring open strings, which
+           correctly still resolves to None/neutral for an all-
+           open shape) is closer to preferred_melody_fret. The
+           distance is CAPPED (see POSITION_DISTANCE_CAP below)
+           so it can only ever break a tie among otherwise-equal
+           candidates -- it can never grow large enough to
+           overwhelm any priority above it, and it never even
+           activates unless a candidate already survived all of
+           them.
+        5. The existing playability_score tiebreak (BO-18/
+           unchanged), preserved automatically by Python's
+           stable sort -- get_shapes()'s own prior ordering
+           (quality score, then playability, then verified-
+           before-generated) is otherwise kept exactly as-is
+           within each (category, melody-match, quality_score,
+           position-distance) group.
+
+        This is entirely additive: passing preferred_melody_fret
+        =None (its default) reproduces BO-20/21's own ranking
+        with no change at all, and every existing caller that
+        doesn't pass it is completely unaffected.
         """
 
         shapes = self.get_shapes(
@@ -407,7 +507,15 @@ class ChordService:
                 note.midi in pitches for note in notes
             )
 
-            return (-rank, not contains_melody_pitch)
+            position_distance = _capped_position_distance(
+                shape, preferred_melody_fret
+            )
+
+            return (
+                -rank, not contains_melody_pitch,
+                -shape.voicing_quality_score,
+                position_distance
+            )
 
         return sorted(shapes, key=sort_key)
 

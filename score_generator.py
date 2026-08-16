@@ -81,9 +81,13 @@ import xml.etree.ElementTree as ET
 
 from pathlib import Path
 
-from fretboard import find_positions, best_position, parse_shape
+from fretboard import (
+    find_positions, best_position, parse_shape, sounding_notes
+)
 
-from music import quality_code_to_display_name, pitch_name
+from music import (
+    quality_code_to_display_name, pitch_name, midi_to_note_name
+)
 
 
 def _sanitize_filename(text):
@@ -800,7 +804,9 @@ def _generate_eid():
     ).rstrip("=")
 
 
-def _set_fret_diagram_content(fret_diagram_element, values):
+def _set_fret_diagram_content(
+    fret_diagram_element, values, is_exception=False
+):
     """
     (Re)write a <FretDiagram> element's content for `values`
     (parse_shape() output -- one entry per string, int fret,
@@ -845,6 +851,19 @@ def _set_fret_diagram_content(fret_diagram_element, values):
     Returns False (and leaves the element untouched) if `values`
     contains a muted string -- see module notes on why that's
     not attempted.
+
+    is_exception: BO-21 -- when True, marks the diagram red
+    (<color r="255" g="0" b="4" a="255" />, a direct child of
+    FretDiagram itself, sitting after <eid> and before the
+    inner <fretDiagram> -- confirmed by direct inspection of a
+    real MuseScore file with a manually-colored FretDiagram, not
+    guessed) to flag that this chord's melody note at its own
+    onset could not be included in a practical voicing, and the
+    normal best fallback shape was used instead. Never changes
+    which shape is written -- `values` is still whatever the
+    caller already selected; this only affects the diagram's
+    color. False (the default) omits <color> entirely, matching
+    every FretDiagram this project generated before BO-21.
     """
 
     if any(value is None for value in values):
@@ -895,6 +914,32 @@ def _set_fret_diagram_content(fret_diagram_element, values):
 
     eid_element.text = eid_text
 
+    if is_exception:
+
+        # Confirmed by direct inspection of a real MuseScore
+        # file with a manually-colored FretDiagram (BO-21) --
+        # <color> is a direct child of FretDiagram itself (not
+        # of individual strings/dots -- it colors the whole
+        # diagram at once), sitting after <eid> and before the
+        # inner <fretDiagram>. r=255 g=0 b=4 a=255 is the exact
+        # value from that real file -- reproduced verbatim
+        # rather than substituting a "pure" red guess. A normal
+        # (non-exception) diagram simply omits this element
+        # entirely, matching every FretDiagram this project has
+        # generated before BO-21 -- confirmed none of them ever
+        # had a <color> child.
+        color_element = ET.SubElement(
+            fret_diagram_element, "color"
+        )
+
+        color_element.set("r", "255")
+
+        color_element.set("g", "0")
+
+        color_element.set("b", "4")
+
+        color_element.set("a", "255")
+
     inner_element = ET.SubElement(fret_diagram_element, "fretDiagram")
 
     for string_index, fret in enumerate(values):
@@ -922,6 +967,42 @@ def _set_fret_diagram_content(fret_diagram_element, values):
             dot_element.text = "normal"
 
     return True
+
+
+def _preferred_melody_fret(onset_notes, tuning):
+    """
+    BO-22: the fret the melody note at a chord's onset is
+    likely actually played at, using the EXISTING
+    fretboard.find_positions()/best_position() unmodified -- no
+    new melody-position representation introduced, per the
+    investigation's own explicit instruction.
+
+    onset_notes: the melody Note(s) at this chord's exact onset
+    (see _melody_notes_at_harmony_onset()) -- when more than one
+    shares the onset, this uses the first, matching this task's
+    own singular framing ("the melody note occurring at the
+    chord's onset"); a full account of multiple simultaneous
+    melody notes is out of scope for this narrow tiebreak.
+
+    Returns an int fret, or None if there's no note to work
+    from, or no playable position exists for it in this tuning
+    (find_positions() returned nothing) -- callers should treat
+    None as "no positional preference," not an error.
+    """
+
+    if not onset_notes:
+
+        return None
+
+    open_notes = tuning.notes[1:]
+
+    positions = find_positions(onset_notes[0].midi, open_notes)
+
+    if not positions:
+
+        return None
+
+    return best_position(positions)["fret"]
 
 
 def _melody_notes_at_harmony_onset(harmony, melody_notes):
@@ -993,10 +1074,23 @@ def _apply_chord_shapes(
     proceed and no chord shapes are written at all, rather than
     risk pairing a shape with the wrong chord symbol.
 
-    Returns (applied_count, skipped_count) -- skipped_count
-    covers every case this deliberately doesn't attempt:
-    unrecognized quality code, no usable shape for this tuning,
-    or a muted-string shape (see module notes).
+    Returns (applied_count, skipped_count, exceptions) --
+    skipped_count covers every case this deliberately doesn't
+    attempt: unrecognized quality code, no usable shape for
+    this tuning, or a muted-string shape (see module notes).
+
+    exceptions: BO-21 -- a list of dicts, one per chord where a
+    melody note existed at the chord's exact onset but no
+    practical shape containing that exact pitch existed, so the
+    normal fallback shape was used and its FretDiagram was
+    marked red (see _set_fret_diagram_content()'s own docstring
+    for the red-marking mechanism). Each dict has measure, beat,
+    chord_symbol, melody_pitch, selected_shape, tuning_symbol --
+    enough to build the report section BO-21 asks for without
+    the caller needing to re-derive anything. Always an empty
+    list when melody_notes is None (matching the pre-BO-21
+    behavior exactly -- no melody awareness means no exceptions
+    either).
     """
 
     xml_harmony_elements = [
@@ -1006,7 +1100,7 @@ def _apply_chord_shapes(
 
     if len(xml_harmony_elements) != len(harmonies):
 
-        return 0, len(harmonies)
+        return 0, len(harmonies), []
 
     parent_map = {
         child: parent
@@ -1017,6 +1111,8 @@ def _apply_chord_shapes(
     applied_count = 0
 
     skipped_count = 0
+
+    exceptions = []
 
     for xml_harmony, harmony in zip(xml_harmony_elements, harmonies):
 
@@ -1048,13 +1144,18 @@ def _apply_chord_shapes(
 
         if melody_pitches:
 
+            preferred_melody_fret = _preferred_melody_fret(
+                onset_notes, tuning
+            )
+
             shapes = chord_service.get_shapes_for_exact_melody_pitch(
                 tuning,
                 root_name,
                 harmony.root_pc,
                 harmony.quality_code,
                 quality_display,
-                melody_pitches
+                melody_pitches,
+                preferred_melody_fret=preferred_melody_fret
             )
 
         else:
@@ -1076,6 +1177,45 @@ def _apply_chord_shapes(
         chosen_shape = shapes[0]
 
         values = parse_shape(chosen_shape.shape)
+
+        # BO-21: an exception is when a melody note existed at
+        # this chord's exact onset (melody_pitches was set) but
+        # the shape BO-20 actually selected doesn't contain any
+        # of those exact pitches -- i.e. no practical melody-
+        # containing voicing existed, so the normal fallback
+        # shape was used as-is. Checked directly against the
+        # chosen shape's own sounding notes (exact MIDI pitch,
+        # not pitch class, matching BO-20's own requirement) --
+        # never inferred from ranking internals.
+        is_exception = False
+
+        if melody_pitches and not any(
+            value is None for value in values
+        ):
+
+            sounding = sounding_notes(tuning, chosen_shape.shape)
+
+            is_exception = not any(
+                note.midi in melody_pitches for note in sounding
+            )
+
+        if is_exception:
+
+            exceptions.append({
+                "measure": harmony.measure,
+                "beat": harmony.beat,
+                "chord_symbol": harmony.symbol,
+                "melody_pitch": (
+                    midi_to_note_name(sorted(melody_pitches)[0])
+                    if len(melody_pitches) == 1
+                    else "/".join(
+                        midi_to_note_name(p)
+                        for p in sorted(melody_pitches)
+                    )
+                ),
+                "selected_shape": chosen_shape.shape,
+                "tuning_symbol": tuning.symbol
+            })
 
         parent = parent_map[xml_harmony]
 
@@ -1108,14 +1248,17 @@ def _apply_chord_shapes(
         if existing_fret_diagram is not None:
 
             wrote = _set_fret_diagram_content(
-                existing_fret_diagram, values
+                existing_fret_diagram, values,
+                is_exception=is_exception
             )
 
         else:
 
             new_element = ET.Element("FretDiagram")
 
-            wrote = _set_fret_diagram_content(new_element, values)
+            wrote = _set_fret_diagram_content(
+                new_element, values, is_exception=is_exception
+            )
 
             if wrote:
 
@@ -1129,7 +1272,7 @@ def _apply_chord_shapes(
 
             skipped_count += 1
 
-    return applied_count, skipped_count
+    return applied_count, skipped_count, exceptions
 
 
 def generate_mscz(
@@ -1240,7 +1383,7 @@ def generate_mscz(
 
         score_file.score.harmonies = saved_score_harmonies
 
-        chord_shapes_applied, chord_shapes_skipped = (
+        chord_shapes_applied, chord_shapes_skipped, _ = (
             _apply_chord_shapes(
                 staff_element, staff_harmonies, tuning,
                 chord_service
@@ -1425,7 +1568,13 @@ def generate_chord_diagrams_only(
     inferable from a name alone.
 
     Returns (output_path, chord_shapes_applied,
-    chord_shapes_skipped).
+    chord_shapes_skipped, exceptions) -- exceptions is BO-21's
+    list of dicts, one per chord whose FretDiagram was marked
+    red for not being able to include the melody note occurring
+    at its own onset (see _apply_chord_shapes()'s own docstring
+    for exactly what each dict contains). Always an empty list
+    for a chord symbol BO doesn't recognize the quality of, or
+    when the source has no melody notes at all.
     """
 
     output_folder = Path(output_folder)
@@ -1487,7 +1636,7 @@ def generate_chord_diagrams_only(
 
     score_file.score.notes = saved_score_notes
 
-    chord_shapes_applied, chord_shapes_skipped = (
+    chord_shapes_applied, chord_shapes_skipped, exceptions = (
         _apply_chord_shapes(
             notation_staff_element, staff_harmonies, tuning,
             chord_service, melody_notes=staff_melody_notes
@@ -1508,4 +1657,7 @@ def generate_chord_diagrams_only(
         root_copy, score_file, output_folder, filename
     )
 
-    return output_path, chord_shapes_applied, chord_shapes_skipped
+    return (
+        output_path, chord_shapes_applied, chord_shapes_skipped,
+        exceptions
+    )
