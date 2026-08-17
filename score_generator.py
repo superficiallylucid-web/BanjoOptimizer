@@ -89,6 +89,8 @@ from music import (
     quality_code_to_display_name, pitch_name, midi_to_note_name
 )
 
+from playing_model import _chord_working_fret
+
 
 def _sanitize_filename(text):
     """
@@ -1041,6 +1043,123 @@ def _melody_notes_at_harmony_onset(harmony, melody_notes):
     return matches
 
 
+def _select_chord_shape_for_harmony(
+    harmony, tuning, chord_service, melody_notes=None
+):
+    """
+    The shape-selection portion of _apply_chord_shapes(),
+    factored out so BO-24 can reuse the exact same selection
+    (not a re-derived, potentially-diverging copy of it) as a
+    read-only query before any FretDiagram is written -- see
+    generate_tab_from_template()'s own use of this for melody
+    fret/string anchoring.
+
+    Returns (chosen_shape, is_exception, exception_dict) --
+    chosen_shape is None (with is_exception False and
+    exception_dict None) when this harmony's quality isn't
+    recognized or no usable shape exists for this tuning,
+    exactly matching _apply_chord_shapes()'s own "skipped"
+    case. exception_dict is the BO-21 exception record (or
+    None when not an exception), built identically to what
+    _apply_chord_shapes() itself would append to its own
+    exceptions list.
+    """
+
+    root_name = pitch_name(harmony.root_pc)
+
+    quality_display = quality_code_to_display_name(
+        harmony.quality_code
+    )
+
+    if quality_display is None:
+
+        return None, False, None
+
+    melody_pitches = None
+
+    onset_notes = []
+
+    if melody_notes is not None:
+
+        onset_notes = _melody_notes_at_harmony_onset(
+            harmony, melody_notes
+        )
+
+        if onset_notes:
+
+            melody_pitches = {
+                note.midi for note in onset_notes
+            }
+
+    if melody_pitches:
+
+        preferred_melody_fret = _preferred_melody_fret(
+            onset_notes, tuning
+        )
+
+        shapes = chord_service.get_shapes_for_exact_melody_pitch(
+            tuning,
+            root_name,
+            harmony.root_pc,
+            harmony.quality_code,
+            quality_display,
+            melody_pitches,
+            preferred_melody_fret=preferred_melody_fret
+        )
+
+    else:
+
+        shapes = chord_service.get_shapes(
+            tuning,
+            root_name,
+            harmony.root_pc,
+            harmony.quality_code,
+            quality_display
+        )
+
+    if not shapes:
+
+        return None, False, None
+
+    chosen_shape = shapes[0]
+
+    values = parse_shape(chosen_shape.shape)
+
+    is_exception = False
+
+    if melody_pitches and not any(
+        value is None for value in values
+    ):
+
+        sounding = sounding_notes(tuning, chosen_shape.shape)
+
+        is_exception = not any(
+            note.midi in melody_pitches for note in sounding
+        )
+
+    exception_dict = None
+
+    if is_exception:
+
+        exception_dict = {
+            "measure": harmony.measure,
+            "beat": harmony.beat,
+            "chord_symbol": harmony.symbol,
+            "melody_pitch": (
+                midi_to_note_name(sorted(melody_pitches)[0])
+                if len(melody_pitches) == 1
+                else "/".join(
+                    midi_to_note_name(p)
+                    for p in sorted(melody_pitches)
+                )
+            ),
+            "selected_shape": chosen_shape.shape,
+            "tuning_symbol": tuning.symbol
+        }
+
+    return chosen_shape, is_exception, exception_dict
+
+
 def _apply_chord_shapes(
     staff_element, harmonies, tuning, chord_service,
     melody_notes=None
@@ -1116,106 +1235,23 @@ def _apply_chord_shapes(
 
     for xml_harmony, harmony in zip(xml_harmony_elements, harmonies):
 
-        root_name = pitch_name(harmony.root_pc)
-
-        quality_display = quality_code_to_display_name(
-            harmony.quality_code
+        chosen_shape, is_exception, exception_dict = (
+            _select_chord_shape_for_harmony(
+                harmony, tuning, chord_service, melody_notes
+            )
         )
 
-        if quality_display is None:
+        if chosen_shape is None:
 
             skipped_count += 1
 
             continue
-
-        melody_pitches = None
-
-        if melody_notes is not None:
-
-            onset_notes = _melody_notes_at_harmony_onset(
-                harmony, melody_notes
-            )
-
-            if onset_notes:
-
-                melody_pitches = {
-                    note.midi for note in onset_notes
-                }
-
-        if melody_pitches:
-
-            preferred_melody_fret = _preferred_melody_fret(
-                onset_notes, tuning
-            )
-
-            shapes = chord_service.get_shapes_for_exact_melody_pitch(
-                tuning,
-                root_name,
-                harmony.root_pc,
-                harmony.quality_code,
-                quality_display,
-                melody_pitches,
-                preferred_melody_fret=preferred_melody_fret
-            )
-
-        else:
-
-            shapes = chord_service.get_shapes(
-                tuning,
-                root_name,
-                harmony.root_pc,
-                harmony.quality_code,
-                quality_display
-            )
-
-        if not shapes:
-
-            skipped_count += 1
-
-            continue
-
-        chosen_shape = shapes[0]
 
         values = parse_shape(chosen_shape.shape)
 
-        # BO-21: an exception is when a melody note existed at
-        # this chord's exact onset (melody_pitches was set) but
-        # the shape BO-20 actually selected doesn't contain any
-        # of those exact pitches -- i.e. no practical melody-
-        # containing voicing existed, so the normal fallback
-        # shape was used as-is. Checked directly against the
-        # chosen shape's own sounding notes (exact MIDI pitch,
-        # not pitch class, matching BO-20's own requirement) --
-        # never inferred from ranking internals.
-        is_exception = False
-
-        if melody_pitches and not any(
-            value is None for value in values
-        ):
-
-            sounding = sounding_notes(tuning, chosen_shape.shape)
-
-            is_exception = not any(
-                note.midi in melody_pitches for note in sounding
-            )
-
         if is_exception:
 
-            exceptions.append({
-                "measure": harmony.measure,
-                "beat": harmony.beat,
-                "chord_symbol": harmony.symbol,
-                "melody_pitch": (
-                    midi_to_note_name(sorted(melody_pitches)[0])
-                    if len(melody_pitches) == 1
-                    else "/".join(
-                        midi_to_note_name(p)
-                        for p in sorted(melody_pitches)
-                    )
-                ),
-                "selected_shape": chosen_shape.shape,
-                "tuning_symbol": tuning.symbol
-            })
+            exceptions.append(exception_dict)
 
         parent = parent_map[xml_harmony]
 
@@ -1661,3 +1697,792 @@ def generate_chord_diagrams_only(
         output_path, chord_shapes_applied, chord_shapes_skipped,
         exceptions
     )
+
+
+# ===========================================================
+# BO-23 -- populate a MuseScore-created TAB template rather
+# than constructing TAB staff XML from scratch. See the BO-23
+# investigation notes: MuseScore's own linked-staff editing
+# mechanism could not be reliably reconstructed by hand-writing
+# linkedTo relationships offline (three independently-tested
+# approaches all failed to produce genuine live-linked editing,
+# confirmed against real MuseScore-created reference files).
+# Current scope: BO writes correct, matching, static content to
+# BOTH the TAB and treble content staves of the template -- the
+# user edits the linked treble clef manually afterward in
+# MuseScore when a TAB adjustment is needed, rather than relying
+# on live propagation.
+#
+# This is a genuinely new, separate generation path -- it does
+# not modify generate_mscz(), generate_chord_diagrams_only(),
+# _apply_chord_shapes(), or anything else above.
+# ===========================================================
+
+def _extract_staff_events(score_file, staff_number):
+    """
+    Walk one content staff's Measures/voice in document order,
+    returning a list of measures, each a list of event dicts:
+
+        {"beat": float, "type": "note" or "rest",
+         "duration_type": str, "dots": int,
+         "pitch": int or None, "tpc": int or None}
+
+    Preserves the source's own exact rhythm notation
+    (duration_type + dots) VERBATIM rather than re-deriving it
+    from a raw beat-length number -- the source's own notation
+    is already valid, so this only ever copies it, never
+    reconstructs it. Reuses
+    MuseScoreFile._duration_value() unmodified for beat
+    tracking (the same mechanism read_staff_notes() already
+    uses) -- only Chord/Rest/Note elements on the target staff
+    are considered, matching that same established counting
+    convention (every <Staff> tag encountered, both
+    definitions and content, advances current_staff).
+    """
+
+    measures = []
+
+    current_measure_events = None
+
+    current_staff = 0
+
+    beat = 0.0
+
+    tuplet_scale = 1.0
+
+    pending_tuplet_element = None
+
+    current_event = None
+
+    for element in score_file.root.iter():
+
+        tag = element.tag.split("}")[-1]
+
+        if tag == "Staff":
+
+            current_staff += 1
+
+        if current_staff != staff_number:
+
+            continue
+
+        if tag == "Measure":
+
+            if current_measure_events is not None:
+
+                measures.append(current_measure_events)
+
+            current_measure_events = []
+
+            beat = 0.0
+
+            tuplet_scale = 1.0
+
+            pending_tuplet_element = None
+
+        if tag == "Tuplet":
+
+            normal_notes_element = element.find(
+                "{*}normalNotes"
+            )
+
+            actual_notes_element = element.find(
+                "{*}actualNotes"
+            )
+
+            if (
+                normal_notes_element is not None
+                and actual_notes_element is not None
+            ):
+
+                tuplet_scale = (
+                    int(normal_notes_element.text)
+                    / int(actual_notes_element.text)
+                )
+
+                pending_tuplet_element = element
+
+        if tag == "endTuplet":
+
+            tuplet_scale = 1.0
+
+            if current_event is not None:
+
+                current_event["tuplet_end"] = True
+
+        if tag in ("Chord", "Rest"):
+
+            duration_type_element = element.find(
+                "{*}durationType"
+            )
+
+            duration_type = (
+                duration_type_element.text
+                if duration_type_element is not None
+                else "quarter"
+            )
+
+            dots_element = element.find("{*}dots")
+
+            dots = (
+                int(dots_element.text)
+                if dots_element is not None else 0
+            )
+
+            current_event = {
+                "beat": round(beat, 4),
+                "type": "note" if tag == "Chord" else "rest",
+                "duration_type": duration_type,
+                "dots": dots,
+                "pitch": None,
+                "tpc": None,
+                "harmony_element": None,
+                "tuplet_start_element": pending_tuplet_element,
+                "tuplet_end": False
+            }
+
+            current_measure_events.append(current_event)
+
+            pending_tuplet_element = None
+
+            beat += (
+                score_file._duration_value(element)
+                * tuplet_scale
+            )
+
+        if tag == "Harmony" and current_measure_events is not None:
+
+            # A Harmony always precedes the Chord/Rest it
+            # applies to in document order (confirmed by direct
+            # inspection of the real source file) -- attach it
+            # to the NEXT event about to be appended, by
+            # stashing it until that event exists.
+            pending_harmony = element
+
+            current_measure_events.append({
+                "beat": round(beat, 4),
+                "type": "harmony",
+                "duration_type": None,
+                "dots": 0,
+                "pitch": None,
+                "tpc": None,
+                "harmony_element": pending_harmony
+            })
+
+        if tag == "Note" and current_event is not None:
+
+            pitch_element = element.find("{*}pitch")
+
+            tpc_element = element.find("{*}tpc")
+
+            if pitch_element is not None:
+
+                current_event["pitch"] = int(
+                    pitch_element.text
+                )
+
+            if tpc_element is not None:
+
+                current_event["tpc"] = int(tpc_element.text)
+
+    if current_measure_events is not None:
+
+        measures.append(current_measure_events)
+
+    return measures
+
+
+def _save_template_copy(root, template_path, output_folder, filename):
+    """
+    Like _save_score_copy(), but sources every OTHER archive
+    member (style, thumbnail, settings) from the TEMPLATE's own
+    archive, not the input score's -- the output is fundamentally
+    a populated copy of the template, not an edited copy of the
+    source score, so its formatting/style should come from the
+    template, matching BO-23's own confirmed validation (every
+    non-.mscx member byte-identical to the template).
+    """
+
+    output_path = Path(output_folder) / filename
+
+    new_mscx_bytes = ET.tostring(
+        root, encoding="UTF-8", xml_declaration=True
+    )
+
+    with zipfile.ZipFile(template_path, "r") as template_zip:
+
+        mscx_name = [
+            name for name in template_zip.namelist()
+            if name.endswith(".mscx")
+        ][0]
+
+        with zipfile.ZipFile(
+            output_path, "w", zipfile.ZIP_DEFLATED
+        ) as output_zip:
+
+            for name in template_zip.namelist():
+
+                if name == mscx_name:
+
+                    output_zip.writestr(name, new_mscx_bytes)
+
+                else:
+
+                    output_zip.writestr(
+                        name, template_zip.read(name)
+                    )
+
+    return output_path
+
+
+MELODY_ANCHOR_DISTANCE_CAP = 5  # frets; matches
+# playing_model.py's own CONTINUITY_MOVE_DAMPENING_START and
+# chord_service.py's own POSITION_DISTANCE_CAP, reused for
+# consistency rather than inventing a new number -- BO-24. Caps
+# how much a melody position's distance from a nearby chord's
+# working fret can influence the choice, so it can only ever
+# break ties among find_positions()'s own candidates, never
+# force an otherwise-unreasonable position.
+
+
+def _fd_positions_for_pitch(shape_values, open_notes, target_midi):
+    """
+    Every (fretboard string_index, fret) position within an
+    already-selected chord shape (parse_shape() output) that
+    sounds target_midi exactly -- BO-24. Reuses the shape's own
+    values directly; no new position representation. Usually
+    0 or 1 matches, but a shape can legitimately double the same
+    pitch on more than one string.
+    """
+
+    matches = []
+
+    for string_index, fret in enumerate(shape_values):
+
+        if fret is None:
+
+            continue
+
+        if open_notes[string_index] + fret == target_midi:
+
+            matches.append((string_index, fret))
+
+    return matches
+
+
+def _choose_melody_position(
+    midi, open_notes, fd_shape_values=None, working_fret_anchor=None
+):
+    """
+    BO-24: choose a string/fret position for one melody note,
+    optionally anchored to a nearby chord's own already-selected
+    shape -- reuses fretboard.find_positions()/best_position()
+    unmodified as the actual candidate source/scorer; this only
+    adds a priority layer on top, matching the investigation's
+    own finding that no second, independent fretboard-position
+    system was needed.
+
+    fd_shape_values: parse_shape() output of the chord AT this
+    exact melody note's own onset, if any. When the exact pitch
+    is genuinely one of that shape's own positions, that position
+    is STRONGLY preferred -- returned directly, without even
+    consulting best_position() -- matching the task's own
+    priority #1/#2 for a melody note occurring exactly at a
+    chord ("the FD represents the selected chord shape" -- see
+    this function's own docstring notes above). Falls through to
+    the working_fret_anchor/plain-best_position() behavior below
+    when the exact pitch isn't actually available anywhere within
+    that shape.
+
+    working_fret_anchor: a nearby chord's own
+    playing_model._chord_working_fret() (reused unmodified), for
+    a melody note immediately before/after a chord (or the
+    at-chord case falling through above). Used as a CAPPED
+    distance tiebreak among find_positions()'s own candidates,
+    with best_position()'s own existing score (reused, not
+    replaced or duplicated) as the secondary tiebreak among
+    otherwise-equally-close candidates. This is deliberately a
+    single, local anchor per note (whichever chord is nearest),
+    not a multi-step lookahead/lookbehind search across the
+    whole phrase -- matching the task's own explicit warning
+    against "blindly forcing everything toward the next chord":
+    an intermediate chord (e.g. a Cmaj7 between a C and an Em)
+    naturally becomes its own separate anchor point for the
+    notes immediately around IT, rather than the melody being
+    pulled all the way from one distant chord to another.
+
+    Returns None only when find_positions() itself finds nothing
+    -- callers should treat that exactly as before this task
+    (no playable position exists for this pitch in this tuning).
+    Falls back to plain best_position(find_positions(...)),
+    completely unchanged, when neither anchor applies at all --
+    every existing melody position choice this project already
+    makes for a note with no chord anywhere nearby is untouched.
+    """
+
+    positions = find_positions(midi, open_notes)
+
+    if not positions:
+
+        return None
+
+    if fd_shape_values is not None:
+
+        fd_matches = _fd_positions_for_pitch(
+            fd_shape_values, open_notes, midi
+        )
+
+        if fd_matches:
+
+            string_index, fret = fd_matches[0]
+
+            return {"string": string_index, "fret": fret}
+
+    # best_position() also populates each position's own
+    # ["score"] as a side effect -- reused directly below rather
+    # than recomputed.
+    default_choice = best_position(positions)
+
+    if working_fret_anchor is None:
+
+        return default_choice
+
+    def _sort_key(position):
+
+        distance = min(
+            abs(position["fret"] - working_fret_anchor),
+            MELODY_ANCHOR_DISTANCE_CAP
+        )
+
+        return (distance, -position["score"])
+
+    return sorted(positions, key=_sort_key)[0]
+
+
+def generate_tab_from_template(
+    score_file, tuning, staff_number, template_path,
+    output_folder, chord_service, filename=None
+):
+    """
+    BO-23: populate a MuseScore-created TAB template (see this
+    module's own BO-23 section notes above) with the source
+    score's melody and chord symbols, rather than constructing
+    TAB staff XML from scratch.
+
+    Output is TAB-ONLY -- the template's own linked treble staff
+    (Staff-definition and content) is removed entirely before
+    saving. This matches the settled design: BO does not attempt
+    or rely on genuine live-linked editing (three independently-
+    tested approaches at reconstructing that were unsuccessful --
+    see BO-23's own investigation notes); the user adds a linked
+    treble staff manually via MuseScore's own "Add Linked Staff"
+    feature afterward, only if/when they actually want one.
+
+    Chord symbols (Harmony) and FretDiagrams both go directly on
+    the TAB staff, since it's the only staff in the output.
+    FretDiagram generation reuses _apply_chord_shapes()
+    UNMODIFIED -- the same melody-aware, position-aware, BO-18
+    through BO-22 chord-shape selection already used by
+    generate_chord_diagrams_only(), not a separate or simplified
+    version of it.
+
+    Uses fretboard.find_positions()/best_position() (unmodified)
+    for each melody note's own TAB fret/string choice -- not
+    attempting perfect placement, matching this whole
+    investigation's own established scope. String numbering
+    follows the confirmed-reversed MuseScore convention
+    (3 - fretboard string_index).
+
+    score_file: an opened MuseScoreFile with read_time_signature()
+        and read_melody_notes() (or an equivalent staff_number)
+        already called.
+    staff_number: the notation staff to read melody/harmonies
+        from (this project's own "every <Staff> tag" counting
+        convention -- the same value read_melody_notes() itself
+        returns).
+    template_path: path to the TAB-linked-treble .mscz template.
+    chord_service: a ChordService instance, passed straight
+        through to _apply_chord_shapes().
+
+    Returns (output_path, chord_shapes_applied,
+    chord_shapes_skipped, exceptions) -- exceptions is BO-21's
+    list of melody/chord exceptions, exactly as
+    generate_chord_diagrams_only() already returns it.
+    """
+
+    measures = _extract_staff_events(score_file, staff_number)
+
+    # ---- BO-24: read harmonies and pre-select each chord's own
+    # shape BEFORE writing any melody note's fret/string, so
+    # those choices can be anchored to the shapes BO-20/21/22
+    # will actually select -- reuses _select_chord_shape_for_
+    # harmony() (the exact same selection _apply_chord_shapes()
+    # itself uses below, factored out for this reason) as a
+    # read-only query; nothing is written to the output yet.
+
+    saved_harmonies = score_file.harmonies
+
+    saved_score_harmonies = score_file.score.harmonies
+
+    score_file.read_harmonies(staff_number)
+
+    staff_harmonies = list(score_file.harmonies)
+
+    score_file.harmonies = saved_harmonies
+
+    score_file.score.harmonies = saved_score_harmonies
+
+    chord_shape_by_position = {}
+
+    for harmony in staff_harmonies:
+
+        chosen_shape, _, _ = _select_chord_shape_for_harmony(
+            harmony, tuning, chord_service,
+            melody_notes=score_file.score.notes
+        )
+
+        if chosen_shape is not None:
+
+            chord_shape_by_position[
+                (harmony.measure, harmony.beat)
+            ] = parse_shape(chosen_shape.shape)
+
+    # A flat, document-ordered list of every melody note event
+    # (across all measures) so "the note immediately before/
+    # after this one" is a simple, local lookup -- no separate
+    # position-tracking system, just this project's own existing
+    # event list read a second way.
+    flat_note_events = [
+        (measure_index + 1, event)
+        for measure_index, measure_events in enumerate(measures)
+        for event in measure_events
+        if event["type"] == "note"
+    ]
+
+    # For each note event, precompute its own FD anchor (when
+    # it's exactly at a chord's onset) and/or a nearby chord's
+    # working fret (when the immediately adjacent note event is
+    # at a chord's onset) -- keyed by object identity, since
+    # these are the exact same event dicts referenced in
+    # `measures` below.
+    fd_anchor_by_event_id = {}
+
+    working_fret_anchor_by_event_id = {}
+
+    for index, (measure_number, event) in enumerate(
+        flat_note_events
+    ):
+
+        position_key = (measure_number, event["beat"])
+
+        if position_key in chord_shape_by_position:
+
+            fd_anchor_by_event_id[id(event)] = (
+                chord_shape_by_position[position_key]
+            )
+
+            continue
+
+        for neighbor_index in (index - 1, index + 1):
+
+            if not (0 <= neighbor_index < len(flat_note_events)):
+
+                continue
+
+            neighbor_measure, neighbor_event = flat_note_events[
+                neighbor_index
+            ]
+
+            neighbor_key = (
+                neighbor_measure, neighbor_event["beat"]
+            )
+
+            if neighbor_key in chord_shape_by_position:
+
+                working_fret_anchor_by_event_id[id(event)] = (
+                    _chord_working_fret(
+                        chord_shape_by_position[neighbor_key]
+                    )
+                )
+
+                break
+
+    with zipfile.ZipFile(template_path) as z:
+
+        mscx_name = [
+            n for n in z.namelist() if n.endswith(".mscx")
+        ][0]
+
+        xml_bytes = z.read(mscx_name)
+
+    root = ET.fromstring(xml_bytes)
+
+    score_el = root.find(".//{*}Score")
+
+    # ---- Set StringData to the target tuning ----
+
+    instrument_el = score_el.find(".//{*}Instrument")
+
+    string_data_el = instrument_el.find("{*}StringData")
+
+    string_els = string_data_el.findall("{*}string")
+
+    for string_el, midi in zip(string_els, tuning.notes):
+
+        string_el.text = str(midi)
+
+    # ---- Remove the template's linked treble staff entirely --
+    # TAB-only output (see this function's own docstring for
+    # why: no genuine live-link is being attempted or relied on,
+    # so there's no reason to carry a staff BO itself never
+    # populates with anything meaningful).
+
+    part_el = root.find(".//{*}Part")
+
+    staff_defs = part_el.findall("{*}Staff")
+
+    treble_staff_def = staff_defs[1]
+
+    part_el.remove(treble_staff_def)
+
+    for clef_el in list(instrument_el.findall("{*}clef")):
+
+        if clef_el.attrib.get("staff") == "2":
+
+            instrument_el.remove(clef_el)
+
+    staves = [
+        c for c in score_el if c.tag.split("}")[-1] == "Staff"
+    ]
+
+    tab_staff = next(
+        s for s in staves if s.attrib.get("id") == "1"
+    )
+
+    treble_staff = next(
+        s for s in staves if s.attrib.get("id") == "2"
+    )
+
+    score_el.remove(treble_staff)
+
+    # ---- Rebuild the TAB staff's Measures from the source's
+    # own events ----
+
+    for old_measure in tab_staff.findall("{*}Measure"):
+
+        tab_staff.remove(old_measure)
+
+    open_notes = tuning.notes[1:]  # 4th to 1st
+
+    sig_parts = score_file.score.time_signature.split("/")
+
+    sig_n, sig_d = sig_parts[0], sig_parts[1]
+
+    for measure_index, measure_events in enumerate(measures):
+
+        is_first_measure = (measure_index == 0)
+
+        tab_measure = ET.SubElement(tab_staff, "Measure")
+
+        if is_first_measure:
+
+            ET.SubElement(
+                tab_measure, "eid"
+            ).text = _generate_eid()
+
+        tab_voice = ET.SubElement(tab_measure, "voice")
+
+        if is_first_measure:
+
+            tab_keysig = ET.SubElement(tab_voice, "KeySig")
+
+            ET.SubElement(
+                tab_keysig, "eid"
+            ).text = _generate_eid()
+
+            ET.SubElement(tab_keysig, "concertKey").text = "0"
+
+            tab_timesig = ET.SubElement(tab_voice, "TimeSig")
+
+            ET.SubElement(
+                tab_timesig, "eid"
+            ).text = _generate_eid()
+
+            ET.SubElement(tab_timesig, "sigN").text = sig_n
+
+            ET.SubElement(tab_timesig, "sigD").text = sig_d
+
+        for event in measure_events:
+
+            if event["type"] == "harmony":
+
+                # Only staff left, so chord symbols go directly
+                # on it.
+                harmony_copy = copy.deepcopy(
+                    event["harmony_element"]
+                )
+
+                eid_el = harmony_copy.find("{*}eid")
+
+                if eid_el is not None:
+
+                    eid_el.text = _generate_eid()
+
+                tab_voice.append(harmony_copy)
+
+                continue
+
+            if event["type"] == "rest":
+
+                if event["tuplet_start_element"] is not None:
+
+                    tuplet_copy = copy.deepcopy(
+                        event["tuplet_start_element"]
+                    )
+
+                    eid_el = tuplet_copy.find("{*}eid")
+
+                    if eid_el is not None:
+
+                        eid_el.text = _generate_eid()
+
+                    tab_voice.append(tuplet_copy)
+
+                tab_rest = ET.SubElement(tab_voice, "Rest")
+
+                ET.SubElement(
+                    tab_rest, "eid"
+                ).text = _generate_eid()
+
+                if event["dots"]:
+
+                    ET.SubElement(
+                        tab_rest, "dots"
+                    ).text = str(event["dots"])
+
+                ET.SubElement(
+                    tab_rest, "durationType"
+                ).text = event["duration_type"]
+
+                if event["tuplet_end"]:
+
+                    ET.SubElement(tab_voice, "endTuplet")
+
+                continue
+
+            # event["type"] == "note"
+
+            midi = event["pitch"]
+
+            tpc = event["tpc"]
+
+            # BO-24: anchor this note's position to a nearby
+            # chord's own already-selected shape when one
+            # applies -- see the pre-computed lookups built
+            # earlier in this function, before this loop, from
+            # the exact same shape selection _apply_chord_
+            # shapes() itself uses below. Falls back to plain,
+            # unmodified best_position(find_positions(...)) for
+            # every note neither at nor adjacent to a chord.
+            chosen = _choose_melody_position(
+                midi, open_notes,
+                fd_shape_values=fd_anchor_by_event_id.get(
+                    id(event)
+                ),
+                working_fret_anchor=(
+                    working_fret_anchor_by_event_id.get(
+                        id(event)
+                    )
+                )
+            )
+
+            chosen_fret = chosen["fret"]
+
+            # Confirmed-reversed MuseScore <string> numbering
+            # relative to fretboard.py's own string_index (see
+            # BO-23-FOLLOWUP's own investigation notes).
+            chosen_string = 3 - chosen["string"]
+
+            if event["tuplet_start_element"] is not None:
+
+                tuplet_copy = copy.deepcopy(
+                    event["tuplet_start_element"]
+                )
+
+                eid_el = tuplet_copy.find("{*}eid")
+
+                if eid_el is not None:
+
+                    eid_el.text = _generate_eid()
+
+                tab_voice.append(tuplet_copy)
+
+            tab_chord = ET.SubElement(tab_voice, "Chord")
+
+            ET.SubElement(
+                tab_chord, "eid"
+            ).text = _generate_eid()
+
+            if event["dots"]:
+
+                ET.SubElement(
+                    tab_chord, "dots"
+                ).text = str(event["dots"])
+
+            ET.SubElement(
+                tab_chord, "durationType"
+            ).text = event["duration_type"]
+
+            tab_note = ET.SubElement(tab_chord, "Note")
+
+            ET.SubElement(
+                tab_note, "eid"
+            ).text = _generate_eid()
+
+            ET.SubElement(tab_note, "pitch").text = str(midi)
+
+            ET.SubElement(tab_note, "tpc").text = str(tpc)
+
+            ET.SubElement(
+                tab_note, "fret"
+            ).text = str(chosen_fret)
+
+            ET.SubElement(
+                tab_note, "string"
+            ).text = str(chosen_string)
+
+            if event["tuplet_end"]:
+
+                ET.SubElement(tab_voice, "endTuplet")
+
+    # ---- FretDiagrams: reuse the existing, unmodified BO-18
+    # through BO-22 chord-shape selection (staff_harmonies was
+    # already read earlier in this function, before the melody-
+    # writing loop, so BO-24's own anchoring could use it too --
+    # not re-read a second time here) ----
+
+    chord_shapes_applied, chord_shapes_skipped, exceptions = (
+        _apply_chord_shapes(
+            tab_staff, staff_harmonies, tuning, chord_service,
+            melody_notes=score_file.score.notes
+        )
+    )
+
+    if filename is None:
+
+        title = score_file.score.title or "Untitled"
+
+        filename = _sanitize_filename(
+            f"{title} - {tuning.name} ({tuning.symbol}) - TAB"
+        ) + ".mscz"
+
+    output_path = _save_template_copy(
+        root, template_path, output_folder, filename
+    )
+
+    return (
+        output_path, chord_shapes_applied, chord_shapes_skipped,
+        exceptions
+    )
+
+

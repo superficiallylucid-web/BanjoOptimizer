@@ -316,12 +316,19 @@ class MuseScoreFile:
         callers should call read_time_signature() first when
         precision matters.
 
-        Does not account for tuplets -- none have been seen in
-        any file this project has parsed yet (confirmed by
-        inspection of My Favorite Things). A tuplet would cause
-        beat positions to drift after it rather than being
-        exactly correct; a known, documented limitation, not a
-        full solution.
+        Does NOT itself account for tuplets -- this function
+        only converts one element's own durationType + dots,
+        with no awareness of a surrounding <Tuplet>/<endTuplet>
+        pair. Confirmed real tuplets exist in this project's own
+        fixtures (The Christmas Song has eighth- and quarter-
+        note triplets) -- callers that walk a whole staff and
+        accumulate beat position (read_staff_notes(),
+        read_harmonies(), score_generator._extract_staff_events())
+        are responsible for tracking <Tuplet>'s own
+        normalNotes/actualNotes ratio and scaling this
+        function's return value accordingly; this function
+        itself has no way to know whether the element it's given
+        sits inside one.
 
         Returns 0.0 if durationType is missing or unrecognized.
         """
@@ -401,6 +408,7 @@ class MuseScoreFile:
 
         current_chord_beat = 0.0
 
+        tuplet_scale = 1.0
 
         for element in self.root.iter():
 
@@ -423,17 +431,52 @@ class MuseScoreFile:
 
                 beat = 0.0
 
+                tuplet_scale = 1.0
+
+
+            if tag == "Tuplet":
+
+                normal_notes_element = element.find(
+                    "{*}normalNotes"
+                )
+
+                actual_notes_element = element.find(
+                    "{*}actualNotes"
+                )
+
+                if (
+                    normal_notes_element is not None
+                    and actual_notes_element is not None
+                ):
+
+                    tuplet_scale = (
+                        int(normal_notes_element.text)
+                        / int(actual_notes_element.text)
+                    )
+
+
+            if tag == "endTuplet":
+
+                tuplet_scale = 1.0
+
 
             if tag == "Chord":
 
                 current_chord_beat = round(beat, 4)
 
-                beat += self._duration_value(element)
+                current_chord_duration = (
+                    self._duration_value(element)
+                    * tuplet_scale
+                )
+
+                beat += current_chord_duration
 
 
             if tag == "Rest":
 
-                beat += self._duration_value(element)
+                beat += (
+                    self._duration_value(element) * tuplet_scale
+                )
 
 
             if tag == "Note":
@@ -475,7 +518,8 @@ class MuseScoreFile:
                         Note(
                             midi=pitch,
                             measure=measure,
-                            beat=current_chord_beat
+                            beat=current_chord_beat,
+                            duration=current_chord_duration
                         )
                     )
 
@@ -552,8 +596,10 @@ class MuseScoreFile:
         Note: this records each chord symbol's exact beat
         position within the measure (accumulated from note/
         rest durations, same mechanism as read_staff_notes) --
-        see Harmony.beat in models.py. Doesn't account for
-        tuplets (see MuseScoreFile._duration_value).
+        see Harmony.beat in models.py. Tuplet-aware (see
+        MuseScoreFile._duration_value and the tuplet_scale
+        tracking below) -- confirmed against a real score
+        containing eighth- and quarter-note triplets.
 
         Also captures each Harmony's paired <FretDiagram>, when
         the score has one -- see Harmony.shape in models.py.
@@ -571,6 +617,8 @@ class MuseScoreFile:
         measure = 0
 
         beat = 0.0
+
+        tuplet_scale = 1.0
 
         # A Harmony and its FretDiagram are usually adjacent in
         # document order, but not always in a fixed direction --
@@ -603,15 +651,47 @@ class MuseScoreFile:
 
                 beat = 0.0
 
+                tuplet_scale = 1.0
+
+
+            if tag == "Tuplet":
+
+                normal_notes_element = element.find(
+                    "{*}normalNotes"
+                )
+
+                actual_notes_element = element.find(
+                    "{*}actualNotes"
+                )
+
+                if (
+                    normal_notes_element is not None
+                    and actual_notes_element is not None
+                ):
+
+                    tuplet_scale = (
+                        int(normal_notes_element.text)
+                        / int(actual_notes_element.text)
+                    )
+
+
+            if tag == "endTuplet":
+
+                tuplet_scale = 1.0
+
 
             if tag == "Chord":
 
-                beat += self._duration_value(element)
+                beat += (
+                    self._duration_value(element) * tuplet_scale
+                )
 
 
             if tag == "Rest":
 
-                beat += self._duration_value(element)
+                beat += (
+                    self._duration_value(element) * tuplet_scale
+                )
 
 
             if tag == "Harmony":

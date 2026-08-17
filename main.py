@@ -7,7 +7,9 @@ from output import output, clear_output
 from parser import MuseScoreFile
 from optimizer import TuningAnalyzer
 from recommendations import apply_shared_features, apply_confidence
-from score_generator import generate_chord_diagrams_only
+from score_generator import (
+    generate_chord_diagrams_only, generate_tab_from_template
+)
 from tunings import get_tunings
 from chord_service import ChordService
 from chord_library import ChordLibrary
@@ -39,6 +41,9 @@ class Tee:
 SCORES_FOLDER = PROJECT_FOLDER / "scores"
 OUTPUT_FOLDER = PROJECT_FOLDER / "output"
 GENERATED_FOLDER = OUTPUT_FOLDER / "generated"
+TAB_TEMPLATE_PATH = (
+    PROJECT_FOLDER / "templates" / "TAB_linked_Treble_Example.mscz"
+)
 
 OUTPUT_FOLDER.mkdir(exist_ok=True)
 
@@ -333,6 +338,40 @@ else:
                 )
 
                 all_melody_exceptions.extend(melody_exceptions)
+
+                # BO-23: also generate a TAB-only score from the
+                # MuseScore-created template (see score_generator.py's
+                # own BO-23 section notes) -- a separate, additive
+                # output alongside the existing chord-diagrams-only
+                # one above, not a replacement for it. Uses the SAME
+                # underlying chord-shape selection (_apply_chord_
+                # shapes(), unmodified) with the same harmonies/
+                # melody/tuning, so its own melody/chord exceptions
+                # are identical to the ones already collected above --
+                # deliberately not added a second time here, to avoid
+                # reporting the same exception twice.
+                (
+                    tab_path, tab_shapes_applied, tab_shapes_skipped,
+                    _
+                ) = generate_tab_from_template(
+                    score,
+                    target_tuning,
+                    staff_used,
+                    TAB_TEMPLATE_PATH,
+                    GENERATED_FOLDER,
+                    generation_chord_service
+                )
+
+                output(
+                    f"   Generated: {tab_path.name} "
+                    f"({tab_shapes_applied} chord shapes"
+                    + (
+                        f", {tab_shapes_skipped} chord symbols "
+                        "skipped"
+                        if tab_shapes_skipped else ""
+                    )
+                    + ")"
+                )
 
             except Exception as error:
 
