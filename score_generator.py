@@ -1810,7 +1810,8 @@ def _extract_staff_events(score_file, staff_number):
 
         {"beat": float, "type": "note" or "rest",
          "duration_type": str, "dots": int,
-         "pitch": int or None, "tpc": int or None}
+         "pitch": int or None, "tpc": int or None,
+         "lyrics_elements": list of raw <Lyrics> XML elements}
 
     Preserves the source's own exact rhythm notation
     (duration_type + dots) VERBATIM rather than re-deriving it
@@ -1823,6 +1824,14 @@ def _extract_staff_events(score_file, staff_number):
     are considered, matching that same established counting
     convention (every <Staff> tag encountered, both
     definitions and content, advances current_staff).
+
+    lyrics_elements: a "note" event's own <Lyrics> children
+    (confirmed real structure: <syllabic>/<eid>/<text>, direct
+    children of <Chord>, one per verse/syllable at that note) --
+    captured here for the caller to copy through verbatim
+    (regenerating eids, matching every other copied-element
+    pattern in this function), never re-derived or reworded.
+    Always empty for a "rest" event.
     """
 
     measures = []
@@ -1914,6 +1923,11 @@ def _extract_staff_events(score_file, staff_number):
                 if dots_element is not None else 0
             )
 
+            lyrics_elements = (
+                element.findall("{*}Lyrics")
+                if tag == "Chord" else []
+            )
+
             current_event = {
                 "beat": round(beat, 4),
                 "type": "note" if tag == "Chord" else "rest",
@@ -1923,7 +1937,8 @@ def _extract_staff_events(score_file, staff_number):
                 "tpc": None,
                 "harmony_element": None,
                 "tuplet_start_element": pending_tuplet_element,
-                "tuplet_end": False
+                "tuplet_end": False,
+                "lyrics_elements": lyrics_elements
             }
 
             current_measure_events.append(current_event)
@@ -2594,6 +2609,18 @@ def generate_tab_from_template(
             ET.SubElement(
                 tab_chord, "durationType"
             ).text = event["duration_type"]
+
+            for lyrics_element in event["lyrics_elements"]:
+
+                lyrics_copy = copy.deepcopy(lyrics_element)
+
+                eid_el = lyrics_copy.find("{*}eid")
+
+                if eid_el is not None:
+
+                    eid_el.text = _generate_eid()
+
+                tab_chord.append(lyrics_copy)
 
             tab_note = ET.SubElement(tab_chord, "Note")
 

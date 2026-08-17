@@ -943,3 +943,128 @@ def test_read_staff_notes_and_read_harmonies_stay_consistent_across_tuplets():
     last_note = max(measure_6_notes, key=lambda n: n.beat)
 
     assert last_harmony.beat == last_note.beat == 3.0
+
+
+# ---------------------------------------------------------
+# 12 -- lyrics from the source score are carried over onto
+# the generated TAB score, verbatim and in correct order
+# ---------------------------------------------------------
+
+def test_lyrics_carried_over_verbatim_and_in_order():
+
+    output_path, applied, skipped, exceptions, root = (
+        _generate_full_song("test_lyrics.mscz")
+    )
+
+    try:
+
+        staff = root.find('.//{*}Score/{*}Staff[@id="1"]')
+
+        lyrics = staff.findall(".//{*}Lyrics")
+
+        assert len(lyrics) == 143  # confirmed real source count
+
+        first_five = [
+            (
+                l.find("{*}syllabic").text
+                if l.find("{*}syllabic") is not None else None,
+                l.find("{*}text").text
+            )
+            for l in lyrics[:5]
+        ]
+
+        assert first_five == [
+            ("begin", "Chest"),
+            ("end", "nuts"),
+            ("begin", "roast"),
+            ("end", "ing"),
+            (None, "on")
+        ]
+
+        # Every lyrics eid must be unique -- the exact class of
+        # bug that caused repeated "Incomplete measure" errors
+        # in every earlier from-scratch TAB attempt.
+        eids = [
+            el.text for el in root.iter()
+            if el.tag.split("}")[-1] == "eid"
+        ]
+
+        assert len(eids) == len(set(eids))
+
+    finally:
+
+        if os.path.exists(output_path):
+
+            os.remove(output_path)
+
+
+def test_lyrics_element_order_within_chord():
+
+    # Confirms the source's own element order is preserved:
+    # eid, dots, durationType, Lyrics, Note -- not lyrics
+    # dropped in some other position.
+    output_path, applied, skipped, exceptions, root = (
+        _generate_full_song("test_lyrics_order.mscz")
+    )
+
+    try:
+
+        staff = root.find('.//{*}Score/{*}Staff[@id="1"]')
+
+        chord_with_lyrics = staff.find(
+            ".//{*}Chord[{*}Lyrics]"
+        )
+
+        tags_in_order = [
+            el.tag.split("}")[-1] for el in chord_with_lyrics
+        ]
+
+        assert tags_in_order.index(
+            "Lyrics"
+        ) < tags_in_order.index("Note")
+
+        assert tags_in_order.index(
+            "durationType"
+        ) < tags_in_order.index("Lyrics")
+
+    finally:
+
+        if os.path.exists(output_path):
+
+            os.remove(output_path)
+
+
+def _generate_full_song(filename):
+
+    p = MuseScoreFile("The Christmas Song (notation only).mscz")
+
+    p.open()
+
+    p.read_title()
+
+    p.read_time_signature()
+
+    staff_used = p.read_melody_notes()
+
+    p.read_harmonies(staff_used)
+
+    service = _get_chord_service()
+
+    output_path, applied, skipped, exceptions = (
+        generate_tab_from_template(
+            p, A_MODAL_SAWMILL, staff_used, TEMPLATE_PATH,
+            "output", service, filename=filename
+        )
+    )
+
+    with zipfile.ZipFile(output_path) as archive:
+
+        mscx_name = [
+            n for n in archive.namelist() if n.endswith(".mscx")
+        ][0]
+
+        xml_bytes = archive.read(mscx_name)
+
+    root = ET.fromstring(xml_bytes)
+
+    return output_path, applied, skipped, exceptions, root
