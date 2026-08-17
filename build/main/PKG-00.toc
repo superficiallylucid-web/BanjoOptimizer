@@ -121,6 +121,10 @@
    'C:\\Projects\\BanjoOptimizer\\scores\\archive\\The Christmas Song '
    '(notation only).mscz',
    'DATA'),
+  ('scores\\The Christmas Song - Cut version.mscz',
+   'C:\\Projects\\BanjoOptimizer\\scores\\The Christmas Song - Cut '
+   'version.mscz',
+   'DATA'),
   ('scores\\The Christmas Song.mscz',
    'C:\\Projects\\BanjoOptimizer\\scores\\The Christmas Song.mscz',
    'DATA'),

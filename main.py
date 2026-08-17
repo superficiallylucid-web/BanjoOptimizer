@@ -46,6 +46,7 @@ TAB_TEMPLATE_PATH = (
 )
 
 OUTPUT_FOLDER.mkdir(exist_ok=True)
+GENERATED_FOLDER.mkdir(exist_ok=True)
 
 log_file = open(
     OUTPUT_FOLDER / "BanjoOptimizer_report.txt",
