@@ -1525,6 +1525,91 @@ def _find_title_frame(staff_element):
     return None
 
 
+def _set_score_title_and_composer(
+    score_el, staff_element, title, composer
+):
+    """
+    BO-26: carry over the source score's own Title and
+    Composer/arranger (from its Project Properties -- see
+    parser.read_title()/read_composer()) into the generated TAB
+    template, replacing the template's own placeholder values
+    rather than leaving them in place.
+
+    Updates BOTH the Project Properties metaTags (workTitle,
+    composer) AND the score's own visible VBox title-frame text
+    (confirmed directly against the real template: a <Text
+    style="title"> and a <Text style="composer">, both direct
+    children of its VBox) -- kept consistent with each other
+    rather than updating only one, since a mismatch between the
+    two would be confusing (Project Properties showing one title
+    while the score itself displays another).
+
+    composer: when empty (the source had no Composer/arranger
+    value at all -- see read_composer()'s own default), the
+    composer metaTag is cleared and the VBox's own composer
+    <Text> element is removed entirely, rather than left showing
+    the template's own literal placeholder text ("Composer /
+    arranger") as if it were a real value. Never invents one.
+    """
+
+    work_title_tag = score_el.find(
+        './/{*}metaTag[@name="workTitle"]'
+    )
+
+    if work_title_tag is not None and title:
+
+        work_title_tag.text = title
+
+    composer_tag = score_el.find(
+        './/{*}metaTag[@name="composer"]'
+    )
+
+    if composer_tag is not None:
+
+        composer_tag.text = composer if composer else None
+
+    vbox = _find_title_frame(staff_element)
+
+    if vbox is None:
+
+        return
+
+    for text_element in vbox.findall("{*}Text"):
+
+        style_element = text_element.find("{*}style")
+
+        style = (
+            style_element.text if style_element is not None
+            else None
+        )
+
+        if style == "title" and title:
+
+            content_element = text_element.find("{*}text")
+
+            font_element = content_element.find("{*}font")
+
+            if font_element is not None:
+
+                font_element.tail = title
+
+            else:
+
+                content_element.text = title
+
+        elif style == "composer":
+
+            if composer:
+
+                content_element = text_element.find("{*}text")
+
+                content_element.text = composer
+
+            else:
+
+                vbox.remove(text_element)
+
+
 def _add_tuning_text(staff_element, tuning):
     """
     Add a clearly-labeled text line stating the actual tuning
@@ -1944,6 +2029,18 @@ MELODY_ANCHOR_DISTANCE_CAP = 5  # frets; matches
 # break ties among find_positions()'s own candidates, never
 # force an otherwise-unreasonable position.
 
+STRING_ANCHOR_DISTANCE_CAP = 3  # strings -- BO-25. The domain
+# itself is already small (fretboard string_index only ever
+# spans 0-3, so 3 is already the maximum possible distance --
+# this cap is written explicitly for the same reason every other
+# distance measure in this project has one, not because it
+# changes behavior here). String continuity is deliberately a
+# TIEBREAK ONLY: see _choose_melody_position()'s own sort key --
+# it is compared strictly after fret_distance in a lexicographic
+# tuple, so it can only ever decide between candidates already
+# tied on fret-position continuity, never override a fret-
+# position difference of any size.
+
 
 def _fd_positions_for_pitch(shape_values, open_notes, target_midi):
     """
@@ -1971,53 +2068,70 @@ def _fd_positions_for_pitch(shape_values, open_notes, target_midi):
 
 
 def _choose_melody_position(
-    midi, open_notes, fd_shape_values=None, working_fret_anchor=None
+    midi, open_notes, fd_shape_values=None, working_fret_anchor=None,
+    previous_position=None
 ):
     """
-    BO-24: choose a string/fret position for one melody note,
-    optionally anchored to a nearby chord's own already-selected
-    shape -- reuses fretboard.find_positions()/best_position()
-    unmodified as the actual candidate source/scorer; this only
-    adds a priority layer on top, matching the investigation's
-    own finding that no second, independent fretboard-position
-    system was needed.
+    BO-24/BO-25: choose a string/fret position for one melody
+    note, optionally anchored to a nearby chord's own already-
+    selected shape (BO-24) and/or the immediately preceding
+    melody note's own actually-chosen position (BO-25) -- reuses
+    fretboard.find_positions()/best_position() unmodified as the
+    actual candidate source/scorer; this only adds priority
+    layers on top, matching both investigations' own finding
+    that no second, independent fretboard-position system was
+    needed.
 
     fd_shape_values: parse_shape() output of the chord AT this
     exact melody note's own onset, if any. When the exact pitch
     is genuinely one of that shape's own positions, that position
     is STRONGLY preferred -- returned directly, without even
-    consulting best_position() -- matching the task's own
-    priority #1/#2 for a melody note occurring exactly at a
-    chord ("the FD represents the selected chord shape" -- see
-    this function's own docstring notes above). Falls through to
-    the working_fret_anchor/plain-best_position() behavior below
-    when the exact pitch isn't actually available anywhere within
-    that shape.
+    consulting best_position() or any anchor below -- matching
+    BO-24's own priority #1/#2 for a melody note occurring
+    exactly at a chord. String continuity NEVER applies here;
+    this is the absolute top of the priority order, unchanged by
+    BO-25 (see the BO-25 investigation's own Example 2 -- an FD
+    with only one valid position for a pitch leaves nothing for
+    any tiebreak to act on).
 
     working_fret_anchor: a nearby chord's own
     playing_model._chord_working_fret() (reused unmodified), for
     a melody note immediately before/after a chord (or the
-    at-chord case falling through above). Used as a CAPPED
-    distance tiebreak among find_positions()'s own candidates,
-    with best_position()'s own existing score (reused, not
-    replaced or duplicated) as the secondary tiebreak among
-    otherwise-equally-close candidates. This is deliberately a
-    single, local anchor per note (whichever chord is nearest),
-    not a multi-step lookahead/lookbehind search across the
-    whole phrase -- matching the task's own explicit warning
-    against "blindly forcing everything toward the next chord":
-    an intermediate chord (e.g. a Cmaj7 between a C and an Em)
-    naturally becomes its own separate anchor point for the
-    notes immediately around IT, rather than the melody being
-    pulled all the way from one distant chord to another.
+    at-chord case falling through above) -- BO-24, unchanged.
+
+    previous_position: the ACTUAL {"string":..., "fret":...}
+    dict _choose_melody_position() itself returned for the
+    immediately preceding melody note (BO-25) -- never a
+    recomputed or assumed position; the caller is responsible
+    for threading the real, sequential chain
+    (note 1's result -> note 2's own previous_position -> ...).
+    Its "string" is used as a CAPPED distance tiebreak (see
+    STRING_ANCHOR_DISTANCE_CAP) -- applied strictly AFTER fret_
+    distance in a single lexicographic sort key, so it can only
+    ever decide between candidates already tied on fret-position
+    continuity to the working_fret_anchor. A fret-distance
+    difference of any size, however small, is never overridden
+    by string continuity -- see this project's own BO-25
+    investigation notes (Examples 3/4) for why an unconditional
+    tie-only rule, rather than a "close enough" band, is the
+    correct, minimal extension: introducing a separate closeness
+    threshold would be exactly the kind of independent, arbitrary
+    scoring parameter both this task and BO-24's own design
+    explicitly avoid. Applies even when working_fret_anchor is
+    None (fret_distance is then 0 for every candidate, so string
+    continuity becomes the first real differentiator, ahead of
+    best_position()'s own static score) -- BO-25's own Example 5
+    (no chord anchor nearby) is exactly this case, deliberately
+    not special-cased.
 
     Returns None only when find_positions() itself finds nothing
-    -- callers should treat that exactly as before this task
+    -- callers should treat that exactly as before either task
     (no playable position exists for this pitch in this tuning).
     Falls back to plain best_position(find_positions(...)),
-    completely unchanged, when neither anchor applies at all --
-    every existing melody position choice this project already
-    makes for a note with no chord anywhere nearby is untouched.
+    completely unchanged, when no anchor of either kind applies
+    at all (e.g. the very first melody note in a piece) -- every
+    existing melody position choice this project already makes
+    for a note with nothing nearby to anchor to is untouched.
     """
 
     positions = find_positions(midi, open_notes)
@@ -2043,18 +2157,40 @@ def _choose_melody_position(
     # than recomputed.
     default_choice = best_position(positions)
 
-    if working_fret_anchor is None:
+    if working_fret_anchor is None and previous_position is None:
 
         return default_choice
 
+    previous_string = (
+        previous_position["string"]
+        if previous_position is not None else None
+    )
+
     def _sort_key(position):
 
-        distance = min(
-            abs(position["fret"] - working_fret_anchor),
-            MELODY_ANCHOR_DISTANCE_CAP
-        )
+        if working_fret_anchor is not None:
 
-        return (distance, -position["score"])
+            fret_distance = min(
+                abs(position["fret"] - working_fret_anchor),
+                MELODY_ANCHOR_DISTANCE_CAP
+            )
+
+        else:
+
+            fret_distance = 0
+
+        if previous_string is not None:
+
+            string_distance = min(
+                abs(position["string"] - previous_string),
+                STRING_ANCHOR_DISTANCE_CAP
+            )
+
+        else:
+
+            string_distance = 0
+
+        return (fret_distance, string_distance, -position["score"])
 
     return sorted(positions, key=_sort_key)[0]
 
@@ -2265,6 +2401,19 @@ def generate_tab_from_template(
 
     score_el.remove(treble_staff)
 
+    # ---- BO-26: carry over the source's own Title and
+    # Composer/arranger, replacing the template's own
+    # placeholder values (both the Project Properties metaTags
+    # and the TAB staff's own visible VBox title-frame text, so
+    # the two stay consistent with each other) ----
+
+    _set_score_title_and_composer(
+        score_el, tab_staff, score_file.score.title,
+        score_file.score.composer
+    )
+
+    _add_tuning_text(tab_staff, tuning)
+
     # ---- Rebuild the TAB staff's Measures from the source's
     # own events ----
 
@@ -2277,6 +2426,12 @@ def generate_tab_from_template(
     sig_parts = score_file.score.time_signature.split("/")
 
     sig_n, sig_d = sig_parts[0], sig_parts[1]
+
+    # BO-25: threaded across the whole loop below (not reset per
+    # measure) -- always the actual position _choose_melody_
+    # position() itself returned for the immediately preceding
+    # melody note, never a recomputed or assumed one.
+    previous_melody_position = None
 
     for measure_index, measure_events in enumerate(measures):
 
@@ -2381,9 +2536,13 @@ def generate_tab_from_template(
             # applies -- see the pre-computed lookups built
             # earlier in this function, before this loop, from
             # the exact same shape selection _apply_chord_
-            # shapes() itself uses below. Falls back to plain,
-            # unmodified best_position(find_positions(...)) for
-            # every note neither at nor adjacent to a chord.
+            # shapes() itself uses below.
+            # BO-25: also anchor to the ACTUAL position chosen
+            # for the immediately preceding melody note (never
+            # recomputed) as a string-continuity tiebreak. Falls
+            # back to plain, unmodified best_position(find_
+            # positions(...)) for the very first melody note in
+            # the piece, when no anchor of either kind applies.
             chosen = _choose_melody_position(
                 midi, open_notes,
                 fd_shape_values=fd_anchor_by_event_id.get(
@@ -2393,8 +2552,11 @@ def generate_tab_from_template(
                     working_fret_anchor_by_event_id.get(
                         id(event)
                     )
-                )
+                ),
+                previous_position=previous_melody_position
             )
+
+            previous_melody_position = chosen
 
             chosen_fret = chosen["fret"]
 

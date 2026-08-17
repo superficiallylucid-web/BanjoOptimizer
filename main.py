@@ -7,9 +7,7 @@ from output import output, clear_output
 from parser import MuseScoreFile
 from optimizer import TuningAnalyzer
 from recommendations import apply_shared_features, apply_confidence
-from score_generator import (
-    generate_chord_diagrams_only, generate_tab_from_template
-)
+from score_generator import generate_tab_from_template
 from tunings import get_tunings
 from chord_service import ChordService
 from chord_library import ChordLibrary
@@ -283,18 +281,18 @@ else:
         # already computed above, not a second recommendation
         # process.
         #
-        # Currently using generate_chord_diagrams_only() ("Plan
-        # B"): adds banjo chord shape diagrams above the existing
-        # chord symbols on the score's own notation staff, without
-        # creating a TAB staff and without touching melody notes/
-        # frets/strings/pitches or any existing TAB elsewhere in
-        # the score. Adopted after repeated, unresolved MuseScore
-        # "Incomplete measure" errors on the full TAB-generation
-        # path (generate_mscz(), still defined in score_generator.py
-        # and intended to be revisited later) -- each confirmed
-        # structural gap found and fixed did not resolve the
-        # underlying issue, so this narrower, lower-risk approach
-        # was adopted instead.
+        # BO-27: TAB-only output. generate_chord_diagrams_only()
+        # ("Plan B" -- see score_generator.py's own module notes
+        # for its history) previously ran here too, producing a
+        # second, separate file per tuning (chord diagrams on the
+        # source's own notation staff, no TAB staff at all). That
+        # function remains defined and intact in score_generator.py
+        # (still covered by its own dedicated tests) -- this is a
+        # narrower change to main.py's own generation loop, not a
+        # removal of the function itself, matching this project's
+        # own established pattern of keeping a superseded
+        # generation path defined rather than deleted (see BO-19's
+        # own treatment of generate_mscz()).
         # ---------------------------------------------------------
 
         output(
@@ -312,48 +310,8 @@ else:
                 target_tuning = get_tunings()[item.name]
 
                 (
-                    generated_path, shapes_applied, shapes_skipped,
-                    melody_exceptions
-                ) = generate_chord_diagrams_only(
-                    score,
-                    target_tuning,
-                    staff_used,
-                    GENERATED_FOLDER,
-                    generation_chord_service
-                )
-
-                output(
-                    f"   Generated: {generated_path.name} "
-                    f"({shapes_applied} chord shapes"
-                    + (
-                        f", {shapes_skipped} chord symbols "
-                        "skipped"
-                        if shapes_skipped else ""
-                    )
-                    + (
-                        f", {len(melody_exceptions)} melody/chord "
-                        "exceptions"
-                        if melody_exceptions else ""
-                    )
-                    + ")"
-                )
-
-                all_melody_exceptions.extend(melody_exceptions)
-
-                # BO-23: also generate a TAB-only score from the
-                # MuseScore-created template (see score_generator.py's
-                # own BO-23 section notes) -- a separate, additive
-                # output alongside the existing chord-diagrams-only
-                # one above, not a replacement for it. Uses the SAME
-                # underlying chord-shape selection (_apply_chord_
-                # shapes(), unmodified) with the same harmonies/
-                # melody/tuning, so its own melody/chord exceptions
-                # are identical to the ones already collected above --
-                # deliberately not added a second time here, to avoid
-                # reporting the same exception twice.
-                (
                     tab_path, tab_shapes_applied, tab_shapes_skipped,
-                    _
+                    melody_exceptions
                 ) = generate_tab_from_template(
                     score,
                     target_tuning,
@@ -371,8 +329,15 @@ else:
                         "skipped"
                         if tab_shapes_skipped else ""
                     )
+                    + (
+                        f", {len(melody_exceptions)} melody/chord "
+                        "exceptions"
+                        if melody_exceptions else ""
+                    )
                     + ")"
                 )
+
+                all_melody_exceptions.extend(melody_exceptions)
 
             except Exception as error:
 

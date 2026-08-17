@@ -196,6 +196,61 @@ class MuseScoreFile:
 
     # -----------------------------------------------------
 
+    def read_composer(self):
+        """
+        BO-26: read the "Composer / arranger" value from the
+        score's own Project Properties. Confirmed directly
+        against a real MuseScore-authored file that this single,
+        combined UI field is stored in the "composer" metaTag --
+        "arranger" is checked as a defensive fallback only, in
+        case some file uses it instead. Populates Score.composer
+        -- a field that already existed on the model but was
+        never populated (confirmed nothing else in the codebase
+        read it before), matching this project's own established
+        pattern for extending an already-defined-but-dormant
+        field (see parser.py's own Note.duration precedent).
+
+        Leaves Score.composer at its own default ("") when
+        neither tag has a real value -- never invents one.
+        """
+
+        for element in self.root.iter():
+
+            tag = element.tag.split("}")[-1]
+
+            if tag != "metaTag":
+
+                continue
+
+            name = element.attrib.get("name", "")
+
+            if name not in ("composer", "arranger"):
+
+                continue
+
+            if not element.text:
+
+                continue
+
+            value = element.text.strip()
+
+            if not value:
+
+                continue
+
+            if name == "composer":
+
+                self.score.composer = value
+
+                return
+
+            if not self.score.composer:
+
+                self.score.composer = value
+
+
+    # -----------------------------------------------------
+
     def read_tab_tuning(self):
         """
         Read the actual open-string tuning embedded in the
