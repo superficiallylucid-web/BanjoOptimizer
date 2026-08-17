@@ -1068,3 +1068,50 @@ def _generate_full_song(filename):
     root = ET.fromstring(xml_bytes)
 
     return output_path, applied, skipped, exceptions, root
+
+
+# ---------------------------------------------------------
+# 13 -- the tuning description text is set to 8pt, distinct
+# from the 14pt title
+# ---------------------------------------------------------
+
+def test_tuning_text_is_8pt():
+
+    output_path, applied, skipped, exceptions, root = (
+        _generate_full_song("test_tuning_text_size.mscz")
+    )
+
+    try:
+
+        staff = root.find('.//{*}Score/{*}Staff[@id="1"]')
+
+        vbox = staff.find("{*}VBox")
+
+        subtitle_text_element = None
+
+        for text_element in vbox.findall("{*}Text"):
+
+            style_element = text_element.find("{*}style")
+
+            if (
+                style_element is not None
+                and style_element.text == "subtitle"
+            ):
+
+                subtitle_text_element = text_element
+
+                break
+
+        assert subtitle_text_element is not None
+
+        size_element = subtitle_text_element.find("{*}size")
+
+        assert size_element is not None
+
+        assert size_element.text == "8"
+
+    finally:
+
+        if os.path.exists(output_path):
+
+            os.remove(output_path)

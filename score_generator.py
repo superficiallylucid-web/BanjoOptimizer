@@ -1622,7 +1622,12 @@ def _add_tuning_text(staff_element, tuning):
     Appends a new <Text> to the staff's existing <VBox> if it
     has one, without touching anything already there; creates a
     minimal new VBox (matching the structure confirmed real
-    scores actually use) if the staff has none.
+    scores actually use) if the staff has none. Set at 8pt
+    (explicit <size> element, matching the exact position
+    confirmed against a real MuseScore-authored <Text> element:
+    eid, style, size, then text) -- smaller than the "subtitle"
+    style's own 14pt default, so this line reads as a compact
+    label rather than a second subtitle-sized heading.
     """
 
     vbox = _find_title_frame(staff_element)
@@ -1650,6 +1655,10 @@ def _add_tuning_text(staff_element, tuning):
     style_element = ET.SubElement(text_element, "style")
 
     style_element.text = "subtitle"
+
+    size_element = ET.SubElement(text_element, "size")
+
+    size_element.text = "8"
 
     content_element = ET.SubElement(text_element, "text")
 
