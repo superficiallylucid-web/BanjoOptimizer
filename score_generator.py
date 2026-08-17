@@ -2093,18 +2093,19 @@ def _fd_positions_for_pitch(shape_values, open_notes, target_midi):
 
 def _choose_melody_position(
     midi, open_notes, fd_shape_values=None, working_fret_anchor=None,
-    previous_position=None
+    following_working_fret_anchor=None, previous_position=None
 ):
     """
-    BO-24/BO-25: choose a string/fret position for one melody
-    note, optionally anchored to a nearby chord's own already-
-    selected shape (BO-24) and/or the immediately preceding
-    melody note's own actually-chosen position (BO-25) -- reuses
+    BO-24/BO-25/BO-30: choose a string/fret position for one
+    melody note, optionally anchored to a nearby chord's own
+    already-selected shape (BO-24, and now BO-30's second,
+    following-chord anchor), the immediately preceding melody
+    note's own actually-chosen position (BO-25), or both -- reuses
     fretboard.find_positions()/best_position() unmodified as the
     actual candidate source/scorer; this only adds priority
-    layers on top, matching both investigations' own finding
-    that no second, independent fretboard-position system was
-    needed.
+    layers on top, matching every one of these investigations'
+    own finding that no second, independent fretboard-position
+    system was needed.
 
     fd_shape_values: parse_shape() output of the chord AT this
     exact melody note's own onset, if any. When the exact pitch
@@ -2112,16 +2113,38 @@ def _choose_melody_position(
     is STRONGLY preferred -- returned directly, without even
     consulting best_position() or any anchor below -- matching
     BO-24's own priority #1/#2 for a melody note occurring
-    exactly at a chord. String continuity NEVER applies here;
-    this is the absolute top of the priority order, unchanged by
-    BO-25 (see the BO-25 investigation's own Example 2 -- an FD
-    with only one valid position for a pitch leaves nothing for
-    any tiebreak to act on).
+    exactly at a chord. Neither string continuity nor the BO-30
+    two-sided anchor below ever applies here; this is the
+    absolute top of the priority order, unchanged by either (see
+    the BO-25 investigation's own Example 2, and the BO-30
+    investigation's own confirmation that a chord-onset note is
+    untouched by this task -- an FD with only one valid position
+    for a pitch leaves nothing for any tiebreak to act on).
 
-    working_fret_anchor: a nearby chord's own
-    playing_model._chord_working_fret() (reused unmodified), for
-    a melody note immediately before/after a chord (or the
-    at-chord case falling through above) -- BO-24, unchanged.
+    working_fret_anchor: a nearby PRECEDING chord's own
+    playing_model._chord_working_fret() (reused unmodified) --
+    BO-24, unchanged.
+
+    following_working_fret_anchor: a nearby FOLLOWING chord's own
+    working fret (BO-30) -- for a melody note that sits
+    immediately between TWO chord onsets (both this and
+    working_fret_anchor set), the two are combined as a capped
+    MAX, not a sum or a "nearest wins": fret_distance = max(
+    capped_distance_to_preceding, capped_distance_to_following).
+    Confirmed against every real occurrence of this exact
+    situation in The Christmas Song (5 total) that max is the
+    only one of the three obvious combination rules (sum, max,
+    nearest/min) that behaves correctly in every case: it lets a
+    genuinely good transition point (close to BOTH anchors) win
+    even over a candidate that's excellent for one side and poor
+    for the other, which sum and min both fail to do (sum lets a
+    bad side "average out" against a great one; min ignores the
+    bad side entirely) -- neither represents an actual transition
+    between two chord positions. When ONLY one of the two anchors
+    is set (the ordinary, far more common case -- a note adjacent
+    to just one nearby chord onset), the max collapses to that
+    single distance, reproducing BO-24's own original single-
+    anchor behavior exactly, unchanged.
 
     previous_position: the ACTUAL {"string":..., "fret":...}
     dict _choose_melody_position() itself returned for the
@@ -2131,31 +2154,33 @@ def _choose_melody_position(
     (note 1's result -> note 2's own previous_position -> ...).
     Its "string" is used as a CAPPED distance tiebreak (see
     STRING_ANCHOR_DISTANCE_CAP) -- applied strictly AFTER fret_
-    distance in a single lexicographic sort key, so it can only
-    ever decide between candidates already tied on fret-position
-    continuity to the working_fret_anchor. A fret-distance
-    difference of any size, however small, is never overridden
-    by string continuity -- see this project's own BO-25
-    investigation notes (Examples 3/4) for why an unconditional
-    tie-only rule, rather than a "close enough" band, is the
-    correct, minimal extension: introducing a separate closeness
-    threshold would be exactly the kind of independent, arbitrary
-    scoring parameter both this task and BO-24's own design
-    explicitly avoid. Applies even when working_fret_anchor is
-    None (fret_distance is then 0 for every candidate, so string
-    continuity becomes the first real differentiator, ahead of
-    best_position()'s own static score) -- BO-25's own Example 5
-    (no chord anchor nearby) is exactly this case, deliberately
-    not special-cased.
+    distance (now the BO-30 two-sided fret_distance above, when
+    both anchors apply) in a single lexicographic sort key, so it
+    can only ever decide between candidates already tied on fret-
+    position continuity. A fret-distance difference of any size,
+    however small, is never overridden by string continuity --
+    see this project's own BO-25 investigation notes (Examples
+    3/4) for why an unconditional tie-only rule, rather than a
+    "close enough" band, is the correct, minimal extension:
+    introducing a separate closeness threshold would be exactly
+    the kind of independent, arbitrary scoring parameter every
+    one of these tasks explicitly avoids. Applies even when
+    neither working_fret_anchor nor following_working_fret_anchor
+    is set (fret_distance is then 0 for every candidate, so
+    string continuity becomes the first real differentiator,
+    ahead of best_position()'s own static score) -- BO-25's own
+    Example 5 (no chord anchor nearby) is exactly this case,
+    deliberately not special-cased.
 
     Returns None only when find_positions() itself finds nothing
-    -- callers should treat that exactly as before either task
-    (no playable position exists for this pitch in this tuning).
-    Falls back to plain best_position(find_positions(...)),
-    completely unchanged, when no anchor of either kind applies
-    at all (e.g. the very first melody note in a piece) -- every
-    existing melody position choice this project already makes
-    for a note with nothing nearby to anchor to is untouched.
+    -- callers should treat that exactly as before any of these
+    tasks (no playable position exists for this pitch in this
+    tuning). Falls back to plain best_position(find_positions(
+    ...)), completely unchanged, when no anchor of any kind
+    applies at all (e.g. the very first melody note in a piece)
+    -- every existing melody position choice this project already
+    makes for a note with nothing nearby to anchor to is
+    untouched.
     """
 
     positions = find_positions(midi, open_notes)
@@ -2181,7 +2206,11 @@ def _choose_melody_position(
     # than recomputed.
     default_choice = best_position(positions)
 
-    if working_fret_anchor is None and previous_position is None:
+    if (
+        working_fret_anchor is None
+        and following_working_fret_anchor is None
+        and previous_position is None
+    ):
 
         return default_choice
 
@@ -2192,16 +2221,36 @@ def _choose_melody_position(
 
     def _sort_key(position):
 
+        # BO-30: when both a preceding and a following anchor
+        # apply, use the capped MAX of the two distances -- see
+        # this function's own docstring for why (confirmed
+        # against every real occurrence of this situation).
+        # When only one anchor is set (the ordinary case), this
+        # collapses to exactly that single distance, unchanged.
+        distances = []
+
         if working_fret_anchor is not None:
 
-            fret_distance = min(
-                abs(position["fret"] - working_fret_anchor),
-                MELODY_ANCHOR_DISTANCE_CAP
+            distances.append(
+                min(
+                    abs(position["fret"] - working_fret_anchor),
+                    MELODY_ANCHOR_DISTANCE_CAP
+                )
             )
 
-        else:
+        if following_working_fret_anchor is not None:
 
-            fret_distance = 0
+            distances.append(
+                min(
+                    abs(
+                        position["fret"]
+                        - following_working_fret_anchor
+                    ),
+                    MELODY_ANCHOR_DISTANCE_CAP
+                )
+            )
+
+        fret_distance = max(distances) if distances else 0
 
         if previous_string is not None:
 
@@ -2327,7 +2376,16 @@ def generate_tab_from_template(
     # `measures` below.
     fd_anchor_by_event_id = {}
 
-    working_fret_anchor_by_event_id = {}
+    # BO-30: preceding and following are now tracked separately
+    # and independently (neither check stops the other), so a
+    # note sandwiched between two chord onsets can pick up BOTH
+    # anchors; a note adjacent to only one chord onset gets
+    # exactly that one -- identical to BO-24's own original
+    # single-anchor behavior, since only one of these two dicts
+    # ever gets an entry for it.
+    preceding_working_fret_anchor_by_event_id = {}
+
+    following_working_fret_anchor_by_event_id = {}
 
     for index, (measure_number, event) in enumerate(
         flat_note_events
@@ -2343,29 +2401,37 @@ def generate_tab_from_template(
 
             continue
 
-        for neighbor_index in (index - 1, index + 1):
+        if index - 1 >= 0:
 
-            if not (0 <= neighbor_index < len(flat_note_events)):
-
-                continue
-
-            neighbor_measure, neighbor_event = flat_note_events[
-                neighbor_index
+            prev_measure, prev_event = flat_note_events[
+                index - 1
             ]
 
-            neighbor_key = (
-                neighbor_measure, neighbor_event["beat"]
-            )
+            prev_key = (prev_measure, prev_event["beat"])
 
-            if neighbor_key in chord_shape_by_position:
+            if prev_key in chord_shape_by_position:
 
-                working_fret_anchor_by_event_id[id(event)] = (
-                    _chord_working_fret(
-                        chord_shape_by_position[neighbor_key]
-                    )
+                preceding_working_fret_anchor_by_event_id[
+                    id(event)
+                ] = _chord_working_fret(
+                    chord_shape_by_position[prev_key]
                 )
 
-                break
+        if index + 1 < len(flat_note_events):
+
+            next_measure, next_event = flat_note_events[
+                index + 1
+            ]
+
+            next_key = (next_measure, next_event["beat"])
+
+            if next_key in chord_shape_by_position:
+
+                following_working_fret_anchor_by_event_id[
+                    id(event)
+                ] = _chord_working_fret(
+                    chord_shape_by_position[next_key]
+                )
 
     with zipfile.ZipFile(template_path) as z:
 
@@ -2561,6 +2627,13 @@ def generate_tab_from_template(
             # earlier in this function, before this loop, from
             # the exact same shape selection _apply_chord_
             # shapes() itself uses below.
+            # BO-30: when a note sits immediately between TWO
+            # chord onsets, both anchors are passed -- see
+            # _choose_melody_position()'s own docstring for how
+            # they combine (capped max, not sum or nearest-wins).
+            # A note adjacent to only one chord onset gets only
+            # that one, identical to BO-24's own original single-
+            # anchor behavior.
             # BO-25: also anchor to the ACTUAL position chosen
             # for the immediately preceding melody note (never
             # recomputed) as a string-continuity tiebreak. Falls
@@ -2573,7 +2646,12 @@ def generate_tab_from_template(
                     id(event)
                 ),
                 working_fret_anchor=(
-                    working_fret_anchor_by_event_id.get(
+                    preceding_working_fret_anchor_by_event_id.get(
+                        id(event)
+                    )
+                ),
+                following_working_fret_anchor=(
+                    following_working_fret_anchor_by_event_id.get(
                         id(event)
                     )
                 ),
