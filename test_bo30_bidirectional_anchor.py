@@ -322,7 +322,17 @@ def test_full_pipeline_bo20_21_unaffected():
 
             assert fd.find("{*}color") is None
 
-        # The real target case, confirmed end to end.
+        # The real target case, re-verified after BO-33: BO-30's
+        # own fix (idx0/fret7) compensated for G#m's chord shape
+        # being unnecessarily high (working fret 6). BO-33 fixed
+        # that root cause directly -- G#m's own onset note (G#4)
+        # now correctly matches an exact-position candidate
+        # (working fret 1 instead of 6), confirmed via direct
+        # investigation. With both B7 (working fret 4) and G#m
+        # (working fret 1) now low, BO-30's own max-combination
+        # anchor naturally keeps this intermediate note low too
+        # -- a genuinely more coherent low-position passage
+        # throughout, not a regression in either BO-30 or BO-33.
         measures = staff.findall("{*}Measure")
 
         m7_voice = list(measures[6].find("{*}voice"))
@@ -345,9 +355,9 @@ def test_full_pipeline_bo20_21_unaffected():
 
         b3_note = b3_chord.find("{*}Note")
 
-        assert b3_note.find("{*}fret").text == "7"
+        assert b3_note.find("{*}fret").text == "2"
 
-        assert b3_note.find("{*}string").text == "3"
+        assert b3_note.find("{*}string").text == "2"
 
     finally:
 

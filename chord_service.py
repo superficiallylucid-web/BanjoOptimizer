@@ -64,12 +64,9 @@ from fretboard import (
     find_melody_occurrences,
     classify_melody_realization,
     sounding_notes,
-    parse_shape,
     DIRECT_REALIZATION,
     INDIRECT_REALIZATION
 )
-
-from playing_model import _chord_working_fret
 
 from models import (
     MelodyRealizationMatch,
@@ -223,35 +220,104 @@ POSITION_DISTANCE_CAP = 5  # frets; matches playing_model.py's
 # lower-priority playability tiebreak below it either.
 
 
-def _capped_position_distance(shape, preferred_melody_fret):
+def _capped_position_distance(
+    notes, melody_pitches, preferred_melody_fret, melody_strings
+):
     """
-    BO-22: distance between a candidate ChordShape's own working
-    fret (playing_model._chord_working_fret() -- REUSED
-    unmodified, not a competing definition) and
-    preferred_melody_fret, capped at POSITION_DISTANCE_CAP.
+    BO-33: distance between preferred_melody_fret and the ACTUAL
+    fret at which the melody pitch itself sounds within this
+    specific candidate -- not the shape's own overall working
+    fret (playing_model._chord_working_fret(), which is a
+    different value: the shape's own lowest FRETTED position
+    across every string, regardless of which one, if any, plays
+    the melody note). Confirmed by direct investigation (BO-32)
+    that these can diverge: a candidate's overall working fret
+    can come from a DIFFERENT string than the one sounding the
+    melody pitch, so comparing preferred_melody_fret against the
+    wrong string's fret let a shape whose own working position
+    happened to be numerically closer win over one where the
+    melody note itself was the exact match -- even though the
+    tiebreak's entire purpose is "does this candidate's own
+    melody-note position match where the melody is likely being
+    played."
+
+    notes: this candidate's own sounding_notes(tuning,
+    shape.shape) output (REUSED from the caller's own sort_key,
+    not recomputed here -- the caller already builds this same
+    list for its own contains_melody_pitch check). Each entry
+    carries its own string_index (fretboard.SoundingNote,
+    unmodified), used here with melody_strings to recover the
+    exact fret on that string.
+
+    melody_pitches: the same pitches set already used for
+    contains_melody_pitch in the caller.
+
+    melody_strings: tuning.notes[1:] (4th to 1st), the same
+    open-string values sounding_notes() itself already used to
+    build `notes` -- passed through rather than re-deriving from
+    a shape string, since the caller already has it.
+
+    When the melody pitch sounds on more than one string within
+    this candidate (a doubled note), the occurrence CLOSEST to
+    preferred_melody_fret is used -- not an arbitrary "first by
+    string_index" rule. Confirmed necessary by a real regression
+    caught via the full test suite: the established Am/aEADE
+    example (melody E4) has shape 5320, which sounds E4 on BOTH
+    string_index 2 (fret 2) and string_index 3 (fret 0, open) --
+    picking the first by string_index order alone would compare
+    preferred_melody_fret against fret 2 and miss that fret 0 is
+    actually available and exactly matches, causing this
+    established shape to lose a tie it should win. Taking the
+    minimum distance directly answers this tiebreak's own
+    question -- "how close can this shape's own melody-note
+    position get to where the melody is likely being played" --
+    a shape offering multiple ways to sound the pitch is
+    correctly judged by its best one.
 
     Returns 0 (neutral -- no distance penalty) when
     preferred_melody_fret is None (no playable melody position
-    was determined) or when the shape has no working fret at all
-    (an all-open shape has no hand position to be distant from,
-    matching playing_model._continuity_bonus()'s own handling of
-    this same case).
+    was determined), when melody_pitches is empty, or when none
+    of this candidate's own sounding notes actually plays one of
+    melody_pitches (this last case should not occur for any
+    candidate that reaches this tiebreak in practice, since
+    get_shapes_for_exact_melody_pitch()'s own melody-containment
+    priority already runs before this one -- returning neutral
+    here is a defensive fallback, not load-bearing behavior).
     """
 
     if preferred_melody_fret is None:
 
         return 0
 
-    working_fret = _chord_working_fret(parse_shape(shape.shape))
-
-    if working_fret is None:
+    if not melody_pitches:
 
         return 0
 
-    return min(
-        abs(working_fret - preferred_melody_fret),
-        POSITION_DISTANCE_CAP
-    )
+    best_distance = None
+
+    for note in notes:
+
+        if note.midi not in melody_pitches:
+
+            continue
+
+        melody_fret = note.midi - melody_strings[note.string_index]
+
+        distance = min(
+            abs(melody_fret - preferred_melody_fret),
+            POSITION_DISTANCE_CAP
+        )
+
+        if best_distance is None or distance < best_distance:
+
+            best_distance = distance
+
+    if best_distance is None:
+
+        return 0
+
+    return best_distance
+
 
 
 class ChordService:
@@ -495,6 +561,8 @@ class ChordService:
             ROOTLESS_WEAK: 0
         }
 
+        melody_strings = tuning.notes[1:]
+
         def sort_key(shape):
 
             rank = category_rank.get(
@@ -508,7 +576,8 @@ class ChordService:
             )
 
             position_distance = _capped_position_distance(
-                shape, preferred_melody_fret
+                notes, pitches, preferred_melody_fret,
+                melody_strings
             )
 
             return (

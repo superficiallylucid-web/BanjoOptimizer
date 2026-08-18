@@ -42,6 +42,8 @@ from chord_library import ChordLibrary
 
 from chord_service import ChordService, _capped_position_distance
 
+from fretboard import sounding_notes
+
 from fretboard import sounding_notes, find_positions, best_position
 
 from score_generator import _apply_chord_shapes, _preferred_melody_fret
@@ -142,10 +144,28 @@ def test_positional_tiebreaker_direct():
 
     assert ranked[0].shape == "5320"
 
-    # And the distance computation itself, directly.
-    assert _capped_position_distance(close_shape, 2) == 0
+    # And the distance computation itself, directly -- BO-33:
+    # now takes notes/melody_pitches/melody_strings, using the
+    # melody pitch's own actual fret within each shape.
+    melody_strings = A_MODAL_SAWMILL.notes[1:]
 
-    assert _capped_position_distance(far_shape, 2) == 5  # capped from 8
+    close_notes = sounding_notes(A_MODAL_SAWMILL, "5320")
+
+    far_notes = sounding_notes(A_MODAL_SAWMILL, "00(10)0")
+
+    # 5320 sounds E4 (64) on TWO strings (fret 2 and fret 0
+    # open) -- the closer of the two (fret 2) is used, matching
+    # preferred_melody_fret=2 exactly.
+    assert _capped_position_distance(
+        close_notes, {64}, 2, melody_strings
+    ) == 0
+
+    # 00(10)0 sounds E4 only at fret 0 (open, string_index 3) --
+    # its own actual melody-note fret, not its unrelated overall
+    # working fret of 10.
+    assert _capped_position_distance(
+        far_notes, {64}, 2, melody_strings
+    ) == 2
 
 
 # ---------------------------------------------------------
@@ -285,13 +305,31 @@ def test_open_melody_note_does_not_force_all_open_shape():
         "technically has zero positional distance"
     )
 
-    # And _capped_position_distance() itself treats a genuinely
-    # all-open shape as neutral (0), not literally "at fret 0" --
-    # an important distinction per this task's own instruction
-    # not to treat open-string working position as fret 0.
+    # BO-33: _capped_position_distance() now measures the
+    # melody pitch's own ACTUAL fret within a shape, not a
+    # shape-level proxy -- so an all-open shape is no longer a
+    # special "neutral" case merely because it has no FRETTED
+    # position. If the melody pitch genuinely sounds open (fret
+    # 0) within the shape, that IS its real position, and is
+    # measured normally against preferred_melody_fret like any
+    # other fret. E4 (64) is aEADE's own open 1st string, so
+    # shape "0000" sounds it at fret 0 exactly.
     all_open_shape = _mock_shape("0000", "ROOT_PRESENT", 15.0)
 
-    assert _capped_position_distance(all_open_shape, 5) == 0
+    melody_strings = A_MODAL_SAWMILL.notes[1:]
+
+    all_open_notes = sounding_notes(A_MODAL_SAWMILL, "0000")
+
+    assert _capped_position_distance(
+        all_open_notes, {64}, 5, melody_strings
+    ) == 5  # |0 - 5|, not neutral -- E4 is genuinely at fret 0
+
+    # Neutral (0) still applies when the melody pitch isn't
+    # present in the shape at all -- a case this same all-open
+    # shape also demonstrates for a pitch it doesn't sound.
+    assert _capped_position_distance(
+        all_open_notes, {61}, 5, melody_strings
+    ) == 0  # C#4 (61) isn't one of aEADE's own open notes
 
 
 # ---------------------------------------------------------
@@ -363,7 +401,22 @@ def test_full_pipeline_real_am_chord_selects_5320():
 
             values[string_no] = 0
 
-    assert [values[i] for i in range(4)] == [5, 3, 2, 0]
+    # BO-33 re-verified this real example: 5320 sounds E4 on
+    # TWO strings (string_index 2/fret2 AND string_index 3/fret0
+    # open). Before BO-33, the positional tiebreak compared
+    # preferred_melody_fret against the shape's own overall
+    # working fret (2, from the fret2 occurrence) -- giving 5320
+    # a clean, unique advantage. BO-33 correctly measures the
+    # melody pitch's own actual position instead, taking the
+    # closest of its multiple occurrences -- so 5320 now also
+    # scores an exact match (distance 0, via its own open-string
+    # occurrence), same as 00(10)0 (E4 also open, on a different
+    # string). Both are equally complete Am voicings (confirmed
+    # directly: A-C-E in both, same voicing_quality_score) --
+    # this is a genuine, correct tie, not a regression, and the
+    # existing playability tiebreak correctly decides it in
+    # favor of the shape with more open strings.
+    assert [values[i] for i in range(4)] == [0, 0, 10, 0]
 
 
 # ---------------------------------------------------------
