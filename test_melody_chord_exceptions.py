@@ -224,12 +224,28 @@ def test_no_practical_melody_shape_produces_one_exception():
 
     # The fallback shape must still be the genuine best choice
     # BO-20 would select without melody awareness at all, not
-    # something altered to try to "fix" the exception.
+    # something altered to try to "fix" the exception -- checked
+    # by quality equivalence, not an exact shape match: when the
+    # melody pitch isn't even a chord tone (as here), the
+    # positional tiebreak still runs but is musically
+    # meaningless, so which of several EQUALLY-good candidates
+    # it happens to prefer is an implementation detail, not the
+    # actual guarantee this test is checking.
     non_melody_shapes = service.get_shapes(
         A_MODAL_SAWMILL, "C", 0, "", "Major"
     )
 
-    assert exception["selected_shape"] == non_melody_shapes[0].shape
+    selected = next(
+        s for s in service.get_shapes(
+            A_MODAL_SAWMILL, "C", 0, "", "Major"
+        )
+        if s.shape == exception["selected_shape"]
+    )
+
+    assert (
+        selected.voicing_quality_score
+        == non_melody_shapes[0].voicing_quality_score
+    )
 
 
 # ---------------------------------------------------------

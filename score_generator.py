@@ -973,11 +973,30 @@ def _set_fret_diagram_content(
 
 def _preferred_melody_fret(onset_notes, tuning):
     """
-    BO-22: the fret the melody note at a chord's onset is
-    likely actually played at, using the EXISTING
-    fretboard.find_positions()/best_position() unmodified -- no
-    new melody-position representation introduced, per the
-    investigation's own explicit instruction.
+    BO-22/BO-30-FOLLOWUP: the fret the melody note at a chord's
+    onset is likely actually played at, using the EXISTING
+    fretboard.find_positions() unmodified -- no new melody-
+    position representation introduced, per BO-22's own original
+    investigation instruction.
+
+    Uses the LOWEST fret among this note's own playable
+    positions, not best_position()'s own general-purpose middle-
+    string-biased choice (best_position()/find_positions()
+    themselves remain unmodified; only this narrow, purpose-
+    specific caller changes). Confirmed via a real, traced
+    example (The Christmas Song / Double C, the final "C" chord)
+    that best_position()'s static string bonus can pick a
+    dramatically higher fret than necessary purely because of
+    which string a note happens to fall on -- e.g. choosing fret
+    21 (string 1, +6 bonus) over fret 14 (string 3, +2 bonus) for
+    the exact same pitch, even though 14 is by far the lower,
+    more natural anchor. Since this value exists specifically to
+    tell chord-shape ranking "where does this note naturally
+    sit," a bias toward artificially high positions pulls chord
+    selection toward a needlessly high, less playable shape --
+    confirmed this was happening in production before this fix.
+    Verified the existing BO-22 Am/aEADE example (5320 vs
+    00(10)0) is unaffected by this change.
 
     onset_notes: the melody Note(s) at this chord's exact onset
     (see _melody_notes_at_harmony_onset()) -- when more than one
@@ -1004,7 +1023,7 @@ def _preferred_melody_fret(onset_notes, tuning):
 
         return None
 
-    return best_position(positions)["fret"]
+    return min(position["fret"] for position in positions)
 
 
 def _melody_notes_at_harmony_onset(harmony, melody_notes):
