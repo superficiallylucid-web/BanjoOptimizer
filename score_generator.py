@@ -2112,7 +2112,8 @@ def _fd_positions_for_pitch(shape_values, open_notes, target_midi):
 
 def _choose_melody_position(
     midi, open_notes, fd_shape_values=None, working_fret_anchor=None,
-    following_working_fret_anchor=None, previous_position=None
+    following_working_fret_anchor=None, previous_position=None,
+    preceding_chord_shape_values=None
 ):
     """
     BO-24/BO-25/BO-30: choose a string/fret position for one
@@ -2200,6 +2201,28 @@ def _choose_melody_position(
     -- every existing melody position choice this project already
     makes for a note with nothing nearby to anchor to is
     untouched.
+
+    preceding_chord_shape_values (BO-37, replacing BO-36's own
+    corridor_floor/corridor_ceiling design after that approach
+    was found not to match the intended playing behavior):
+    parse_shape() output of the MOST RECENT chord onset before
+    this note, REGARDLESS of how many intervening melody notes
+    sit between them -- a genuinely different, wider-reaching
+    lookup than working_fret_anchor above, which only considers
+    the single immediately-adjacent note. When the exact melody
+    pitch is achievable at one of that shape's own positions
+    (reusing _fd_positions_for_pitch() unmodified), that position
+    is strongly preferred -- "the tabbed note should be IN the
+    [most recent] FD." When it is not achievable within that
+    shape at all, this has no effect and the existing working_
+    fret_anchor/following_working_fret_anchor distance mechanism
+    decides instead -- "or SIMILAR to the most recent FD."
+    Confirmed against 8 of the 10 real melody-position changes in
+    a real, hand-verified reference score (measures 2-5, 10-11 of
+    The Christmas Song / Double C); the exact-inclusion candidate
+    is real, verified fretboard data in every one of those cases,
+    not an invented approximation.
+    
     """
 
     positions = find_positions(midi, open_notes)
@@ -2216,7 +2239,51 @@ def _choose_melody_position(
 
         if fd_matches:
 
-            string_index, fret = fd_matches[0]
+            # BO-35: when the melody pitch occurs on more than
+            # one string within the selected FD, choose the
+            # occurrence closest to this note's own preferred
+            # melody fret -- the SAME concept BO-33 already uses
+            # to rank chord shapes in the first place (the
+            # lowest fret among this note's own playable
+            # positions; reusing the `positions` list already
+            # computed above, rather than a second find_
+            # positions() call or a new representation).
+            #
+            # Confirmed by direct investigation (BO-34/BO-35)
+            # that this was a genuine inconsistency: BO-33's own
+            # shape-ranking logic (chord_service._capped_
+            # position_distance()) already resolves multiple
+            # occurrences of the same pitch this exact way, but
+            # this TAB-writing code was still taking fd_matches[
+            # 0] (first by string_index order) unconditionally --
+            # so a shape could be RANKED as the best choice
+            # specifically because one of its occurrences was an
+            # exact preferred-position match, while the TAB
+            # itself ended up written at a completely different,
+            # worse occurrence of that same shape. Real example:
+            # Ddim/D4 in The Christmas Song (A Modal Sawmill) --
+            # shape (10)(11)0(13) sounds D4 at both string_index
+            # 0/fret 10 and string_index 2/fret 0; BO's own
+            # ranking already preferred this shape because fret 0
+            # is an exact match, but fd_matches[0] alone would
+            # have written fret 10 instead.
+            #
+            # When fd_matches has only one entry, this trivially
+            # reduces to that entry -- identical to the previous,
+            # unconditional fd_matches[0] behavior. When multiple
+            # occurrences tie on distance, Python's min() returns
+            # the first one encountered, preserving the existing
+            # first-by-string_index-order behavior deterministically.
+            preferred_fret_for_this_note = min(
+                position["fret"] for position in positions
+            )
+
+            string_index, fret = min(
+                fd_matches,
+                key=lambda match: abs(
+                    match[1] - preferred_fret_for_this_note
+                )
+            )
 
             return {"string": string_index, "fret": fret}
 
@@ -2229,6 +2296,7 @@ def _choose_melody_position(
         working_fret_anchor is None
         and following_working_fret_anchor is None
         and previous_position is None
+        and preceding_chord_shape_values is None
     ):
 
         return default_choice
@@ -2238,7 +2306,29 @@ def _choose_melody_position(
         if previous_position is not None else None
     )
 
+    preceding_fd_matches = (
+        {
+            (string_index, fret)
+            for string_index, fret in _fd_positions_for_pitch(
+                preceding_chord_shape_values, open_notes, midi
+            )
+        }
+        if preceding_chord_shape_values is not None else set()
+    )
+
     def _sort_key(position):
+
+        # BO-37: exact inclusion in the most recent preceding
+        # chord's own shape comes FIRST -- "the tabbed note
+        # should be IN the [most recent] FD." See this function's
+        # own docstring for the real, verified examples this
+        # matches.
+        preceding_fd_violation = (
+            0
+            if (position["string"], position["fret"])
+            in preceding_fd_matches
+            else 1
+        )
 
         # BO-30: when both a preceding and a following anchor
         # apply, use the capped MAX of the two distances -- see
@@ -2282,7 +2372,10 @@ def _choose_melody_position(
 
             string_distance = 0
 
-        return (fret_distance, string_distance, -position["score"])
+        return (
+            preceding_fd_violation, fret_distance, string_distance,
+            -position["score"]
+        )
 
     return sorted(positions, key=_sort_key)[0]
 
@@ -2451,6 +2544,60 @@ def generate_tab_from_template(
                 ] = _chord_working_fret(
                     chord_shape_by_position[next_key]
                 )
+
+    # BO-37 (replacing BO-36's own corridor design): a SEPARATE
+    # pass -- deliberately not merged into the loop above, since
+    # it answers a genuinely different question. The preceding/
+    # following_working_fret_anchor dicts above only ever look at
+    # the SINGLE immediately-adjacent note event; this pass finds
+    # the nearest chord onset BEFORE this note, regardless of how
+    # many intervening melody notes sit between them, matching
+    # the real, hand-verified reference score's own examples
+    # (measures 2-5/10-11 of The Christmas Song / Double C) --
+    # "the tabbed note should be in [...] the most recent FD."
+    # Only the preceding direction is looked up here (unlike
+    # BO-36's own two-sided corridor, confirmed not to match the
+    # intended playing behavior) -- BO-24/30's own following_
+    # working_fret_anchor already covers the following direction
+    # for the single immediately-adjacent case, and no real
+    # example called for a wider-reaching following lookup.
+    preceding_chord_shape_values_by_event_id = {}
+
+    nearest_preceding_key = None
+
+    nearest_preceding_by_index = [None] * len(flat_note_events)
+
+    for index, (measure_number, event) in enumerate(
+        flat_note_events
+    ):
+
+        position_key = (measure_number, event["beat"])
+
+        if position_key in chord_shape_by_position:
+
+            nearest_preceding_key = position_key
+
+        nearest_preceding_by_index[index] = nearest_preceding_key
+
+    for index, (measure_number, event) in enumerate(
+        flat_note_events
+    ):
+
+        position_key = (measure_number, event["beat"])
+
+        if position_key in chord_shape_by_position:
+
+            continue  # at a chord onset -- resolved by Rule #1
+
+        preceding_key = nearest_preceding_by_index[index]
+
+        if preceding_key is None:
+
+            continue
+
+        preceding_chord_shape_values_by_event_id[id(event)] = (
+            chord_shape_by_position[preceding_key]
+        )
 
     with zipfile.ZipFile(template_path) as z:
 
@@ -2659,6 +2806,14 @@ def generate_tab_from_template(
             # back to plain, unmodified best_position(find_
             # positions(...)) for the very first melody note in
             # the piece, when no anchor of either kind applies.
+            # BO-37 (replacing BO-36's own corridor design):
+            # preceding_chord_shape_values from the nearest chord
+            # onset BEFORE this note, regardless of how many
+            # intervening notes sit between them -- see
+            # _choose_melody_position()'s own docstring for why
+            # this is deliberately a separate, wider-reaching
+            # lookup from the two anchors immediately above, and
+            # why it takes priority over them in the sort key.
             chosen = _choose_melody_position(
                 midi, open_notes,
                 fd_shape_values=fd_anchor_by_event_id.get(
@@ -2674,7 +2829,12 @@ def generate_tab_from_template(
                         id(event)
                     )
                 ),
-                previous_position=previous_melody_position
+                previous_position=previous_melody_position,
+                preceding_chord_shape_values=(
+                    preceding_chord_shape_values_by_event_id.get(
+                        id(event)
+                    )
+                )
             )
 
             previous_melody_position = chosen
