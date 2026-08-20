@@ -2113,7 +2113,7 @@ def _fd_positions_for_pitch(shape_values, open_notes, target_midi):
 def _choose_melody_position(
     midi, open_notes, fd_shape_values=None, working_fret_anchor=None,
     following_working_fret_anchor=None, previous_position=None,
-    preceding_chord_shape_values=None
+    preceding_chord_shape_values=None, second_previous_position=None
 ):
     """
     BO-24/BO-25/BO-30: choose a string/fret position for one
@@ -2330,6 +2330,96 @@ def _choose_melody_position(
             else 1
         )
 
+        # BO-38 Group A: an open-string candidate that is
+        # already the best-(or tied-for-best-)scored option on
+        # playability grounds alone should not lose to a worse-
+        # scored, fretted candidate purely because a FOLLOWING
+        # chord anchor happens to sit closer to that fretted
+        # candidate. Deliberately scoped to when there is no
+        # PRECEDING anchor at all (working_fret_anchor is None)
+        # -- a genuine, already-established preceding hand
+        # position is real continuity and must still win
+        # legitimately; this bonus only concerns an *upcoming*
+        # chord's pull, matching the real, confirmed examples
+        # (a note with no preceding chord at all, or one whose
+        # preceding chord's own shape does not contain this
+        # pitch). "Already the best-scored option" is the
+        # concrete form of "no compelling reason to play it
+        # elsewhere" -- if a fretted candidate scores BETTER
+        # than the open string, that IS a compelling reason, and
+        # this bonus correctly does not apply.
+        max_available_score = max(
+            candidate["score"] for candidate in positions
+        )
+
+        open_string_bonus = (
+            0
+            if (
+                position["fret"] == 0
+                and working_fret_anchor is None
+                and position["score"] >= max_available_score
+            )
+            else 1
+        )
+
+        # BO-38 Group C: once a phrase has settled onto a
+        # string (previous_position's own string), staying there
+        # is preferred over chasing a following chord's own raw
+        # fret-distance, PROVIDED the same-string candidate is
+        # itself reasonably playable (score >= 0 -- excludes a
+        # genuinely poor same-string outlier from ever winning
+        # merely for matching the string; the anchor should still
+        # win against a truly bad same-string option). This does
+        # NOT compare the same-string candidate's own fret_
+        # distance against the alternatives' at all -- deliberately,
+        # since the real, confirmed example this addresses has the
+        # pattern-consistent candidate MUCH farther from the
+        # following anchor in raw terms, yet still the right
+        # choice (the following chord's own onset note there
+        # resolves to an open string within its own shape, not to
+        # its shape's static working fret at all, so working_fret-
+        # based closeness is not actually a reliable signal of
+        # where the hand needs to be).
+        #
+        # Deliberately restricted to working_fret_anchor is None
+        # (no PRECEDING anchor at all), the same scoping as open_
+        # string_bonus above -- confirmed necessary: every one of
+        # BO-25's own established tests that this bonus initially
+        # broke exercises the PRECEDING-anchor case specifically,
+        # where BO-25's own existing string-distance tiebreak is
+        # already correct and must not be overridden.
+        #
+        # ALSO requires second_previous_position to independently
+        # share the same string -- confirmed necessary by a second
+        # real regression this bonus initially caused: a single
+        # coincidental same-string match (one prior note, not an
+        # actual pattern) is not the "established string/hand
+        # position" the user's own instruction describes, and
+        # overriding a genuine, substantial fret_distance
+        # improvement (a real measure-4 A4 case, following anchor
+        # 3, pattern candidate distance 5 vs the correct winner's
+        # distance 2) for a single coincidental match is exactly
+        # the "small improvement" override the user's own
+        # instruction says this must not do. Requiring BOTH of the
+        # two preceding notes to already share the string is the
+        # smallest change that distinguishes a real, multi-note
+        # established pattern (the confirmed D#4/measure-23 case,
+        # where the two notes immediately before it are both on
+        # the same string) from a single, coincidental one.
+        pattern_continuity_bonus = (
+            0
+            if (
+                working_fret_anchor is None
+                and previous_string is not None
+                and second_previous_position is not None
+                and second_previous_position["string"]
+                == previous_string
+                and position["string"] == previous_string
+                and position["score"] >= 0
+            )
+            else 1
+        )
+
         # BO-30: when both a preceding and a following anchor
         # apply, use the capped MAX of the two distances -- see
         # this function's own docstring for why (confirmed
@@ -2373,8 +2463,9 @@ def _choose_melody_position(
             string_distance = 0
 
         return (
-            preceding_fd_violation, fret_distance, string_distance,
-            -position["score"]
+            preceding_fd_violation, open_string_bonus,
+            pattern_continuity_bonus, fret_distance,
+            string_distance, -position["score"]
         )
 
     return sorted(positions, key=_sort_key)[0]
@@ -2689,6 +2780,28 @@ def generate_tab_from_template(
     # melody note, never a recomputed or assumed one.
     previous_melody_position = None
 
+    # BO-38 Group C: the value previous_melody_position held
+    # BEFORE its own most recent update -- i.e. the actual
+    # chosen position two melody notes back, threaded the same
+    # way. Used only to confirm a genuine, multi-note established
+    # string pattern (both preceding notes, not just the single
+    # immediately-adjacent one) before pattern_continuity_bonus
+    # may apply -- see _choose_melody_position()'s own docstring.
+    second_previous_melody_position = None
+
+    # BO-38 Group C: whether the note currently held in
+    # previous_melody_position was itself a chord onset (resolved
+    # via Rule #1's own FD-match, not by any string-preference
+    # logic at all). Confirmed necessary by a real regression:
+    # a chord onset's own position can coincidentally match a
+    # LATER, unrelated surrounding note's own preferred position
+    # (both landing on the same string for entirely separate
+    # reasons), which would otherwise look like a genuine two-
+    # note established pattern to the check above without one
+    # actually existing. A chord-onset note's position never
+    # carries forward into second_previous_melody_position.
+    previous_was_chord_onset = False
+
     for measure_index, measure_events in enumerate(measures):
 
         is_first_measure = (measure_index == 0)
@@ -2834,10 +2947,24 @@ def generate_tab_from_template(
                     preceding_chord_shape_values_by_event_id.get(
                         id(event)
                     )
+                ),
+                second_previous_position=(
+                    second_previous_melody_position
                 )
             )
 
+            is_chord_onset = (
+                fd_anchor_by_event_id.get(id(event)) is not None
+            )
+
+            second_previous_melody_position = (
+                previous_melody_position
+                if not previous_was_chord_onset else None
+            )
+
             previous_melody_position = chosen
+
+            previous_was_chord_onset = is_chord_onset
 
             chosen_fret = chosen["fret"]
 
