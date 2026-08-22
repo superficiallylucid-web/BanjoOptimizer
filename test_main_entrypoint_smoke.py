@@ -27,7 +27,7 @@ import zipfile
 from pathlib import Path
 
 
-PROJECT_ROOT = Path(__file__).parent.parent
+PROJECT_ROOT = Path(__file__).parent
 
 
 def test_main_py_starts_without_import_error():

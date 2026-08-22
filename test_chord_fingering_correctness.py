@@ -316,7 +316,7 @@ def test_fretdiagram_fret_values_match_selected_shape():
         symbol="C"
     )
 
-    applied, skipped = _apply_chord_shapes(
+    applied, skipped, _exceptions = _apply_chord_shapes(
         staff, [harmony], A_MODAL_SAWMILL, service
     )
 

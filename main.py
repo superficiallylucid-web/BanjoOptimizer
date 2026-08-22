@@ -377,6 +377,30 @@ else:
                     f"beat {exception['beat']}"
                 )
 
+                if "reason" in exception:
+
+                    # An unreachable-pitch exception (this
+                    # note's own melody pitch has no possible
+                    # fret/string in this tuning at all -- a
+                    # genuinely different situation from BO-21's
+                    # own "no practical shape contains this
+                    # pitch" chord exceptions below, so it's
+                    # reported with its own, differently-shaped
+                    # fields rather than forcing it into the
+                    # chord-specific format).
+
+                    output(
+                        f"   Melody pitch: {exception['melody_pitch']}"
+                    )
+
+                    output(
+                        f"   Tuning: {exception['tuning_symbol']}"
+                    )
+
+                    output(f"   {exception['reason']}.\n")
+
+                    continue
+
                 output(f"   Chord: {exception['chord_symbol']}")
 
                 output(f"   Melody: {exception['melody_pitch']}")

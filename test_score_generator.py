@@ -34,11 +34,11 @@ from score_generator import generate_mscz
 TEST_FOLDER = Path(__file__).parent
 
 WHITE_CHRISTMAS_PATH = (
-    TEST_FOLDER.parent / "scores"
+    TEST_FOLDER / "scores"
     / "White Christmas (G (gCGBD)).mscz"
 )
 
-OUTPUT_FOLDER = TEST_FOLDER.parent / "output"
+OUTPUT_FOLDER = TEST_FOLDER / "output"
 
 
 def _load():

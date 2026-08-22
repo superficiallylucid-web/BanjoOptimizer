@@ -1,6 +1,24 @@
 from models import Tuning
 
 
+def identify_tuning(notes):
+    """
+    Given a list of note MIDI pitches (5th string through 1st,
+    the same order Tuning.notes itself uses), return the matching
+    Tuning object from get_tunings(), or None if no known tuning
+    matches exactly. Reuses get_tunings() as the single source of
+    truth for known tunings -- no second, separate tuning list.
+    """
+
+    for tuning in get_tunings().values():
+
+        if tuning.notes == list(notes):
+
+            return tuning
+
+    return None
+
+
 def get_tunings():
     """
     Returns all supported banjo tunings.

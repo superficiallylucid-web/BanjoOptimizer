@@ -241,7 +241,7 @@ def test_cmaj7_diagram_accurately_represents_selected_notes():
         symbol="Cmaj7"
     )
 
-    applied, skipped = _apply_chord_shapes(
+    applied, skipped, _exceptions = _apply_chord_shapes(
         staff, [harmony], A_MODAL_SAWMILL, service
     )
 

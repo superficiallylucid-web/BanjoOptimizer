@@ -2802,6 +2802,20 @@ def generate_tab_from_template(
     # carries forward into second_previous_melody_position.
     previous_was_chord_onset = False
 
+    # A melody pitch that lies outside every string's own open-
+    # to-fretted range for this tuning (find_positions() returns
+    # empty, so _choose_melody_position() correctly returns None
+    # -- confirmed via a real example: My Favorite Things has
+    # notes at B2/C3, below Old G's own lowest open string) has
+    # no possible fret/string to write at all. Rather than crash
+    # on the subsequent chosen["fret"] lookup, such a note is
+    # written as a Rest instead (preserving the measure's own
+    # duration exactly, reusing the established Rest-writing
+    # pattern below unmodified) and logged here so it surfaces
+    # in the same melody/chord exceptions reporting BO-21 already
+    # built, without adding a second, separate reporting path.
+    unreachable_pitch_exceptions = []
+
     for measure_index, measure_events in enumerate(measures):
 
         is_first_measure = (measure_index == 0)
@@ -2953,6 +2967,69 @@ def generate_tab_from_template(
                 )
             )
 
+            if chosen is None:
+
+                unreachable_pitch_exceptions.append({
+                    "measure": measure_index + 1,
+                    "beat": event["beat"],
+                    "melody_pitch": midi,
+                    "tuning_symbol": tuning.symbol,
+                    "reason": (
+                        "melody pitch is outside every string's "
+                        "own reachable range in this tuning"
+                    )
+                })
+
+                # No possible fret/string exists for this pitch
+                # in this tuning at all -- written as a Rest
+                # (exact same pattern as a real source rest,
+                # below) rather than an unplayable Note, so the
+                # measure's own duration stays correct. previous_
+                # melody_position/previous_was_chord_onset are
+                # deliberately left UNCHANGED (not reset to this
+                # note), matching this function's own existing
+                # convention for a note that cannot meaningfully
+                # participate in continuity tracking (see BO-40's
+                # own 5th-string skip for the same pattern) --
+                # the next real note's own continuity calculation
+                # sees whatever came before this silenced one.
+
+                if event["tuplet_start_element"] is not None:
+
+                    tuplet_copy = copy.deepcopy(
+                        event["tuplet_start_element"]
+                    )
+
+                    eid_el = tuplet_copy.find("{*}eid")
+
+                    if eid_el is not None:
+
+                        eid_el.text = _generate_eid()
+
+                    tab_voice.append(tuplet_copy)
+
+                tab_rest = ET.SubElement(tab_voice, "Rest")
+
+                ET.SubElement(
+                    tab_rest, "eid"
+                ).text = _generate_eid()
+
+                if event["dots"]:
+
+                    ET.SubElement(
+                        tab_rest, "dots"
+                    ).text = str(event["dots"])
+
+                ET.SubElement(
+                    tab_rest, "durationType"
+                ).text = event["duration_type"]
+
+                if event["tuplet_end"]:
+
+                    ET.SubElement(tab_voice, "endTuplet")
+
+                continue
+
             is_chord_onset = (
                 fd_anchor_by_event_id.get(id(event)) is not None
             )
@@ -3043,11 +3120,15 @@ def generate_tab_from_template(
     # writing loop, so BO-24's own anchoring could use it too --
     # not re-read a second time here) ----
 
-    chord_shapes_applied, chord_shapes_skipped, exceptions = (
+    chord_shapes_applied, chord_shapes_skipped, chord_exceptions = (
         _apply_chord_shapes(
             tab_staff, staff_harmonies, tuning, chord_service,
             melody_notes=score_file.score.notes
         )
+    )
+
+    exceptions = (
+        unreachable_pitch_exceptions + chord_exceptions
     )
 
     if filename is None:
