@@ -286,6 +286,49 @@ class TuningResult:
 
     confidence: float | None = None
 
+    # BO-48 -- Chord/FD quality and unplayable-note metrics,
+    # kept as SEPARATE fields alongside the existing, unchanged
+    # `score` (the raw melody/Playing-Model score, still the
+    # value every pre-existing caller/test/report reads). See
+    # optimizer.py's own module-level docstring for the full
+    # combination formula and why these are separate concepts.
+
+    # Raw mean of max(0, working_fret - 7) across this tuning's
+    # own real chord onsets (the exact BO-43/44/46 definition,
+    # reused unmodified). 0.0 for a song with no harmony data.
+    avg_awkwardness: float = 0.0
+
+    # avg_awkwardness normalized to [0, 1] via a FIXED reference
+    # range (see optimizer.py's own MAX_AWKWARDNESS_REFERENCE),
+    # NOT the current candidate set's own min/max -- this is
+    # what BO-47 found candidate-set-dependent min-max gets
+    # wrong, and what this field is specifically designed to
+    # avoid. 1.0 = as comfortable as the reference range allows,
+    # 0.0 = at or beyond it. Independent of which other tunings
+    # are being compared alongside this one.
+    chord_fd_quality: float = 1.0
+
+    # How many of this tuning's own melody notes have NO valid
+    # fret/string position at all (find_positions() returns
+    # empty) -- a hard playability failure, not an awkwardness-
+    # of-comfortable-positions question. Real example: My
+    # Favorite Things / Old G, 18 notes below the lowest open
+    # string.
+    unplayable_note_count: int = 0
+
+    unplayable_note_proportion: float = 0.0
+
+    # The score `analyze()` actually sorts and recommends by --
+    # `score` (melody) blended with `chord_fd_quality` at
+    # CHORD_FD_INFLUENCE, then the separate unplayable-note
+    # penalty applied on top. Equal to `score` when this
+    # tuning's own group was never combined (e.g. a caller that
+    # only ever calls score_tuning() directly, bypassing
+    # analyze()'s own group-level combination step) -- callers
+    # should prefer this field for ranking/display once
+    # analyze() has run, and `score` for melody-only diagnostics.
+    combined_score: float = 0.0
+
 
 # ---------------------------------------------------------
 # Chord shape model

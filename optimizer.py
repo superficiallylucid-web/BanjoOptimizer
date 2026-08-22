@@ -9,11 +9,15 @@ from fretboard import (
     best_position as choose_best_position
 )
 
-from playing_model import analyze_tuning_playing_model
+from playing_model import analyze_tuning_playing_model, _chord_working_fret
 
 from chord_service import ChordService
 
 from chord_library import ChordLibrary
+
+from score_generator import _select_chord_shape_for_harmony
+
+from fretboard import parse_shape
 
 
 # ---------------------------------------------------------
@@ -114,6 +118,91 @@ class TuningAnalyzer:
     # (see DESIGN.md).
     PLAYING_MODEL_WEIGHT = 0.05
 
+    # BO-48 -- Chord/FD quality's influence on tuning selection,
+    # kept STRICTLY SEPARATE from PLAYING_MODEL_WEIGHT above
+    # (that weight governs an unrelated existing contribution;
+    # this one governs how much the new Chord/FD component
+    # affects the melody/Chord-FD blend -- see analyze()'s own
+    # docstring for the full combination formula). Range 0.0-1.0:
+    # 0.0 = no Chord/FD influence at all (melody-only, today's
+    # existing behavior); 1.0 = the melody/Chord-FD blend is
+    # determined by Chord/FD quality alone (melody remains
+    # available separately for tie-breaking/diagnostics
+    # regardless of this value -- see TuningResult.score).
+    # PROVISIONAL: BO-46/47's investigation (4 real, independent
+    # scores) found the evidence supports a range, not a single
+    # proven value -- rankings only changed at influence>=0.5 in
+    # that dataset using this exact fixed-reference normalization
+    # (see MAX_AWKWARDNESS_REFERENCE below), and one of BO-47's
+    # own intended validation scenarios (similar melody quality,
+    # substantially different Chord/FD quality) had no real
+    # example in that 4-score dataset at all. 0.30 is chosen as a
+    # conservative starting default within BO-47's own recommended
+    # 0.25-0.4 range, not a calibrated final answer. Revisit if a
+    # genuinely new, independent real score becomes available, or
+    # if real generated output at this value doesn't look right in
+    # practice.
+    CHORD_FD_INFLUENCE = 0.30
+
+    # BO-48 -- the WORKING_FRET_COMFORT_CEILING is the exact
+    # BO-43/44/46 comfort threshold (avg_awkwardness = mean of
+    # max(0, working_fret - comfort_ceiling) across real chord
+    # onsets); MAX_AWKWARDNESS_REFERENCE is the fixed upper bound
+    # avg_awkwardness is normalized against, chosen SPECIFICALLY
+    # to be independent of whichever other tunings happen to be
+    # in a given candidate set (BO-47's own central requirement --
+    # the exact defect BO-47 found in simple per-song min-max
+    # normalization, where a candidate's own normalized score
+    # could shift purely because an unrelated third candidate was
+    # added or removed). The instrument's own true physical
+    # maximum (find_positions()'s own hard 22-fret ceiling) gives
+    # a fully principled but far too WIDE a bound in practice --
+    # tested directly and confirmed it compresses every real
+    # observed avg_awkwardness value (0 to ~3.28 across all real
+    # BO-43/44/46/46 data) into the top ~20% of the scale, so
+    # weak that no ranking in the real 4-song dataset ever changed
+    # below influence=1.0. MAX_AWKWARDNESS_REFERENCE=4.0 is
+    # instead a documented, PROVISIONAL reference derived from
+    # that same observed real data (max observed: 3.28, in White
+    # Christmas/G Modal Sawmill) -- fixed regardless of candidate
+    # set, but calibrated to the scale BO has actually produced on
+    # real scores so far, per BO-47's own explicit fallback
+    # ("use a clearly documented provisional reference range
+    # derived from the observed BO-43/44/46 data") for exactly
+    # this situation. Revisit if a real score ever produces
+    # avg_awkwardness meaningfully above 4.0 -- values would
+    # simply saturate toward 0 quality rather than reading
+    # incorrectly, but the discrimination this constant is meant
+    # to provide would weaken for that song.
+    WORKING_FRET_COMFORT_CEILING = 7
+
+    MAX_AWKWARDNESS_REFERENCE = 4.0
+
+    # BO-48 -- severity of the SEPARATE unplayable-melody-note
+    # penalty (see chord_fd_quality_bonus()'s own docstring for
+    # why this must never be folded into Chord/FD quality itself,
+    # and analyze()'s own docstring for exactly where/how it's
+    # applied). NOTE: score_tuning() ALREADY subtracts
+    # impossible * 0.5 from the raw melody `score` (existing,
+    # pre-BO-48 behavior, confirmed still present and unchanged)
+    # -- this constant is an intentional, separate, ADDITIONAL
+    # strengthening applied at the combined-score stage, not a
+    # duplicate of that existing penalty. BO-47 demonstrated the
+    # existing 0.5/note penalty alone is too weak to keep a
+    # worse-unplayable-notes tuning from still winning even at
+    # full Chord/FD influence (My Favorite Things/Old G, 18
+    # unplayable notes, stayed ranked #1 through Chord/FD
+    # influence=0.25 using the old candidate-set-dependent
+    # normalization). Expressed per unplayable-note PROPORTION
+    # (not raw count) so it behaves consistently across songs of
+    # different lengths. PROVISIONAL -- chosen to be large enough
+    # that My Favorite Things' own real 18-vs-12-unplayable-note
+    # gap (9.8% vs 6.6% of melody notes) measurably outweighs that
+    # song's own real melody-score gap between those same
+    # candidates at every tested influence level; not derived
+    # from a larger, independent dataset.
+    UNPLAYABLE_NOTE_PENALTY_WEIGHT = 3.0
+
 
     def __init__(
         self, notes, key="Unknown", harmonies=None, melody_notes=None
@@ -154,6 +243,56 @@ class TuningAnalyzer:
     # -------------------------------------------------
 
     def analyze(self):
+        """
+        BO-48 -- after collecting every tuning's own raw
+        score_tuning() result (melody `score` plus the per-
+        tuning, candidate-set-independent chord_fd_quality/
+        unplayable-note metrics from chord_fd_quality_bonus()),
+        this method computes each result's own `combined_score`
+        -- the value modern/historical are actually sorted and
+        recommended by -- via:
+
+          1. normalized_melody: `score` min-max normalized
+             against the OTHER tunings in the SAME group (modern
+             vs. historical, matching tuning.category) being
+             ranked together here. This is the one place this
+             project intentionally uses candidate-set-dependent
+             normalization -- melody quality is inherently a
+             relative, "how does this compare to other tunings
+             for THIS song" question (raw melody scores aren't
+             comparable across different songs at all), unlike
+             Chord/FD awkwardness, which has a genuine, absolute,
+             physical meaning (a fret position is a fret position
+             regardless of song) and is normalized separately in
+             chord_fd_quality_bonus() against a FIXED reference
+             instead, specifically so it does NOT depend on which
+             other tunings are present (see MAX_AWKWARDNESS_
+             REFERENCE's own comment -- this is the exact defect
+             BO-47 found and this method is designed to avoid for
+             the Chord/FD side).
+          2. combined = (1 - CHORD_FD_INFLUENCE) * normalized_melody
+                       + CHORD_FD_INFLUENCE * chord_fd_quality
+          3. an explicit, SEPARATE penalty for unplayable_note_
+             proportion (UNPLAYABLE_NOTE_PENALTY_WEIGHT), applied
+             on top of `combined` -- never diluted by
+             CHORD_FD_INFLUENCE, per BO-47's own explicit finding
+             that increasing Chord/FD influence does not reliably
+             fix a genuinely-unplayable-notes situation on its
+             own (My Favorite Things/Old G).
+
+        The existing `score` field is left completely untouched
+        throughout -- still the raw melody/Playing-Model score,
+        still what every pre-BO-48 caller/test/report reads.
+        `combined_score` is the new field this method's own
+        sort now uses.
+
+        Gracefully handles a single-result group (normalized_
+        melody is simply 1.0 -- nothing to compare against) and
+        a song with no harmony data at all (chord_fd_quality_
+        bonus() already returns a neutral 1.0/0-penalty in that
+        case, so this component contributes nothing, matching
+        the existing playing_model_bonus() convention).
+        """
 
         tunings = get_tunings()
 
@@ -184,14 +323,19 @@ class TuningAnalyzer:
 
 
 
+        for group in (modern, historical):
+
+            self._apply_combined_score(group)
+
+
         modern.sort(
-            key=lambda x: x.score,
+            key=lambda x: x.combined_score,
             reverse=True
         )
 
 
         historical.sort(
-            key=lambda x: x.score,
+            key=lambda x: x.combined_score,
             reverse=True
         )
 
@@ -203,6 +347,50 @@ class TuningAnalyzer:
             "historical": historical
 
         }
+
+
+
+    def _apply_combined_score(self, results):
+        """
+        BO-48 -- see analyze()'s own docstring for the full
+        formula. Mutates each TuningResult in `results` in
+        place, setting combined_score; does not reorder the
+        list (analyze() sorts afterward).
+        """
+
+        if not results:
+
+            return results
+
+        melody_scores = [r.score for r in results]
+
+        m_min, m_max = min(melody_scores), max(melody_scores)
+
+        for result in results:
+
+            if m_max > m_min:
+
+                normalized_melody = (
+                    (result.score - m_min) / (m_max - m_min)
+                )
+
+            else:
+
+                normalized_melody = 1.0
+
+            combined = (
+                (1 - self.CHORD_FD_INFLUENCE) * normalized_melody
+                + self.CHORD_FD_INFLUENCE * result.chord_fd_quality
+            )
+
+            unplayable_penalty = (
+                self.UNPLAYABLE_NOTE_PENALTY_WEIGHT
+                * result.unplayable_note_proportion
+            )
+
+            result.combined_score = combined - unplayable_penalty
+
+        return results
 
 
 
@@ -513,7 +701,10 @@ class TuningAnalyzer:
             tuning
         )
 
-
+        (
+            avg_awkwardness, chord_fd_quality,
+            unplayable_note_count, unplayable_note_proportion
+        ) = self.chord_fd_quality_bonus(tuning)
 
         advantages, tradeoffs = classify_reasons(reasons)
 
@@ -532,7 +723,21 @@ class TuningAnalyzer:
 
             advantages=advantages,
 
-            tradeoffs=tradeoffs
+            tradeoffs=tradeoffs,
+
+            # BO-48 -- populated here (per-tuning, candidate-
+            # set-independent); combined_score is deliberately
+            # NOT set here (0.0 default) -- analyze() computes it
+            # afterward, once it has the full candidate group
+            # this tuning is being compared/ranked alongside
+            # (see analyze()'s own docstring).
+            avg_awkwardness=avg_awkwardness,
+
+            chord_fd_quality=chord_fd_quality,
+
+            unplayable_note_count=unplayable_note_count,
+
+            unplayable_note_proportion=unplayable_note_proportion
 
             # shared_features and confidence are left at
             # their defaults ([] and None) -- shared_features
@@ -886,3 +1091,157 @@ class TuningAnalyzer:
         except Exception:
 
             return 0.0
+
+    # -------------------------------------------------
+
+    def chord_fd_quality_bonus(self, tuning):
+        """
+        BO-48 -- Chord/FD comfort for this tuning, reusing the
+        exact BO-43/44/46 avg_awkwardness definition (mean of
+        max(0, working_fret - WORKING_FRET_COMFORT_CEILING)
+        across this tuning's own real chord onsets), computed
+        via the same established chord-shape-selection machinery
+        _apply_chord_shapes()/generate_tab_from_template() use
+        (_select_chord_shape_for_harmony(), _chord_working_fret())
+        -- no second, separate chord-quality definition.
+
+        Returns (avg_awkwardness, chord_fd_quality,
+        unplayable_note_count, unplayable_note_proportion).
+
+        chord_fd_quality is avg_awkwardness normalized to [0, 1]
+        against the FIXED MAX_AWKWARDNESS_REFERENCE (see that
+        constant's own comment) -- deliberately NOT the current
+        candidate set's own min/max, so this value never changes
+        merely because a different tuning is also being compared
+        alongside this one (BO-47's own central finding/
+        requirement). 1.0 = as comfortable as the reference
+        allows; 0.0 = at or beyond it.
+
+        unplayable_note_count/proportion are a SEPARATE concept
+        from Chord/FD comfort -- a melody pitch with literally no
+        valid fret/string position at all (find_positions()
+        returns empty) is a hard playability failure, not an
+        "awkward but reachable" question. Deliberately returned
+        here rather than folded into chord_fd_quality itself, so
+        analyze() can apply its own separate, explicit penalty
+        (see UNPLAYABLE_NOTE_PENALTY_WEIGHT's own comment for why
+        this must stay separate -- BO-47 demonstrated that
+        increasing Chord/FD influence alone does not reliably fix
+        a genuinely unplayable-notes situation).
+
+        Zero/neutral defaults (0.0 avg_awkwardness, 1.0
+        chord_fd_quality, 0 unplayable notes) when no harmony/
+        melody context is available -- matching
+        playing_model_bonus()'s own established "no chord data ->
+        no contribution" convention exactly, so a song like
+        Cousin Sally Brown (0 harmonies) is unaffected by this
+        component entirely rather than producing a misleading
+        score. Any unexpected failure is treated the same way,
+        never as a scoring error.
+        """
+
+        if not self.melody_notes:
+
+            return 0.0, 1.0, 0, 0.0
+
+        # Matches score_tuning()'s own existing `impossible`
+        # check exactly: tuning.notes (all 5 strings, including
+        # the 5th/drone), not tuning.notes[1:] -- using a
+        # different, narrower definition here would silently
+        # disagree with the existing, already-established
+        # unplayable-note count and could over-count notes that
+        # are genuinely reachable via the 5th string.
+        open_notes = tuning.notes
+
+        unplayable_note_count = 0
+
+        for note in self.melody_notes:
+
+            positions = find_positions(
+                note.midi, open_notes
+            )
+
+            if not positions:
+
+                unplayable_note_count += 1
+
+        unplayable_note_proportion = (
+            unplayable_note_count / len(self.melody_notes)
+        )
+
+        if not self.harmonies:
+
+            return 0.0, 1.0, unplayable_note_count, (
+                unplayable_note_proportion
+            )
+
+        try:
+
+            chord_service = ChordService(ChordLibrary())
+
+            awkwardness_sum = 0.0
+
+            total_chord_onsets = 0
+
+            for harmony in self.harmonies:
+
+                shape, is_exception, exception_dict = (
+                    _select_chord_shape_for_harmony(
+                        harmony, tuning, chord_service,
+                        melody_notes=self.melody_notes
+                    )
+                )
+
+                if shape is None:
+
+                    continue
+
+                shape_values = parse_shape(shape.shape)
+
+                if any(v is None for v in shape_values):
+
+                    continue
+
+                working_fret = _chord_working_fret(
+                    shape_values
+                )
+
+                if working_fret is None:
+
+                    continue
+
+                awkwardness = max(
+                    0,
+                    working_fret
+                    - self.WORKING_FRET_COMFORT_CEILING
+                )
+
+                awkwardness_sum += awkwardness
+
+                total_chord_onsets += 1
+
+            if total_chord_onsets == 0:
+
+                return 0.0, 1.0, unplayable_note_count, (
+                    unplayable_note_proportion
+                )
+
+            avg_awkwardness = (
+                awkwardness_sum / total_chord_onsets
+            )
+
+            chord_fd_quality = 1.0 - min(
+                avg_awkwardness / self.MAX_AWKWARDNESS_REFERENCE,
+                1.0
+            )
+
+            return (
+                avg_awkwardness, chord_fd_quality,
+                unplayable_note_count, unplayable_note_proportion
+            )
+
+        except Exception:
+
+            return 0.0, 1.0, unplayable_note_count, (
+                unplayable_note_proportion
+            )
