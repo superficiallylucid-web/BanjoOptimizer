@@ -138,7 +138,7 @@ def test_chord_symbol_offset_is_correct():
 
 
 # ---------------------------------------------------------
-# 2 -- "Banjo tuning:" text offset is exactly x=4.5, y=0
+# 2 -- "Banjo tuning:" text offset is exactly x=0, y=0
 # ---------------------------------------------------------
 
 def test_tuning_text_offset_is_correct():
@@ -181,7 +181,7 @@ def test_tuning_text_offset_is_correct():
 
         assert offset is not None
 
-        assert offset.attrib.get("x") == "4.5"
+        assert offset.attrib.get("x") == "0"
 
         assert offset.attrib.get("y") == "0"
 
@@ -192,6 +192,67 @@ def test_tuning_text_offset_is_correct():
             f"Banjo tuning: {A_MODAL_SAWMILL.symbol} "
             f"({A_MODAL_SAWMILL.name})"
         )
+
+    finally:
+
+        if os.path.exists(output_path):
+
+            os.remove(output_path)
+
+
+# ---------------------------------------------------------
+# 2b -- title text offset is exactly x=0, y=-5
+# ---------------------------------------------------------
+
+def test_title_text_offset_is_correct():
+
+    output_path, applied, skipped, exceptions, root = _generate(
+        "test_bo53_title_offset.mscz"
+    )
+
+    try:
+
+        staff = root.find(".//{*}Score/{*}Staff")
+
+        vbox = staff.find("{*}VBox")
+
+        title_text_element = None
+
+        for text_element in vbox.findall("{*}Text"):
+
+            style_element = text_element.find("{*}style")
+
+            if (
+                style_element is not None
+                and style_element.text == "title"
+            ):
+
+                title_text_element = text_element
+
+                break
+
+        assert title_text_element is not None
+
+        offset = title_text_element.find("{*}offset")
+
+        assert offset is not None
+
+        assert offset.attrib.get("x") == "0"
+
+        assert offset.attrib.get("y") == "-5"
+
+        # Content itself unchanged -- confirms only the position
+        # moved, not the title text.
+        content_element = title_text_element.find("{*}text")
+
+        font_element = content_element.find("{*}font")
+
+        title_text = (
+            font_element.tail if font_element is not None
+            else content_element.text
+        )
+
+        assert title_text == "The Christmas Song"
 
     finally:
 

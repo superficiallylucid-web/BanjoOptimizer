@@ -445,6 +445,26 @@ def test_fretdiagrams_present_and_none_are_exceptions():
 
         assert fret_offset_element is not None
 
+        # BO-54 REVISION: full history -- BO-22-FOLLOWUP confirmed
+        # "7" (complete C-E-G-B voicing, 0(10)98, working_fret=8).
+        # BO-54's first pass changed this to "6" (0798, working_
+        # fret=7) purely on following-melody HP continuity: 0798
+        # lets all 4 following real melody notes (B4/A4/G4/F4)
+        # stay in one hand position, versus only 1 for 0(10)98 --
+        # but 0798 is missing the chord's own 5th entirely. The
+        # user's own direct review of this exact case (with the
+        # real preceding C chord, 0(10)(10)0, as context) found
+        # that tradeoff was evaluating the wrong thing: the
+        # following melody's own low-position destination doesn't
+        # actually depend on staying near Cmaj7's own HP (it's
+        # reachable via an open/5th-string bridge either way), so
+        # the following-melody benefit was largely illusory. The
+        # REAL, meaningful difference is the INCOMING transition:
+        # 0(10)98 shares a genuine fretted anchor with the
+        # preceding C chord (3rd string, fret 10); 0798 shares
+        # none. BO-54's revised algorithm now weighs this incoming-
+        # position signal ahead of following-melody continuity,
+        # correctly restoring "7" here.
         assert fret_offset_element.text == "7"
 
     finally:

@@ -899,3 +899,98 @@ class TuningPlayingModelResult:
     continuity_bonus: float = 0.0
 
     total_score: float = 0.0
+
+
+# ---------------------------------------------------------
+# BO-51 -- chord/melody realization diagnostics
+# ---------------------------------------------------------
+#
+# Read-only, diagnostic-only additions (see playing_model.
+# diagnose_melody_chord_realization()). Do not confuse
+# MelodyChordCombination.contained_in_chord (above) with the
+# CHORD_TONE_* classifications here -- contained_in_chord
+# checks the ACTUAL SOUNDING VOICING's own pitch classes (via
+# fretboard.sounding_notes()), never chord theory, and is left
+# completely unchanged by BO-51. The classifications below are
+# new: they additionally check chord-theory membership (music.
+# chord_tones()) so a pitch absent from theory (NON_CHORD_TONE)
+# can be told apart from a pitch theory says belongs but this
+# specific voicing doesn't sound (CHORD_TONE_NOT_IN_VOICING) --
+# a distinction the existing boolean alone cannot make.
+
+NON_CHORD_TONE = "non_chord_tone"
+
+CHORD_TONE_NOT_IN_VOICING = "chord_tone_not_in_voicing"
+
+CHORD_TONE_IN_VOICING = "chord_tone_in_voicing"
+
+PLAYABLE_FROM_CHORD_POSITION = "playable_from_chord_position"
+
+AVAILABLE_BUT_POSITION_CHANGE_REQUIRED = (
+    "available_but_position_change_required"
+)
+
+
+@dataclass
+class ChordMelodyRealization:
+    """
+    BO-51 -- the full relationship between ONE melody note and
+    ONE chord voicing, for diagnostic inspection. Built from
+    already-computed Playing Model data (playing_model.
+    evaluate_combination() and melody_box_analysis.realize_note(),
+    both reused unmodified) -- not a second, independent
+    fretboard-position algorithm. See playing_model.
+    diagnose_melody_chord_realization()'s own docstring for how
+    each field is derived.
+
+    classification is one of the constants immediately above
+    this class -- always exactly one of the five, in the same
+    priority order the docstring for diagnose_melody_chord_
+    realization() documents (a note that's NON_CHORD_TONE is
+    never also reported as CHORD_TONE_NOT_IN_VOICING, etc.).
+    """
+
+    chord_symbol: str
+
+    melody_pitch: int
+
+    melody_pitch_class: int
+
+    melody_octave: int
+
+    chord_contains_pitch: bool
+
+    voicing_contains_pitch: bool
+
+    # Every playable string/fret realization of this melody
+    # pitch in this tuning (fretboard.find_positions(), via
+    # melody_box_analysis.realize_note(), reused unchanged --
+    # not recomputed here). Never empty-vs-populated inconsistently
+    # with best_realization: best_realization is None only when
+    # this list is empty too.
+    candidate_realizations: list[NoteRealization] = field(
+        default_factory=list
+    )
+
+    # The SAME best-scoring realization playing_model.
+    # evaluate_combination() already selects -- reused directly,
+    # not recomputed by different logic.
+    best_realization: NoteRealization | None = None
+
+    working_fret: int | None = None
+
+    fret_distance: int | None = None
+
+    free_finger_available: bool = False
+
+    # Independent of chord_contains_pitch/voicing_contains_pitch
+    # -- whether THIS pitch's own best_realization is reachable
+    # without abandoning the chord's own hand position (open
+    # string, or within its own working-fret window), regardless
+    # of whether the pitch is a chord tone at all. See
+    # diagnose_melody_chord_realization()'s own docstring for
+    # why this is a separate dimension from classification below,
+    # not folded into it.
+    playable_from_chord_position: bool = False
+
+    classification: str = NON_CHORD_TONE

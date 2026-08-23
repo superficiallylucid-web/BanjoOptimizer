@@ -355,9 +355,17 @@ def test_full_pipeline_bo20_21_unaffected():
 
         b3_note = b3_chord.find("{*}Note")
 
-        assert b3_note.find("{*}fret").text == "2"
+        # BO-54 REVISION note: B3's own position changed (2/2 ->
+        # 7/3) as a genuine cascading effect of B7's own chord
+        # shape changing under the revised, incoming-HP-aware
+        # algorithm -- B7 now shares a real fretted anchor with
+        # the preceding Am chord (5320), confirmed directly, via
+        # the same, already-established BO-24 FD-anchor mechanism
+        # that connects a chord's own new working position to the
+        # melody notes around it (unmodified by BO-54 itself).
+        assert b3_note.find("{*}fret").text == "7"
 
-        assert b3_note.find("{*}string").text == "2"
+        assert b3_note.find("{*}string").text == "3"
 
     finally:
 

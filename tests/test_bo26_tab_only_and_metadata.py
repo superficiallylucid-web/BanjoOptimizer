@@ -434,8 +434,20 @@ def test_bo20_through_bo25_behavior_unchanged():
 
         assert note.find("{*}string").text == "3"
 
-        # Measure 2: Cmaj7's complete C-E-G-B voicing
-        # (BO-22-FOLLOWUP) and its own onset note (BO-24).
+        # Measure 2: Cmaj7 -- full history: BO-22-FOLLOWUP
+        # confirmed "7" (complete C-E-G-B voicing, 0(10)98).
+        # BO-54's first pass changed this to "6" (0798, missing
+        # the 5th) as a following-melody-only HP-continuity side
+        # effect. The BO-54 REVISION restored "7": the algorithm
+        # now also weighs the incoming hand position (the C chord
+        # immediately before Cmaj7, 0(10)(10)0) -- 0(10)98 shares
+        # a real fretted anchor with it (3rd string, fret 10);
+        # 0798 shares none. The user's own direct musical
+        # judgment confirmed this is correct: the following
+        # melody's own low-position destination doesn't actually
+        # depend on staying near Cmaj7's own HP at all (reachable
+        # via an open/5th-string bridge either way), so the
+        # incoming-position anchor is what genuinely matters here.
         m2_voice = list(measures[1].find("{*}voice"))
 
         cmaj7_fd = m2_voice[4]

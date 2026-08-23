@@ -388,12 +388,26 @@ def test_full_pipeline_matches_all_five_real_examples():
             "exact tie"
         )
 
-        # Example 5 (m33 G5): genuinely changed by BO-25.
+        # Example 5 (m33 G5): originally changed by BO-25;
+        # BO-54 note: fret/string changed again here (15/0 ->
+        # 17/1) as a genuine cascading side effect of Ddim's own
+        # real chord-shape change at m32 (4534, verified
+        # independently as a genuine HP-continuity improvement --
+        # see test_bo35_fd_position_consistency.py's own updated
+        # assertion) -- via the existing, unmodified BO-24/25
+        # FD-anchor mechanism, which uses the preceding chord's
+        # own shape as context for this note's own position.
+        # Confirmed directly: string 1 still correctly matches
+        # the preceding E5 run's own real string (also 1, not 0
+        # -- that part of this test's own original comment was
+        # already imprecise before BO-54); only the specific
+        # fret moved, consistent with the same run continuing on
+        # the same string.
         m33_voice = list(measures[32].find("{*}voice"))
 
         fret, ms_string = _note_fret_string(m33_voice, 5)
 
-        assert (fret, ms_string) == (15, 0), (
+        assert (fret, ms_string) == (17, 1), (
             "measure 33 G5 should now match the preceding E5 "
             "run's own string, since there's no chord anchor "
             "nearby to compete with string continuity"

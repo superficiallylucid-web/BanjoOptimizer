@@ -47,13 +47,21 @@ from fretboard import parse_shape, sounding_notes
 
 from melody_box_analysis import build_melody_boxes, realize_note
 
-from music import quality_code_to_display_name, pitch_name
+from music import (
+    quality_code_to_display_name, pitch_name, chord_tones
+)
 
 from models import (
     ChordShapePlayability,
     MelodyChordCombination,
     PhraseSolution,
-    TuningPlayingModelResult
+    TuningPlayingModelResult,
+    ChordMelodyRealization,
+    NON_CHORD_TONE,
+    CHORD_TONE_NOT_IN_VOICING,
+    CHORD_TONE_IN_VOICING,
+    PLAYABLE_FROM_CHORD_POSITION,
+    AVAILABLE_BUT_POSITION_CHANGE_REQUIRED
 )
 
 
@@ -542,4 +550,172 @@ def analyze_tuning_playing_model(score, tuning, chord_service):
         phrases=phrases,
         continuity_bonus=continuity_bonus,
         total_score=total_score
+    )
+
+
+# ---------------------------------------------------------
+# BO-51 -- chord/melody realization diagnostics
+# ---------------------------------------------------------
+#
+# Read-only, diagnostic-only additions. Nothing above this
+# section is modified: evaluate_combination() and realize_note()
+# are called exactly as analyze_tuning_playing_model() already
+# calls them, reused unchanged. This section does not alter
+# scoring, chord-shape selection, or any existing Playing Model
+# behavior -- it only exposes, per melody note, the relationship
+# BO-51's own investigation found the existing code already had
+# enough information to answer but never surfaced as a single,
+# inspectable result (see models.ChordMelodyRealization's own
+# docstring for the full field list).
+
+
+def diagnose_melody_chord_realization(
+    chord_shape, tuning, harmony, note
+):
+    """
+    BO-51 -- the full relationship between one melody Note and
+    one candidate chord shape, for diagnostic inspection.
+
+    Reuses two existing functions completely unchanged for their
+    own established computations:
+      - evaluate_combination() for voicing_contains_pitch (its
+        own `contained_in_chord`, which -- confirmed by reading
+        its own implementation -- already checks the chord
+        shape's own ACTUAL SOUNDING pitch classes via fretboard.
+        sounding_notes(), never chord theory), the best-scoring
+        realization, its free_finger status, and the chord's own
+        working_fret.
+      - melody_box_analysis.realize_note() for every candidate
+        realization (fretboard.find_positions(), unmodified) --
+        not just the single best one evaluate_combination() itself
+        keeps.
+
+    Adds exactly one new piece of information neither existing
+    function computes: chord-theory membership, via music.
+    chord_tones(harmony.root_pc, harmony.quality_code) -- this is
+    what makes it possible to tell a genuinely non-chord-tone
+    melody note (chord theory itself doesn't include this pitch
+    class at all) apart from a real chord tone this SPECIFIC
+    voicing simply doesn't happen to sound. chord_tones() returns
+    None for an unrecognized quality code; treated the same as
+    "pitch not confirmed to be a chord tone" (chord_contains_
+    pitch=False) rather than raising, matching this project's own
+    established "unknown quality -> decline gracefully" pattern
+    elsewhere (see chord_service.py).
+
+    playable_from_chord_position is deliberately a SEPARATE
+    dimension from chord/voicing membership, not folded into
+    classification's own hierarchy -- reuses the exact same
+    open-string-or-within-working-fret-window test evaluate_
+    combination() already applies internally when computing
+    free_finger, but WITHOUT free_finger's own additional "string
+    not already used by the chord shape" requirement, since a
+    melody note can share a hand position with the chord even on
+    a string the chord shape itself also uses (a real position
+    concept, not a real-time playing-technique one -- BO-51 is
+    diagnostic only, not a claim about simultaneous fingering).
+
+    classification is exactly one of the five models.py
+    constants, in this priority order:
+      1. NON_CHORD_TONE -- chord_contains_pitch is False.
+      2. CHORD_TONE_NOT_IN_VOICING -- chord theory includes this
+         pitch class, but the actual selected voicing doesn't
+         sound it.
+      3. CHORD_TONE_IN_VOICING -- chord theory includes it AND
+         the voicing sounds it, but it is NOT reachable from the
+         chord's own hand position without a position change.
+      4. PLAYABLE_FROM_CHORD_POSITION -- chord theory includes
+         it, the voicing sounds it, AND it's reachable from the
+         chord's own hand position.
+    A pitch with no playable realization at all in this tuning
+    (candidate_realizations empty) is classified purely on its
+    own chord/voicing membership (1 or 2 above); 3 and 4 both
+    require a real, playable realization to exist at all.
+
+    Returns a ChordMelodyRealization.
+    """
+
+    shape_values = parse_shape(chord_shape.shape)
+
+    working_fret = _chord_working_fret(shape_values)
+
+    combination = evaluate_combination(
+        chord_shape.shape, tuning, note
+    )
+
+    box_note = realize_note(note, tuning)
+
+    candidate_realizations = list(box_note.realizations)
+
+    best_realization = combination.realization
+
+    melody_pitch_class = note.midi % 12
+
+    melody_octave = (note.midi // 12) - 1
+
+    theoretical_tones = chord_tones(
+        harmony.root_pc, harmony.quality_code
+    )
+
+    chord_contains_pitch = (
+        theoretical_tones is not None
+        and melody_pitch_class in theoretical_tones
+    )
+
+    voicing_contains_pitch = combination.contained_in_chord
+
+    fret_distance = None
+
+    playable_from_chord_position = False
+
+    if best_realization is not None:
+
+        if best_realization.fret == 0:
+
+            playable_from_chord_position = True
+
+        elif working_fret is not None:
+
+            fret_distance = abs(
+                best_realization.fret - working_fret
+            )
+
+            playable_from_chord_position = (
+                working_fret
+                <= best_realization.fret
+                <= working_fret + 3
+            )
+
+    if not chord_contains_pitch:
+
+        classification = NON_CHORD_TONE
+
+    elif not voicing_contains_pitch:
+
+        classification = CHORD_TONE_NOT_IN_VOICING
+
+    elif playable_from_chord_position:
+
+        classification = PLAYABLE_FROM_CHORD_POSITION
+
+    else:
+
+        classification = AVAILABLE_BUT_POSITION_CHANGE_REQUIRED
+
+    return ChordMelodyRealization(
+        chord_symbol=harmony.symbol,
+        melody_pitch=note.midi,
+        melody_pitch_class=melody_pitch_class,
+        melody_octave=melody_octave,
+        chord_contains_pitch=chord_contains_pitch,
+        voicing_contains_pitch=voicing_contains_pitch,
+        candidate_realizations=candidate_realizations,
+        best_realization=best_realization,
+        working_fret=working_fret,
+        fret_distance=fret_distance,
+        free_finger_available=combination.free_finger,
+        playable_from_chord_position=(
+            playable_from_chord_position
+        ),
+        classification=classification
     )

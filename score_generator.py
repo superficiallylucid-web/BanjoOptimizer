@@ -91,6 +91,8 @@ from music import (
 
 from playing_model import _chord_working_fret
 
+from melody_box_analysis import realize_note
+
 
 def _sanitize_filename(text):
     """
@@ -1063,7 +1065,8 @@ def _melody_notes_at_harmony_onset(harmony, melody_notes):
 
 
 def _select_chord_shape_for_harmony(
-    harmony, tuning, chord_service, melody_notes=None
+    harmony, tuning, chord_service, melody_notes=None,
+    next_harmony=None, incoming_shape=None
 ):
     """
     The shape-selection portion of _apply_chord_shapes(),
@@ -1072,6 +1075,18 @@ def _select_chord_shape_for_harmony(
     read-only query before any FretDiagram is written -- see
     generate_tab_from_template()'s own use of this for melody
     fret/string anchoring.
+
+    next_harmony: BO-54 -- the harmony immediately following
+    this one in score order (or None, for the last harmony in
+    the song), used ONLY to bound how far the following-melody
+    lookup for HP continuity extends. Mirrors melody_box_
+    analysis.build_melody_boxes()'s own box boundary exactly
+    (this harmony's own onset up to, but not including,
+    next_harmony's own onset -- or unbounded when next_harmony
+    is None) -- not a second, independently-invented box
+    definition. Optional and purely additive: omitting it
+    disables the BO-54 HP-continuity tiebreak entirely,
+    reproducing this function's own pre-BO-54 behavior exactly.
 
     Returns (chosen_shape, is_exception, exception_dict) --
     chosen_shape is None (with is_exception False and
@@ -1110,6 +1125,50 @@ def _select_chord_shape_for_harmony(
                 note.midi for note in onset_notes
             }
 
+    following_box_notes = None
+
+    if melody_notes is not None:
+
+        start = (harmony.measure, harmony.beat)
+
+        end = (
+            (next_harmony.measure, next_harmony.beat)
+            if next_harmony is not None else None
+        )
+
+        # BO-54 -- strictly AFTER the onset (note.beat > start),
+        # not >=. The onset note(s) are already handled by the
+        # existing melody_pitches/preferred_melody_fret logic
+        # above; including them here too was found to introduce
+        # an unintended HP-continuity distinction even for a
+        # chord whose box contains ONLY its own onset note (no
+        # genuine following sequence at all) -- confirmed via a
+        # real regression this caused (test_melody_position_
+        # tiebreak.py's own Am/E4 case): two candidates tied on
+        # every existing criterion, correctly decided by the
+        # established playability tiebreak, started being
+        # separated instead by which one's own working fret
+        # happened to be closer to the single onset note itself
+        # -- HP continuity is about the FOLLOWING sequence, and
+        # should stay a genuine no-op when there isn't one.
+        box_notes = sorted(
+            (
+                note for note in melody_notes
+                if (note.measure, note.beat) > start
+                and (
+                    end is None
+                    or (note.measure, note.beat) < end
+                )
+            ),
+            key=lambda n: (n.measure, n.beat)
+        )
+
+        if box_notes:
+
+            following_box_notes = [
+                realize_note(note, tuning) for note in box_notes
+            ]
+
     if melody_pitches:
 
         preferred_melody_fret = _preferred_melody_fret(
@@ -1123,7 +1182,9 @@ def _select_chord_shape_for_harmony(
             harmony.quality_code,
             quality_display,
             melody_pitches,
-            preferred_melody_fret=preferred_melody_fret
+            preferred_melody_fret=preferred_melody_fret,
+            following_box_notes=following_box_notes,
+            incoming_shape=incoming_shape
         )
 
     else:
@@ -1252,13 +1313,28 @@ def _apply_chord_shapes(
 
     exceptions = []
 
-    for xml_harmony, harmony in zip(xml_harmony_elements, harmonies):
+    incoming_shape = None
+
+    for harmony_index, (xml_harmony, harmony) in enumerate(
+        zip(xml_harmony_elements, harmonies)
+    ):
+
+        next_harmony = (
+            harmonies[harmony_index + 1]
+            if harmony_index + 1 < len(harmonies) else None
+        )
 
         chosen_shape, is_exception, exception_dict = (
             _select_chord_shape_for_harmony(
-                harmony, tuning, chord_service, melody_notes
+                harmony, tuning, chord_service, melody_notes,
+                next_harmony=next_harmony,
+                incoming_shape=incoming_shape
             )
         )
+
+        if chosen_shape is not None:
+
+            incoming_shape = chosen_shape.shape
 
         if chosen_shape is None:
 
@@ -2583,14 +2659,25 @@ def generate_tab_from_template(
 
     chord_shape_by_position = {}
 
-    for harmony in staff_harmonies:
+    incoming_shape = None
+
+    for harmony_index, harmony in enumerate(staff_harmonies):
+
+        next_harmony = (
+            staff_harmonies[harmony_index + 1]
+            if harmony_index + 1 < len(staff_harmonies) else None
+        )
 
         chosen_shape, _, _ = _select_chord_shape_for_harmony(
             harmony, tuning, chord_service,
-            melody_notes=score_file.score.notes
+            melody_notes=score_file.score.notes,
+            next_harmony=next_harmony,
+            incoming_shape=incoming_shape
         )
 
         if chosen_shape is not None:
+
+            incoming_shape = chosen_shape.shape
 
             chord_shape_by_position[
                 (harmony.measure, harmony.beat)

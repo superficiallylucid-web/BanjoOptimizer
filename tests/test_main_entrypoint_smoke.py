@@ -20,7 +20,7 @@ import subprocess
 
 import sys
 
-import shutil
+import time
 
 import zipfile
 
@@ -106,9 +106,44 @@ def test_main_py_generates_mscz_files():
 
     generated_folder = PROJECT_ROOT / "output" / "generated"
 
+    # Deletes individual files rather than the whole directory
+    # tree (shutil.rmtree requires exclusive access to remove the
+    # directory itself, which any open handle within it can
+    # block -- confirmed real, recurring failure on Windows:
+    # Explorer's own thumbnail/preview generation, antivirus
+    # real-time scanning, or a lingering handle from a prior
+    # MuseScore/test run can all hold this open transiently even
+    # when nothing is actually using the files). This test's own
+    # real goal is only "no stale .mscz files linger from a prior
+    # run" -- the directory itself not existing was never actually
+    # required. A short retry handles genuinely transient locks
+    # without making the whole test flaky-by-design.
     if generated_folder.exists():
 
-        shutil.rmtree(generated_folder)
+        for file_path in generated_folder.iterdir():
+
+            if not file_path.is_file():
+
+                continue
+
+            for attempt in range(5):
+
+                try:
+
+                    file_path.unlink()
+
+                    break
+
+                except PermissionError:
+
+                    if attempt == 4:
+
+                        raise
+
+                    time.sleep(0.5)
+
+    # main.py itself creates this folder (mkdir(exist_ok=True))
+    # if it doesn't already exist -- no need to create it here.
 
     result = subprocess.run(
         [sys.executable, "main.py"],

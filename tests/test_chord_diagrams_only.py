@@ -586,14 +586,25 @@ def test_chord_diagram_shape_matches_chord_service_directly():
             # updated, since this test was silently skipped by a
             # pre-existing path bug (fixed separately) for an
             # unknown period and never actually ran until now.
+            # BO-54 -- the real writer also now passes next_
+            # harmony (HP continuity); matched here too, or this
+            # comparison would be checking against a stale,
+            # next_harmony-less selection that no longer matches
+            # what's actually written.
             from score_generator import (
                 _select_chord_shape_for_harmony
+            )
+
+            next_harmony = (
+                p.harmonies[harmony_index + 1]
+                if harmony_index + 1 < len(p.harmonies) else None
             )
 
             selected_shape, _, _ = (
                 _select_chord_shape_for_harmony(
                     matching_harmony, target_tuning, service,
-                    melody_notes=p.score.notes
+                    melody_notes=p.score.notes,
+                    next_harmony=next_harmony
                 )
             )
 

@@ -300,9 +300,16 @@ def test_full_pipeline_real_cases_and_consistency():
 
         e4_note = e4_chord.find("{*}Note")
 
-        assert e4_note.find("{*}fret").text == "4"
+        # measure 3's E4/Em case -- BO-54 REVISION note: position
+        # changed (4/1 -> 9/2) as a genuine cascading effect of
+        # Em's own chord shape changing under the revised,
+        # incoming-HP-aware algorithm (now anchoring into a
+        # high-position region relative to its own preceding
+        # chord), via the same, already-established BO-24/37
+        # FD-anchor mechanism (unmodified by BO-54 itself).
+        assert e4_note.find("{*}fret").text == "9"
 
-        assert e4_note.find("{*}string").text == "1"
+        assert e4_note.find("{*}string").text == "2"
 
     finally:
 

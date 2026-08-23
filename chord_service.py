@@ -64,9 +64,12 @@ from fretboard import (
     find_melody_occurrences,
     classify_melody_realization,
     sounding_notes,
+    parse_shape,
     DIRECT_REALIZATION,
     INDIRECT_REALIZATION
 )
+
+from playing_model import _chord_working_fret
 
 from models import (
     MelodyRealizationMatch,
@@ -218,6 +221,26 @@ POSITION_DISTANCE_CAP = 5  # frets; matches playing_model.py's
 # reach past those two priorities regardless, but a cap keeps
 # it from ever growing large enough to swamp the further,
 # lower-priority playability tiebreak below it either.
+
+HP_CONTINUITY_QUALITY_TOLERANCE = 0.5  # BO-54 -- see
+# get_shapes_for_exact_melody_pitch()'s own sort_key for exactly
+# where this is used. NOT an arbitrary new number: BO-42's own
+# investigation (whole-song scan across 22 real cases) found the
+# voicing_quality_score gap between a chord's full voicing and
+# an otherwise-identical one is STRICTLY BIMODAL -- always either
+# ~0.5 (the alternative omits only the chord's own non-defining
+# 5th) or ~2.0+ (the alternative omits a tone that actually
+# defines the chord's own quality -- the 3rd, the 7th, or a sus
+# chord's own defining 2nd). Confirmed directly, not assumed, for
+# BO-54's own real Cmaj7/aDADE case: the alternative shape within
+# this tolerance (quality 21.0 vs the top candidate's 21.5) is
+# missing exactly the 5th (G) and nothing else. A candidate more
+# than this tolerance below the group's own best quality_score
+# never becomes eligible for the HP-continuity tiebreak at all --
+# intrinsic chord quality remains dominant outside this narrow,
+# evidence-backed band, protecting against a severely awkward
+# chord shape winning merely because it happens to fit one
+# melody note.
 
 
 def _capped_position_distance(
@@ -441,7 +464,9 @@ class ChordService:
         quality_code,
         quality_display,
         melody_pitches,
-        preferred_melody_fret=None
+        preferred_melody_fret=None,
+        following_box_notes=None,
+        incoming_shape=None
     ):
         """
         Same result as get_shapes(), reordered to strongly
@@ -563,6 +588,202 @@ class ChordService:
 
         melody_strings = tuning.notes[1:]
 
+        # BO-54 -- HP (Hand Position) continuity. Computed once,
+        # outside sort_key, since it needs the group's own max
+        # quality_score to define the tolerance window every
+        # candidate is checked against.
+        max_quality_score = max(
+            (s.voicing_quality_score for s in shapes), default=0
+        )
+
+        def hp_notes_played(shape):
+            """
+            BO-54 -- how many of the box's own following melody
+            notes (already realize_note()-processed BoxMelodyNote
+            objects, reusing melody_box_analysis.realize_note()
+            unmodified) can be played without leaving the HP this
+            candidate shape's own working fret establishes.
+
+            Reuses the exact same "position N covers frets N..N+3"
+            HP geometry, and the exact same open/fretted-position
+            check, melody_box_analysis.compute_position_runs()
+            itself uses -- not a new, competing HP definition.
+            Computed directly for THIS shape's own specific
+            working fret, rather than looking that fret up among
+            compute_position_runs()'s own pre-enumerated candidate
+            starting positions (which are derived only from the
+            box notes' own reachable frets, not from any chord
+            shape's own working fret at all) -- confirmed via a
+            real bug that lookup-based approach caused: The
+            Christmas Song's own real Cmaj7/aEADE case had
+            working_fret=8, which simply never appeared among the
+            box's own candidate positions, so the lookup always
+            returned 0 for it regardless of how well it actually
+            served the following melody -- silently losing to a
+            genuinely less-complete voicing (missing the chord's
+            own 5th) that happened to land on a position the
+            lookup did recognize.
+
+            Returns 0 when following_box_notes is empty/None, when
+            this shape's own working fret is None (an all-open
+            shape has no single fretted HP to anchor to), when no
+            run in the box starts at that exact fret (the working
+            fret doesn't reach any of the box's own notes at
+            all), or when this shape's own working fret is more
+            than POSITION_DISTANCE_CAP frets from preferred_
+            melody_fret.
+
+            That last bound is necessary, not defensive
+            decoration: confirmed via a real, direct bug this
+            tiebreak produced without it -- White Christmas's own
+            real G chord in Open G, box notes B4/B4/B4/E5/D5,
+            initially selected a working_fret=21 candidate purely
+            because that extreme, barely-reachable position
+            happened to keep 4 of 5 box notes technically playable
+            (an artifact of very-high frets often covering several
+            very-high melody pitches at once), overriding the far
+            more practical low-position shape a real player would
+            actually use. HP continuity is meant to keep the hand
+            from moving AWAY from an already-sensible position, not
+            to justify moving TO a distant, impractical one merely
+            because it happens to reach more notes -- reusing
+            POSITION_DISTANCE_CAP (the same existing bound the
+            onset-position tiebreak below already uses, not a new
+            number) keeps this tiebreak from ever operating outside
+            the same practical neighborhood that tiebreak already
+            respects.
+            """
+
+            if not following_box_notes:
+
+                return 0
+
+            values = parse_shape(shape.shape)
+
+            if any(v is None for v in values):
+
+                return 0
+
+            working_fret = _chord_working_fret(values)
+
+            if working_fret is None:
+
+                return 0
+
+            if (
+                preferred_melody_fret is not None
+                and abs(working_fret - preferred_melody_fret)
+                > POSITION_DISTANCE_CAP
+            ):
+
+                return 0
+
+            # BO-54 -- computed directly for this SPECIFIC
+            # working_fret, not via a lookup into compute_
+            # position_runs()'s own candidate_positions set.
+            # compute_position_runs() only ever considers starting
+            # positions derived from the box notes' own reachable
+            # frets -- a chord shape's own working fret is not
+            # guaranteed to be one of them (confirmed via a real
+            # bug this caused: The Christmas Song's own real
+            # Cmaj7/aEADE case, working_fret=8, was not among the
+            # box's own candidate positions at all despite being
+            # a completely reasonable, nearby hand position,
+            # incorrectly scoring 0 and losing to a genuinely
+            # less-complete voicing that happened to match exactly
+            # -- see this function's own updated docstring below
+            # for the specific example). Reuses the exact same
+            # underlying check compute_position_runs() itself uses
+            # (an open note is always playable; a fretted note is
+            # playable when this working_fret lies within its own
+            # positions_covering_fret() set) -- not a second,
+            # competing definition, just applied directly to this
+            # one specific fret instead of restricted to the
+            # box's own pre-enumerated set.
+
+            notes_played = 0
+
+            for note in following_box_notes:
+
+                playable = (
+                    note.has_open_realization
+                    or working_fret in note.fretted_positions
+                )
+
+                if not playable:
+
+                    break
+
+                notes_played += 1
+
+            return notes_played
+
+        def transition_anchor_count(shape):
+            """
+            BO-54 REVISION -- how many fretted (non-open) string
+            positions this candidate shares EXACTLY with
+            incoming_shape, the immediately preceding chord's own
+            already-selected shape.
+
+            This is the "incoming HP" signal the original BO-54
+            implementation was missing entirely: it only ever
+            evaluated a candidate against the FOLLOWING melody,
+            never against the hand position the player is already
+            in when they arrive at this chord. Confirmed via a
+            real case the user's own testing surfaced: The
+            Christmas Song's own real C chord (0(10)(10)0, A Modal
+            Sawmill) immediately precedes Cmaj7. 0(10)98 shares
+            its own fretted 3rd-string 10th fret exactly with C
+            (anchor_count=1); 0798 shares no fretted position with
+            C at all (anchor_count=0) despite scoring better on
+            following-melody continuity alone. The user's own
+            direct musical judgment: this incoming-position anchor
+            matters more here than the following-melody benefit,
+            because that following melody can reach its own low-
+            position destination via an open/5th-string bridge
+            regardless of which Cmaj7 shape is chosen -- it doesn't
+            actually depend on staying near the Cmaj7's own HP at
+            all.
+
+            Only FRETTED matches count -- an open string is always
+            available from any hand position at all (the same
+            reason has_open_realization already lets an open note
+            pass hp_notes_played() unconditionally); an open-string
+            match reflects no genuine positional continuity and
+            would inflate this count without musical meaning.
+            Confirmed directly: excluding it is what produces the
+            real 1-vs-0 gap above -- including it would give a
+            misleading 2-vs-1 (both shapes' own open 4th string
+            "matching" C's own open 4th string, which requires no
+            hand position at all and proves nothing).
+
+            Returns 0 when incoming_shape is None (no preceding
+            chord -- e.g. the first chord of a song) or when this
+            candidate's own shape fails to parse.
+            """
+
+            if incoming_shape is None:
+
+                return 0
+
+            incoming_values = parse_shape(incoming_shape)
+
+            if any(v is None for v in incoming_values):
+
+                return 0
+
+            candidate_values = parse_shape(shape.shape)
+
+            if any(v is None for v in candidate_values):
+
+                return 0
+
+            return sum(
+                1 for i in range(4)
+                if incoming_values[i] == candidate_values[i]
+                and incoming_values[i] != 0
+            )
+
         def sort_key(shape):
 
             rank = category_rank.get(
@@ -575,6 +796,39 @@ class ChordService:
                 note.midi in pitches for note in notes
             )
 
+            # BO-54 -- candidates within HP_CONTINUITY_QUALITY_
+            # TOLERANCE of the group's own best quality_score are
+            # treated as tied for this purpose (quality_tier=0);
+            # everything else keeps deciding purely on quality
+            # (quality_tier=1, HP continuity never even consulted).
+            # The tolerance (0.5) is not a new, arbitrary number --
+            # it's the exact gap BO-42's own investigation already
+            # confirmed corresponds specifically to a candidate
+            # missing only the chord's own non-defining 5th (never
+            # the root/3rd/7th that define the chord's own
+            # character) -- real, direct evidence, not a guess
+            # (see HP_CONTINUITY_QUALITY_TOLERANCE's own module-
+            # level comment for the full citation).
+            quality_gap = (
+                max_quality_score - shape.voicing_quality_score
+            )
+
+            within_hp_tolerance = (
+                quality_gap <= HP_CONTINUITY_QUALITY_TOLERANCE
+            )
+
+            quality_tier = 0 if within_hp_tolerance else 1
+
+            anchor_count = (
+                transition_anchor_count(shape)
+                if within_hp_tolerance else 0
+            )
+
+            notes_played = (
+                hp_notes_played(shape)
+                if within_hp_tolerance else 0
+            )
+
             position_distance = _capped_position_distance(
                 notes, pitches, preferred_melody_fret,
                 melody_strings
@@ -582,6 +836,7 @@ class ChordService:
 
             return (
                 -rank, not contains_melody_pitch,
+                quality_tier, -anchor_count, -notes_played,
                 -shape.voicing_quality_score,
                 position_distance
             )

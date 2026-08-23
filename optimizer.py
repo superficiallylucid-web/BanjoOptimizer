@@ -178,6 +178,39 @@ class TuningAnalyzer:
 
     MAX_AWKWARDNESS_REFERENCE = 4.0
 
+    # BO-49 -- fixed reference PLAYING_MODEL_QUALITY_REFERENCE is
+    # normalized against, exactly analogous in spirit to
+    # MAX_AWKWARDNESS_REFERENCE above (candidate-set-independent,
+    # per BO-47/48's own central requirement) but for the richer
+    # Playing Model per-phrase score chord_fd_quality is now
+    # derived from (see chord_fd_quality_bonus()'s own docstring
+    # for why avg_awkwardness alone was replaced as the source of
+    # chord_fd_quality).
+    #
+    # What it represents: an "excellent" phrase's own average
+    # score -- BASE_PLAYABILITY (10.0, playing_model.py's own
+    # constant, a fully-comfortable chord shape with no
+    # penalties) plus CONTAINED_IN_CHORD_BONUS (6.0, playing_
+    # model.py) for a handful of melody notes per phrase that
+    # land as genuine chord tones, which real songs' own melody
+    # density supports (each real song here averages roughly
+    # 3 melody notes per chord phrase).
+    #
+    # How the initial value was selected: PROVISIONAL, derived
+    # from real observed data across all 4 real songs' own top-3
+    # candidates (BO-49's own investigation) -- average-per-
+    # phrase scores ranged from ~26 to ~46 across every real
+    # tuning/song combination measured. 50.0 sits just above that
+    # observed maximum, the same "round number with headroom"
+    # approach MAX_AWKWARDNESS_REFERENCE itself used.
+    #
+    # Revisit if a future real song's own average-per-phrase
+    # score meaningfully exceeds 50 -- values would saturate
+    # toward 1.0 rather than reading incorrectly, but
+    # discrimination would weaken for that song, the same
+    # tradeoff MAX_AWKWARDNESS_REFERENCE's own comment describes.
+    PLAYING_MODEL_QUALITY_REFERENCE = 50.0
+
     # BO-48 -- severity of the SEPARATE unplayable-melody-note
     # penalty (see chord_fd_quality_bonus()'s own docstring for
     # why this must never be folded into Chord/FD quality itself,
@@ -1096,48 +1129,77 @@ class TuningAnalyzer:
 
     def chord_fd_quality_bonus(self, tuning):
         """
-        BO-48 -- Chord/FD comfort for this tuning, reusing the
-        exact BO-43/44/46 avg_awkwardness definition (mean of
-        max(0, working_fret - WORKING_FRET_COMFORT_CEILING)
-        across this tuning's own real chord onsets), computed
-        via the same established chord-shape-selection machinery
-        _apply_chord_shapes()/generate_tab_from_template() use
-        (_select_chord_shape_for_harmony(), _chord_working_fret())
-        -- no second, separate chord-quality definition.
+        BO-49 -- Chord/playing quality for this tuning.
+
+        BO-49's own investigation traced the existing Playing
+        Model (playing_model.py, analyze_tuning_playing_model())
+        and found it ALREADY does exactly what BO-49 set out to
+        build: for each real chord occurrence, it evaluates every
+        candidate chord shape's own intrinsic playability (finger
+        count, span, hand geometry -- analyze_chord_shape_
+        playability()) TOGETHER WITH how well the surrounding
+        melody notes can be played from that specific chord's own
+        hand position (evaluate_combination() -- contained-in-
+        chord bonus, free-finger availability without abandoning
+        the chord shape, proximity to the chord's own working
+        fret), keeping the single best-scoring COMBINATION per
+        phrase (evaluate_phrase()). This is a strictly richer
+        measure of "chord/playing quality" than BO-43 through
+        BO-48's own avg_awkwardness, which only ever looked at
+        working_fret (how high up the neck) and had no way to
+        distinguish a comfortable low-fret shape from an awkward
+        one, or to know whether the melody can actually be played
+        from a chord's own hand position at all. Confirmed with
+        real data (White Christmas): Open G has the best raw
+        melody score but the WORST Playing Model score of its own
+        top 3 real candidates -- exactly the "good melody, poor
+        chords" case BO-49 exists to catch, and something
+        avg_awkwardness alone could never see.
+
+        Per BO-49's own explicit instruction, this composes the
+        EXISTING Playing Model rather than building a second,
+        parallel scoring system -- reuses analyze_tuning_playing_
+        model() unchanged, no new chord/melody evaluation logic
+        of its own.
 
         Returns (avg_awkwardness, chord_fd_quality,
         unplayable_note_count, unplayable_note_proportion).
 
-        chord_fd_quality is avg_awkwardness normalized to [0, 1]
-        against the FIXED MAX_AWKWARDNESS_REFERENCE (see that
-        constant's own comment) -- deliberately NOT the current
-        candidate set's own min/max, so this value never changes
-        merely because a different tuning is also being compared
-        alongside this one (BO-47's own central finding/
-        requirement). 1.0 = as comfortable as the reference
-        allows; 0.0 = at or beyond it.
+        avg_awkwardness (BO-43/44/46 definition, UNCHANGED --
+        mean of max(0, working_fret - WORKING_FRET_COMFORT_
+        CEILING) across real chord onsets) is still computed and
+        returned as a diagnostic/comparison value -- existing
+        BO-48 tests and reporting that read it are unaffected --
+        but chord_fd_quality itself is no longer derived from it.
 
-        unplayable_note_count/proportion are a SEPARATE concept
-        from Chord/FD comfort -- a melody pitch with literally no
-        valid fret/string position at all (find_positions()
-        returns empty) is a hard playability failure, not an
-        "awkward but reachable" question. Deliberately returned
-        here rather than folded into chord_fd_quality itself, so
-        analyze() can apply its own separate, explicit penalty
-        (see UNPLAYABLE_NOTE_PENALTY_WEIGHT's own comment for why
-        this must stay separate -- BO-47 demonstrated that
-        increasing Chord/FD influence alone does not reliably fix
-        a genuinely unplayable-notes situation).
+        chord_fd_quality is now the Playing Model's own average
+        per-phrase score (total_score / phrase count -- the same
+        normalization playing_model_bonus() already established,
+        reused here rather than duplicated), normalized to [0, 1]
+        against a FIXED reference (PLAYING_MODEL_QUALITY_
+        REFERENCE, see that constant's own comment) -- still
+        deliberately NOT the current candidate set's own min/max,
+        preserving BO-47/48's own central requirement: this value
+        must not change merely because a different tuning is also
+        being compared alongside this one. 1.0 = as good as the
+        reference allows; 0.0 = at or beyond it.
+
+        unplayable_note_count/proportion: UNCHANGED from BO-48 --
+        still a separate, hard-playability-failure concept,
+        computed identically (find_positions() returns empty),
+        still returned separately so analyze()'s own explicit
+        UNPLAYABLE_NOTE_PENALTY_WEIGHT penalty stays independent
+        of this component, per BO-47's own finding that Chord/FD
+        quality alone does not reliably fix a genuinely-
+        unplayable-notes situation.
 
         Zero/neutral defaults (0.0 avg_awkwardness, 1.0
         chord_fd_quality, 0 unplayable notes) when no harmony/
-        melody context is available -- matching
-        playing_model_bonus()'s own established "no chord data ->
-        no contribution" convention exactly, so a song like
-        Cousin Sally Brown (0 harmonies) is unaffected by this
-        component entirely rather than producing a misleading
-        score. Any unexpected failure is treated the same way,
-        never as a scoring error.
+        melody context is available, or if the Playing Model
+        itself produces zero phrases -- matching playing_model_
+        bonus()'s own established "no chord data -> no
+        contribution" convention exactly. Any unexpected failure
+        is treated the same way, never as a scoring error.
         """
 
         if not self.melody_notes:
@@ -1179,18 +1241,39 @@ class TuningAnalyzer:
 
             chord_service = ChordService(ChordLibrary())
 
+            # avg_awkwardness -- unchanged BO-43/44/46
+            # definition, still computed for diagnostics/
+            # comparison even though chord_fd_quality no longer
+            # derives from it directly.
+
             awkwardness_sum = 0.0
 
             total_chord_onsets = 0
 
-            for harmony in self.harmonies:
+            incoming_shape = None
+
+            for harmony_index, harmony in enumerate(
+                self.harmonies
+            ):
+
+                next_harmony = (
+                    self.harmonies[harmony_index + 1]
+                    if harmony_index + 1 < len(self.harmonies)
+                    else None
+                )
 
                 shape, is_exception, exception_dict = (
                     _select_chord_shape_for_harmony(
                         harmony, tuning, chord_service,
-                        melody_notes=self.melody_notes
+                        melody_notes=self.melody_notes,
+                        next_harmony=next_harmony,
+                        incoming_shape=incoming_shape
                     )
                 )
+
+                if shape is not None:
+
+                    incoming_shape = shape.shape
 
                 if shape is None:
 
@@ -1220,20 +1303,41 @@ class TuningAnalyzer:
 
                 total_chord_onsets += 1
 
-            if total_chord_onsets == 0:
+            avg_awkwardness = (
+                awkwardness_sum / total_chord_onsets
+                if total_chord_onsets else 0.0
+            )
+
+            # chord_fd_quality -- BO-49, derived from the
+            # existing Playing Model's own combined chord+melody
+            # phrase scoring, reused unchanged.
+
+            temp_score = Score(
+                notes=self.melody_notes,
+                harmonies=self.harmonies
+            )
+
+            playing_model_result = analyze_tuning_playing_model(
+                temp_score, tuning, chord_service
+            )
+
+            phrase_count = len(playing_model_result.phrases)
+
+            if phrase_count == 0:
 
                 return 0.0, 1.0, unplayable_note_count, (
                     unplayable_note_proportion
                 )
 
-            avg_awkwardness = (
-                awkwardness_sum / total_chord_onsets
+            average_phrase_score = (
+                playing_model_result.total_score / phrase_count
             )
 
-            chord_fd_quality = 1.0 - min(
-                avg_awkwardness / self.MAX_AWKWARDNESS_REFERENCE,
+            chord_fd_quality = max(0.0, min(
+                average_phrase_score
+                / self.PLAYING_MODEL_QUALITY_REFERENCE,
                 1.0
-            )
+            ))
 
             return (
                 avg_awkwardness, chord_fd_quality,

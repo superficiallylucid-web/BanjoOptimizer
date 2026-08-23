@@ -250,13 +250,23 @@ def test_real_ddim_example_full_pipeline():
 
             note = d4_notes[0].find("{*}Note")
 
-            assert note.find("{*}fret").text == "0", (
-                f"measure {measure_index + 1}'s D4 should now be "
-                f"at fret 0 (the FD's own exact preferred-"
-                f"position match), not fret 10"
-            )
+            # BO-54 note: Ddim's own SELECTED SHAPE legitimately
+            # changed here -- from the high-position (10)(11)0
+            # (13) BO-35 itself was verified against, to the
+            # quality-TIED 4534 (confirmed directly: exactly
+            # 21.0, tied with the prior shape, not a lower-
+            # quality voicing winning improperly), since BO-54's
+            # new HP-continuity signal correctly finds the box's
+            # own real following notes (D4, C4, D4) cannot be
+            # reached at all from the high-position shape's own
+            # working fret (10 doesn't even appear as a valid
+            # starting hand position for this specific box), while
+            # 4534's own working fret (3) reaches all 3. D4 within
+            # THIS shape occurs once (string_index 1), confirmed
+            # directly against the real generated output.
+            assert note.find("{*}fret").text == "5"
 
-            assert note.find("{*}string").text == "1"
+            assert note.find("{*}string").text == "2"
 
     finally:
 
