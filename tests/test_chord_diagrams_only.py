@@ -39,18 +39,18 @@ from tunings import get_tunings
 from score_generator import generate_chord_diagrams_only
 
 
-TEST_FOLDER = Path(__file__).parent
+TEST_FOLDER = Path(__file__).parent.parent
 
 WHITE_CHRISTMAS_PATH = (
-    TEST_FOLDER.parent / "scores"
+    TEST_FOLDER / "scores"
     / "White Christmas (G (gCGBD)).mscz"
 )
 
 CHRISTMAS_SONG_NOTATION_ONLY_PATH = (
-    TEST_FOLDER.parent / "The Christmas Song (notation only).mscz"
+    TEST_FOLDER / "The Christmas Song (notation only).mscz"
 )
 
-OUTPUT_FOLDER = TEST_FOLDER.parent / "output"
+OUTPUT_FOLDER = TEST_FOLDER / "output"
 
 
 def _get_chord_service():
@@ -105,7 +105,7 @@ def test_chord_diagrams_applied_and_valid_file():
 
     target_tuning = get_tunings()["Open G"]
 
-    output_path, applied, skipped = generate_chord_diagrams_only(
+    output_path, applied, skipped, _exceptions = generate_chord_diagrams_only(
         p, target_tuning, staff_used, OUTPUT_FOLDER,
         _get_chord_service(),
         filename="test_chord_diagrams_valid.mscz"
@@ -176,7 +176,7 @@ def test_melody_completely_unchanged():
 
     target_tuning = get_tunings()["Open G"]
 
-    output_path, _, _ = generate_chord_diagrams_only(
+    output_path, _, _, _exceptions = generate_chord_diagrams_only(
         p, target_tuning, staff_used, OUTPUT_FOLDER,
         _get_chord_service(),
         filename="test_melody_unchanged.mscz"
@@ -287,7 +287,7 @@ def test_existing_tab_completely_untouched():
 
     target_tuning = get_tunings()["Open G"]
 
-    output_path, applied, _ = generate_chord_diagrams_only(
+    output_path, applied, _, _exceptions = generate_chord_diagrams_only(
         p, target_tuning, staff_used, OUTPUT_FOLDER,
         _get_chord_service(),
         filename="test_existing_tab_untouched.mscz"
@@ -363,7 +363,7 @@ def test_no_new_part_or_staff_created():
 
     target_tuning = get_tunings()["Open G"]
 
-    output_path, _, _ = generate_chord_diagrams_only(
+    output_path, _, _, _exceptions = generate_chord_diagrams_only(
         p, target_tuning, staff_used, OUTPUT_FOLDER,
         _get_chord_service(),
         filename="test_no_new_part.mscz"
@@ -412,7 +412,7 @@ def test_tuning_visible_in_filename_and_score_text():
 
     target_tuning = get_tunings()["Open G"]
 
-    output_path, _, _ = generate_chord_diagrams_only(
+    output_path, _, _, _exceptions = generate_chord_diagrams_only(
         p, target_tuning, staff_used, OUTPUT_FOLDER,
         _get_chord_service()
     )
@@ -466,7 +466,7 @@ def test_title_and_harmonies_preserved_via_parser():
 
     target_tuning = get_tunings()["Open G"]
 
-    output_path, applied, skipped = generate_chord_diagrams_only(
+    output_path, applied, skipped, _exceptions = generate_chord_diagrams_only(
         p, target_tuning, staff_used, OUTPUT_FOLDER,
         _get_chord_service(),
         filename="test_title_harmonies_preserved.mscz"
@@ -513,7 +513,7 @@ def test_chord_diagram_shape_matches_chord_service_directly():
 
     service = _get_chord_service()
 
-    output_path, _, _ = generate_chord_diagrams_only(
+    output_path, _, _, _exceptions = generate_chord_diagrams_only(
         p, target_tuning, staff_used, OUTPUT_FOLDER, service,
         filename="test_shape_matches_service.mscz"
     )
@@ -577,21 +577,42 @@ def test_chord_diagram_shape_matches_chord_service_directly():
 
                 continue
 
-            expected_shapes = service.get_shapes(
-                target_tuning,
-                pitch_name(matching_harmony.root_pc),
-                matching_harmony.root_pc,
-                matching_harmony.quality_code,
-                quality_display
+            # This function's own real chord-shape selection is
+            # melody-aware (generate_chord_diagrams_only() passes
+            # melody_notes through to _apply_chord_shapes(),
+            # confirmed directly) -- the plain, melody-blind
+            # service.get_shapes()[0] this test previously
+            # compared against predates that and was never
+            # updated, since this test was silently skipped by a
+            # pre-existing path bug (fixed separately) for an
+            # unknown period and never actually ran until now.
+            from score_generator import (
+                _select_chord_shape_for_harmony
             )
 
-            if not expected_shapes:
+            selected_shape, _, _ = (
+                _select_chord_shape_for_harmony(
+                    matching_harmony, target_tuning, service,
+                    melody_notes=p.score.notes
+                )
+            )
+
+            if selected_shape is None:
 
                 continue
 
-            expected_shape_text = expected_shapes[0].shape
+            expected_shape_text = selected_shape.shape
 
             fret_diagram = siblings[idx + 1]
+
+            fret_offset_element = fret_diagram.find(
+                "{*}fretOffset"
+            )
+
+            fret_offset = (
+                int(fret_offset_element.text)
+                if fret_offset_element is not None else 0
+            )
 
             string_values = {}
 
@@ -606,7 +627,7 @@ def test_chord_diagram_shape_matches_chord_service_directly():
                 elif child_tag == "dot":
 
                     string_values[string_no] = str(
-                        child.attrib["fret"]
+                        int(child.attrib["fret"]) + fret_offset
                     )
 
                 elif child_tag == "marker":
@@ -655,7 +676,7 @@ def test_notation_only_source_also_works():
 
     target_tuning = get_tunings()["A Modal Sawmill"]
 
-    output_path, applied, skipped = generate_chord_diagrams_only(
+    output_path, applied, skipped, _exceptions = generate_chord_diagrams_only(
         p, target_tuning, staff_used, OUTPUT_FOLDER,
         _get_chord_service(),
         filename="test_notation_only_chord_diagrams.mscz"

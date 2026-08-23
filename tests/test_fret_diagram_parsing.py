@@ -18,7 +18,7 @@ from parser import MuseScoreFile
 
 
 MFT_PATH = (
-    Path(__file__).parent.parent
+    Path(__file__).parent
     / "My_Favorite_Things__Em__aEADE__.mscz"
 )
 

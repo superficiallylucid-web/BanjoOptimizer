@@ -1616,6 +1616,31 @@ def _set_score_title_and_composer(
 
                 content_element.text = title
 
+            # BO-53 follow-up -- explicit offset for the title
+            # text (previously never set at all; MuseScore's own
+            # "title" style default applied instead). Same axis
+            # mapping already confirmed correct by direct visual
+            # inspection for the "Banjo tuning:" text below (also
+            # a Text element): x=horizontal, y=vertical.
+            offset_element = text_element.find("{*}offset")
+
+            if offset_element is None:
+
+                size_element = text_element.find("{*}size")
+
+                insert_index = (
+                    list(text_element).index(size_element) + 1
+                    if size_element is not None else 1
+                )
+
+                offset_element = ET.Element("offset")
+
+                text_element.insert(insert_index, offset_element)
+
+            offset_element.set("x", "0")
+
+            offset_element.set("y", "-5")
+
         elif style == "composer":
 
             if composer:
@@ -1678,6 +1703,18 @@ def _add_tuning_text(staff_element, tuning):
     size_element = ET.SubElement(text_element, "size")
 
     size_element.text = "8"
+
+    # BO-53 -- explicit offset for this text (previously never
+    # set at all; MuseScore's own "subtitle" style default
+    # applied instead). x=horizontal, y=vertical -- confirmed
+    # correct by direct visual inspection in real MuseScore.
+    # Matches the real, confirmed element order (eid, style,
+    # size, offset, text).
+    offset_element = ET.SubElement(text_element, "offset")
+
+    offset_element.set("x", "0")
+
+    offset_element.set("y", "0")
 
     content_element = ET.SubElement(text_element, "text")
 
@@ -2865,6 +2902,37 @@ def generate_tab_from_template(
                 if eid_el is not None:
 
                     eid_el.text = _generate_eid()
+
+                # BO-53 -- override the chord symbol's own
+                # <offset> to a consistent, BO-set position
+                # regardless of whatever the source score
+                # happened to have (confirmed real, and
+                # inconsistent across the 4 real source songs:
+                # -1.5/-3 in The Christmas Song, 0.5/-2 in My
+                # Favorite Things, 0/-1.5 in White Christmas --
+                # BO previously never set this at all, just
+                # copied whatever the source had through
+                # unmodified). x="0"/y="-5" confirmed correct by
+                # direct visual inspection in real MuseScore
+                # (the user's own check) -- an earlier x="-5"/
+                # y="0" attempt, based on inferring x=horizontal/
+                # y=vertical from other real <Text> elements in
+                # this same file, turned out reversed for this
+                # specific element.
+                offset_el = harmony_copy.find("{*}offset")
+
+                if offset_el is None:
+
+                    # Matches the real, confirmed element order
+                    # (eid, autoplace, offset) -- inserted after
+                    # autoplace if present, otherwise appended.
+                    offset_el = ET.SubElement(
+                        harmony_copy, "offset"
+                    )
+
+                offset_el.set("x", "0")
+
+                offset_el.set("y", "-5")
 
                 tab_voice.append(harmony_copy)
 

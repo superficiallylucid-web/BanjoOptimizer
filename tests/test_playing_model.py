@@ -35,7 +35,7 @@ OPEN_G = get_tunings()["Open G"]
 A_MODAL_SAWMILL = get_tunings()["A Modal Sawmill"]  # aEADE
 
 MFT_PATH = (
-    Path(__file__).parent.parent
+    Path(__file__).parent
     / "My_Favorite_Things__Em__aEADE__.mscz"
 )
 

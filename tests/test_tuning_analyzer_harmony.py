@@ -16,10 +16,10 @@ from optimizer import TuningAnalyzer
 from models import Harmony
 
 
-TEST_FOLDER = Path(__file__).parent
+TEST_FOLDER = Path(__file__).parent.parent
 
 WHITE_CHRISTMAS_PATH = (
-    TEST_FOLDER.parent / "scores"
+    TEST_FOLDER / "scores"
     / "White Christmas (G (gCGBD)).mscz"
 )
 

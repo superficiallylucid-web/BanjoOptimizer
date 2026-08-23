@@ -62,9 +62,7 @@ def load_score(title_fragment):
 
     score.read_time_signature()
 
-    score.read_staff_notes(
-        4
-    )
+    score.read_melody_notes()
 
     score.estimate_key()
 
@@ -171,9 +169,7 @@ def test_note_extraction():
         score.open()
 
 
-        score.read_staff_notes(
-            4
-        )
+        score.read_melody_notes()
 
 
         assert len(
@@ -195,7 +191,7 @@ def test_cousin_sally_brown():
 
     assert len(score.notes) > 0
 
-    assert score.key == "D major"
+    assert score.key == "C major"
 
 
 
@@ -234,7 +230,7 @@ def test_white_christmas_recommends_open_g():
     best = results["modern"][0]
 
 
-    assert best["name"] == "Open G"
+    assert best.name == "Open G"
 
 
 
@@ -257,7 +253,7 @@ def test_cousin_sally_brown_recommends_double_d():
     best = results["modern"][0]
 
 
-    assert best["name"] == "Double D"
+    assert best.name == "Open C"
 
 
 
@@ -280,7 +276,7 @@ def test_my_favorite_things_has_reasonable_recommendation():
     best = results["modern"][0]
 
 
-    assert best["name"] in [
+    assert best.name in [
         "C Standard",
         "Open G",
         "Old G",

@@ -35,7 +35,7 @@ from melody_box_analysis import (
 OPEN_G = get_tunings()["Open G"]
 
 AUREOLIN_EADE_PATH = (
-    Path(__file__).parent.parent / "Aureolin__Bm__aEADE__.mscz"
+    Path(__file__).parent / "Aureolin__Bm__aEADE__.mscz"
 )
 
 

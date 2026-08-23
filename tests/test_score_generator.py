@@ -31,7 +31,7 @@ from tunings import get_tunings, identify_tuning
 from score_generator import generate_mscz
 
 
-TEST_FOLDER = Path(__file__).parent
+TEST_FOLDER = Path(__file__).parent.parent
 
 WHITE_CHRISTMAS_PATH = (
     TEST_FOLDER / "scores"
@@ -589,7 +589,7 @@ def test_chord_service_none_skips_chord_shapes():
 # way that gap was closed for testing.
 
 CHRISTMAS_SONG_NOTATION_ONLY_PATH = (
-    TEST_FOLDER.parent / "The Christmas Song (notation only).mscz"
+    TEST_FOLDER / "The Christmas Song (notation only).mscz"
 )
 
 
@@ -1276,7 +1276,7 @@ def test_new_tab_staff_matches_reference_structure_exactly():
     """
 
     reference_path = (
-        TEST_FOLDER.parent
+        TEST_FOLDER
         / "The_Christmas_Song__notation_and_TAB_.mscz"
     )
 

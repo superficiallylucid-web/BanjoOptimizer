@@ -19,19 +19,19 @@ from optimizer import TuningAnalyzer
 from tunings import get_tunings
 
 
-TEST_FOLDER = Path(__file__).parent
+TEST_FOLDER = Path(__file__).parent.parent
 
 WHITE_CHRISTMAS_PATH = (
-    TEST_FOLDER.parent / "scores"
+    TEST_FOLDER / "scores"
     / "White Christmas (G (gCGBD)).mscz"
 )
 
 MFT_PATH = (
-    TEST_FOLDER.parent / "My_Favorite_Things__Em__aEADE__.mscz"
+    TEST_FOLDER / "My_Favorite_Things__Em__aEADE__.mscz"
 )
 
 AUREOLIN_PATH = (
-    TEST_FOLDER.parent / "Aureolin__Bm__aEADE__.mscz"
+    TEST_FOLDER / "Aureolin__Bm__aEADE__.mscz"
 )
 
 

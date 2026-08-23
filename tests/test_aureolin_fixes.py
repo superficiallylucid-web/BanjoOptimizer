@@ -27,11 +27,11 @@ from music import chord_tones
 
 
 AUREOLIN_DADE_PATH = (
-    Path(__file__).parent.parent / "Aureolin__Bm__aDADE__.mscz"
+    Path(__file__).parent / "Aureolin__Bm__aDADE__.mscz"
 )
 
 AUREOLIN_EADE_PATH = (
-    Path(__file__).parent.parent / "Aureolin__Bm__aEADE__.mscz"
+    Path(__file__).parent / "Aureolin__Bm__aEADE__.mscz"
 )
 
 
