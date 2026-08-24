@@ -95,6 +95,10 @@ from melody_box_analysis import realize_note
 
 from models import Note
 
+from hand_position import (
+    chord_hp_span, melody_note_hp, open_string_hp, HpTraceEntry
+)
+
 
 def _sanitize_filename(text):
     """
@@ -2250,7 +2254,7 @@ def _choose_melody_position(
     midi, open_notes, fd_shape_values=None, working_fret_anchor=None,
     following_working_fret_anchor=None, previous_position=None,
     preceding_chord_shape_values=None, second_previous_position=None,
-    melody_phrase_notes=None
+    melody_phrase_notes=None, current_hp=None
 ):
     """
     BO-24/BO-25/BO-30: choose a string/fret position for one
@@ -2363,11 +2367,14 @@ def _choose_melody_position(
     melody_phrase_notes (BO-57): a forward-looking window of this
     note's own upcoming melody notes (already realize_note()-
     processed BoxMelodyNote objects, reusing melody_box_analysis.
-    realize_note() unmodified, the SAME machinery BO-54 already
-    uses for chord-shape HP continuity), starting at and including
-    this note itself. Caller-supplied (see generate_tab_from_
-    template()'s own construction of this) rather than derived
-    here, since building the window requires the flat, document-
+    realize_note() -- with quality_filtered=True since BO-58, see
+    that parameter's own docstring for why -- the SAME machinery
+    BO-54 already uses for chord-shape HP continuity, just called
+    with a different, additive argument), starting at and
+    including this note itself. Caller-supplied (see generate_
+    tab_from_template()'s own construction of this) rather than
+    derived here, since building the window requires the flat,
+    document-
     ordered note sequence this function itself has no access to.
 
     Investigation finding (BO-57): melody_box_analysis.
@@ -2746,9 +2753,79 @@ def _choose_melody_position(
 
             string_distance = 0
 
+        # BO-60 -- a hierarchical tiebreak, not a new weighted
+        # score (per Decision F): a 2-element sub-tuple, (not_
+        # inside_hp, movement). Because this sits immediately
+        # after -phrase_notes_played in the outer tuple below,
+        # standard lexicographic tuple comparison already
+        # guarantees it is only ever consulted once phrase
+        # coverage has genuinely tied between candidates -- it
+        # can never override a real phrase-coverage difference
+        # (confirmed real: the CSB/gCGBD C4 case, 6 vs 4, never
+        # even reaches this component at all).
+        #
+        # GATING (added after a real, confirmed conflict): this
+        # tiebreak is melody-only, and must never activate when a
+        # chord anchor exists for this note. Confirmed directly
+        # why this matters -- phrase_notes_played itself is ALSO
+        # gated by this exact same condition (see its own
+        # computation above), so for a chord-anchored note it is
+        # always 0 for every candidate: a universal, non-genuine
+        # tie, not a real one. Without this gate, hp_tiebreak
+        # would become the first REAL differentiator for every
+        # chord-anchored note, firing before fret_distance (the
+        # mechanism that already, correctly protects chord-
+        # anchored positioning) ever gets a turn -- confirmed
+        # real regression this caused: The Christmas Song's own
+        # Cmaj7-phrase A4 moved from the correct, established
+        # fret 7 to fret 12 before this gate was added. Reuses
+        # no_chord_anchor_at_all UNMODIFIED (defined above, the
+        # same variable string_distance's own BO-57 neutralization
+        # already relies on) rather than inventing a second,
+        # potentially-divergent check.
+        #
+        # not_inside_hp: 0 when this candidate is playable
+        # without moving the hand from current_hp (fret 0 --
+        # open string -- always counts, per BO-59's own
+        # established principle that open strings never require
+        # a hand-position change), 1 otherwise. This alone
+        # implements Decision 3 -- an inside-HP candidate beats
+        # an outside one whenever both reach this point.
+        #
+        # movement: abs(candidate_fret - current_hp.low) --
+        # exactly the index-finger/root distance specified in
+        # Decision E, never the note's own distance, HP center,
+        # or upper boundary. Only ever decides between two
+        # candidates that are BOTH outside current_hp (Decision
+        # 4) -- when at least one is inside, not_inside_hp
+        # itself already decided the comparison first.
+        #
+        # When current_hp is None (no HP established yet), or
+        # when a chord anchor applies, both components are always
+        # 0 for every candidate -- a universal tie, so this falls
+        # through completely unchanged to the existing legacy
+        # tiebreaks below, exactly matching pre-BO-60 behavior.
+        if current_hp is None or not no_chord_anchor_at_all:
+
+            hp_tiebreak = (0, 0)
+
+        elif (
+            position["fret"] == 0
+            or current_hp.low <= position["fret"] <= current_hp.high
+        ):
+
+            hp_tiebreak = (0, 0)
+
+        else:
+
+            hp_tiebreak = (
+                1, abs(position["fret"] - current_hp.low)
+            )
+
         return (
             preceding_fd_violation, open_string_bonus,
-            -phrase_notes_played, pattern_continuity_bonus,
+            -phrase_notes_played, hp_tiebreak,
+            pattern_continuity_bonus,
             fret_distance, string_distance, -position["score"]
         )
 
@@ -2758,7 +2835,7 @@ def _choose_melody_position(
 def generate_tab_from_template(
     score_file, tuning, staff_number, template_path,
     output_folder, chord_service, filename=None,
-    include_notation=False
+    include_notation=False, hp_trace_sink=None
 ):
     """
     BO-23: populate a MuseScore-created TAB template (see this
@@ -2821,6 +2898,19 @@ def generate_tab_from_template(
         function's own exact prior behavior unchanged). True
         populates a genuine, independent standard-notation
         treble staff instead of discarding it.
+
+    hp_trace_sink: BO-59, default None (zero cost, zero
+        behavior change for every existing caller -- this
+        parameter is purely additive). When a list is passed,
+        one hand_position.HpTraceEntry is appended to it per
+        real event, in document order, as the persistent HP
+        state (already computed internally regardless of this
+        parameter -- see BO-59's own prior implementation) is
+        updated. Deliberately NOT a new return value: existing
+        callers (main.py, BO-56's own tests) already unpack
+        exactly 4 return values, and this avoids breaking that.
+        For test/investigation use only -- current_hp itself is
+        never consulted by any selection logic in this function.
 
     Returns (output_path, chord_shapes_applied,
     chord_shapes_skipped, exceptions) -- exceptions is BO-21's
@@ -2977,7 +3067,8 @@ def generate_tab_from_template(
 
         melody_phrase_notes_by_event_id[id(event)] = [
             realize_note(
-                Note(midi=window_event["pitch"]), tuning
+                Note(midi=window_event["pitch"]), tuning,
+                quality_filtered=True
             )
             for _, window_event in window_events
         ]
@@ -3234,6 +3325,28 @@ def generate_tab_from_template(
     # may apply -- see _choose_melody_position()'s own docstring.
     second_previous_melody_position = None
 
+    # BO-59 -- persistent Hand Position state, threaded across
+    # this whole loop exactly like previous_melody_position above
+    # (never recomputed per-note, never reset per-measure). See
+    # hand_position.py's own module docstring for the full,
+    # validated specification this implements. Per BO-59's own
+    # explicit scope, this is OBSERVABLE state only -- it does
+    # not feed into or influence _choose_melody_position()'s own
+    # sort key or any chord-shape selection anywhere in this
+    # function; current_hp_by_event_id exists purely so the
+    # resulting state is inspectable/testable against real
+    # output, matching how every other *_by_event_id dict in
+    # this function already works.
+    current_hp = None
+
+    current_hp_by_event_id = {}
+
+    # BO-59 -- a simple, monotonically-increasing counter for
+    # hp_trace_sink entries' own event_index field, so diagnostic
+    # output preserves true document order even though the real
+    # event loop below is nested (per-measure, per-event).
+    hp_trace_event_index = 0
+
     # BO-38 Group C: whether the note currently held in
     # previous_melody_position was itself a chord onset (resolved
     # via Rule #1's own FD-match, not by any string-preference
@@ -3356,6 +3469,56 @@ def generate_tab_from_template(
 
             if event["type"] == "harmony":
 
+                # BO-59 -- a chord/FD always resets HP (even when
+                # its own lowest fret overlaps the previous HP --
+                # see hand_position.chord_hp_span()'s own
+                # docstring). The shape is already fully decided
+                # at this point (chord_shape_by_position was
+                # populated before this loop began, unlike melody
+                # positions which are chosen inside it) -- this
+                # is a lookup, not a new decision.
+                hp_before = current_hp
+
+                harmony_shape = chord_shape_by_position.get(
+                    (measure_index + 1, event["beat"])
+                )
+
+                chord_lowest_fret = None
+
+                transition = "no_note"
+
+                if harmony_shape is not None:
+
+                    new_hp = chord_hp_span(harmony_shape)
+
+                    if new_hp is not None:
+
+                        current_hp = new_hp
+
+                        chord_lowest_fret = new_hp.low
+
+                        transition = "chord_reset"
+
+                current_hp_by_event_id[id(event)] = current_hp
+
+                if hp_trace_sink is not None:
+
+                    hp_trace_sink.append(HpTraceEntry(
+                        event_index=hp_trace_event_index,
+                        measure=measure_index + 1,
+                        beat=event["beat"],
+                        event_type="chord",
+                        pitch=None,
+                        fret=None,
+                        string=None,
+                        chord_lowest_fret=chord_lowest_fret,
+                        hp_before=hp_before,
+                        hp_after=current_hp,
+                        transition=transition
+                    ))
+
+                    hp_trace_event_index += 1
+
                 # Only staff left, so chord symbols go directly
                 # on it.
                 harmony_copy = copy.deepcopy(
@@ -3404,6 +3567,33 @@ def generate_tab_from_template(
                 continue
 
             if event["type"] == "rest":
+
+                # BO-59 -- a rest (silence, no note played at
+                # all) is not addressed by the HP specification;
+                # the most defensible reading is that HP simply
+                # doesn't change (the hand isn't playing
+                # anything, so nothing moves it) -- recorded here
+                # purely for observability, matching every other
+                # event type.
+                current_hp_by_event_id[id(event)] = current_hp
+
+                if hp_trace_sink is not None:
+
+                    hp_trace_sink.append(HpTraceEntry(
+                        event_index=hp_trace_event_index,
+                        measure=measure_index + 1,
+                        beat=event["beat"],
+                        event_type="rest",
+                        pitch=None,
+                        fret=None,
+                        string=None,
+                        chord_lowest_fret=None,
+                        hp_before=current_hp,
+                        hp_after=current_hp,
+                        transition="no_note"
+                    ))
+
+                    hp_trace_event_index += 1
 
                 if event["tuplet_start_element"] is not None:
 
@@ -3544,7 +3734,8 @@ def generate_tab_from_template(
                     melody_phrase_notes_by_event_id.get(
                         id(event)
                     )
-                )
+                ),
+                current_hp=current_hp
             )
 
             if chosen is None:
@@ -3573,6 +3764,28 @@ def generate_tab_from_template(
                 # own 5th-string skip for the same pattern) --
                 # the next real note's own continuity calculation
                 # sees whatever came before this silenced one.
+
+                # BO-59 -- same treatment: written as a Rest, not
+                # a real fretted note, so HP is left unchanged.
+                current_hp_by_event_id[id(event)] = current_hp
+
+                if hp_trace_sink is not None:
+
+                    hp_trace_sink.append(HpTraceEntry(
+                        event_index=hp_trace_event_index,
+                        measure=measure_index + 1,
+                        beat=event["beat"],
+                        event_type="rest",
+                        pitch=midi,
+                        fret=None,
+                        string=None,
+                        chord_lowest_fret=None,
+                        hp_before=current_hp,
+                        hp_after=current_hp,
+                        transition="no_note"
+                    ))
+
+                    hp_trace_event_index += 1
 
                 if event["tuplet_start_element"] is not None:
 
@@ -3706,6 +3919,58 @@ def generate_tab_from_template(
             previous_was_chord_onset = is_chord_onset
 
             chosen_fret = chosen["fret"]
+
+            # BO-59 -- a fretted note updates HP per melody_note_
+            # hp()'s own rules (inside current HP: unchanged;
+            # outside, either direction: establishes a new one at
+            # its own fret); an open string (fret 0) never
+            # establishes or moves HP at all.
+            hp_before = current_hp
+
+            if chosen_fret > 0:
+
+                current_hp = melody_note_hp(current_hp, chosen_fret)
+
+                if hp_before is None:
+
+                    hp_transition = "established_first"
+
+                elif current_hp is hp_before:
+
+                    hp_transition = "unchanged"
+
+                else:
+
+                    hp_transition = "established_new"
+
+            else:
+
+                current_hp = open_string_hp(current_hp)
+
+                hp_transition = "open_string"
+
+            current_hp_by_event_id[id(event)] = current_hp
+
+            if hp_trace_sink is not None:
+
+                hp_trace_sink.append(HpTraceEntry(
+                    event_index=hp_trace_event_index,
+                    measure=measure_index + 1,
+                    beat=event["beat"],
+                    event_type=(
+                        "open_note" if chosen_fret == 0
+                        else "fretted_note"
+                    ),
+                    pitch=midi,
+                    fret=chosen_fret,
+                    string=chosen["string"],
+                    chord_lowest_fret=None,
+                    hp_before=hp_before,
+                    hp_after=current_hp,
+                    transition=hp_transition
+                ))
+
+                hp_trace_event_index += 1
 
             # Confirmed-reversed MuseScore <string> numbering
             # relative to fretboard.py's own string_index (see

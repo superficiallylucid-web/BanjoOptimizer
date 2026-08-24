@@ -36,7 +36,7 @@ theory or chord logic is added here:
   boxes can be built and analyzed without one)
 """
 
-from fretboard import find_positions
+from fretboard import find_positions, best_position
 
 from music import (
     midi_to_note_name,
@@ -50,6 +50,26 @@ from models import (
     PositionRun,
     MelodyBox
 )
+
+
+MELODY_REALIZATION_QUALITY_TOLERANCE = 3  # BO-58 -- see
+# realize_note()'s own docstring for exactly where this is used.
+# Not an arbitrary number: derived from a real, 210-sample scan
+# of every distinct real melody pitch's own candidate-realization
+# score gaps (fretboard.best_position()'s own scoring), across
+# all 4 real songs and 8 real tuning combinations already used
+# throughout this project. The distribution is genuinely bimodal:
+# gaps of 0-4 account for 131 of 210 samples (a tight, continuous
+# cluster), then a real, near-empty gap (only 1 sample at gap=7),
+# before a second, clearly separate cluster begins at gap=9 (78
+# samples, 9 through 15). 3 is the value that correctly excludes
+# the specific, real BO-58 bug case confirmed by direct trace
+# (Cousin Sally Brown / Double C, E4's own fret-9 realization,
+# score 8, a gap of 4 from its own best real candidate's score of
+# 12) while still preserving every genuinely close, real
+# alternative (gap 0-3, still 111 of 210 real samples) as a
+# usable realization -- not narrowing to a single "best" position
+# only, which BO-58's own task explicitly warned against.
 
 
 def positions_covering_fret(fret):
@@ -70,17 +90,59 @@ def positions_covering_fret(fret):
     return set(range(max(1, fret - 3), fret + 1))
 
 
-def realize_note(note, tuning):
+def realize_note(note, tuning, quality_filtered=False):
     """
     Build a BoxMelodyNote for one melody Note: every string/
     fret realization (via fretboard.find_positions(), reused
     exactly as-is), whether any of them is an open string, and
     which hand positions its fretted realizations reach.
+
+    quality_filtered (BO-58, default False): when False (every
+    existing caller -- Playing Model, BO-51's diagnostics, BO-54's
+    own chord-shape HP-continuity -- none of which pass this,
+    confirmed directly, so their own behavior is completely
+    unaffected), fretted_positions is built from EVERY candidate
+    realization exactly as before.
+
+    When True (BO-57's own melody-only phrase mechanism only),
+    fretted_positions is built only from realizations whose own
+    fretboard.best_position() score is within MELODY_REALIZATION_
+    QUALITY_TOLERANCE of this note's own best real candidate --
+    fixing a real, confirmed bug: without this, a candidate hand
+    position could receive phrase-reachability credit for a LATER
+    note via that note's own genuinely awkward realization (one
+    BO would never actually select for that note), rather than
+    the realization BO would genuinely use. Confirmed real case:
+    Cousin Sally Brown / Double C, where G4@fret7 falsely appeared
+    to reach the phrase's own E4 via E4's own awkward fret-9
+    candidate (score 8) instead of E4's own genuinely-preferred
+    fret-4 one (score 12) -- a gap of 4, outside tolerance.
+
+    This is deliberately a TOLERANCE band, not "keep only the
+    single best realization" -- multiple genuinely close
+    realizations (e.g. open-position alternatives, or two
+    similarly-comfortable frets) remain available, matching how
+    every other quality-tolerance concept already established in
+    this project works (chord_service.py's own HP_CONTINUITY_
+    QUALITY_TOLERANCE, optimizer.py's own MAX_AWKWARDNESS_
+    REFERENCE).
     """
 
     open_notes = tuning.notes[1:]
 
     raw_positions = find_positions(note.midi, open_notes)
+
+    if quality_filtered and raw_positions:
+
+        best_position(raw_positions)
+
+        best_score = max(p["score"] for p in raw_positions)
+
+        raw_positions = [
+            p for p in raw_positions
+            if p["score"]
+            >= best_score - MELODY_REALIZATION_QUALITY_TOLERANCE
+        ]
 
     realizations = [
         NoteRealization(
