@@ -93,6 +93,8 @@ from playing_model import _chord_working_fret
 
 from melody_box_analysis import realize_note
 
+from models import Note
+
 
 def _sanitize_filename(text):
     """
@@ -2197,6 +2199,27 @@ STRING_ANCHOR_DISTANCE_CAP = 3  # strings -- BO-25. The domain
 # tied on fret-position continuity, never override a fret-
 # position difference of any size.
 
+MELODY_PHRASE_LOOKAHEAD = 6  # notes -- BO-57. How many
+# consecutive melody notes (starting at, and including, the note
+# currently being positioned) are considered when scoring a
+# candidate's own hand-position continuity for a phrase with NO
+# chord anchor at all (see _melody_phrase_notes_played()'s own
+# docstring for the full mechanism and why it's scoped this way).
+# Not an arbitrary number: confirmed directly by testing every
+# window size from 2 to 6 against both real BO-57 investigation
+# cases (Cousin Sally Brown / C Standard). Measure 1's real
+# C4->E4 phrase only needs a window of 2 (both candidates tie on
+# notes_played immediately, correctly falling through to the
+# existing -score tiebreak, which already favors the low
+# position). Measure 7's real G4-G4-G4-E4-D4-C4 run needs a
+# window of at least 4 -- confirmed the minimum below that (2-3)
+# still ties, and 4 is exactly where the low-position candidate
+# genuinely overtakes the high one on notes_played alone. 6 is
+# chosen as headroom above that confirmed minimum (matching this
+# project's own established "round number above the confirmed
+# minimum/maximum" convention, e.g. MAX_AWKWARDNESS_REFERENCE),
+# not itself required by either real case.
+
 
 def _fd_positions_for_pitch(shape_values, open_notes, target_midi):
     """
@@ -2226,7 +2249,8 @@ def _fd_positions_for_pitch(shape_values, open_notes, target_midi):
 def _choose_melody_position(
     midi, open_notes, fd_shape_values=None, working_fret_anchor=None,
     following_working_fret_anchor=None, previous_position=None,
-    preceding_chord_shape_values=None, second_previous_position=None
+    preceding_chord_shape_values=None, second_previous_position=None,
+    melody_phrase_notes=None
 ):
     """
     BO-24/BO-25/BO-30: choose a string/fret position for one
@@ -2335,7 +2359,49 @@ def _choose_melody_position(
     The Christmas Song / Double C); the exact-inclusion candidate
     is real, verified fretboard data in every one of those cases,
     not an invented approximation.
-    
+
+    melody_phrase_notes (BO-57): a forward-looking window of this
+    note's own upcoming melody notes (already realize_note()-
+    processed BoxMelodyNote objects, reusing melody_box_analysis.
+    realize_note() unmodified, the SAME machinery BO-54 already
+    uses for chord-shape HP continuity), starting at and including
+    this note itself. Caller-supplied (see generate_tab_from_
+    template()'s own construction of this) rather than derived
+    here, since building the window requires the flat, document-
+    ordered note sequence this function itself has no access to.
+
+    Investigation finding (BO-57): melody_box_analysis.
+    build_melody_boxes() is inherently chord-anchored (confirmed
+    directly: a song with zero harmonies produces zero boxes at
+    all) and so cannot supply this window for a chord-less
+    phrase -- this parameter is deliberately a separate, local,
+    caller-constructed window rather than a second call into
+    that chord-oriented function.
+
+    Used ONLY when no chord anchor of any kind applies (working_
+    fret_anchor, following_working_fret_anchor, and preceding_
+    chord_shape_values all None) -- the exact same scoping BO-38
+    Group C's own pattern_continuity_bonus below already uses,
+    so a chord-anchored song's own existing behavior is completely
+    unaffected regardless of whether melody_phrase_notes is ever
+    passed for it. Root cause this addresses (BO-57 investigation):
+    with no chord anchor, pattern_continuity_bonus was found to
+    override best_position()'s own intrinsic score UNCONDITIONALLY
+    the moment two consecutive notes share a string, with no bound
+    on how far that string's own next candidate fret can be --
+    confirmed via a real regression this caused (Cousin Sally
+    Brown / C Standard, m1: a C4->E4 phrase where E4's own best-
+    scored candidate, at the target low position, loses to a
+    worse-scored high-fret candidate purely for matching the
+    established string). This window-based mechanism is checked
+    BEFORE pattern_continuity_bonus in the sort key (a more
+    informed, multi-note-aware signal than "matches the
+    immediately preceding string"), and naturally supersedes it
+    whenever it has a real, differentiated answer; when candidates
+    tie on this too (confirmed real: this happens in both BO-57
+    investigation cases), the existing pattern_continuity_bonus
+    and -score tiebreaks below still apply, unchanged.
+
     """
 
     positions = find_positions(midi, open_notes)
@@ -2429,6 +2495,51 @@ def _choose_melody_position(
         if preceding_chord_shape_values is not None else set()
     )
 
+    def _melody_phrase_notes_played(candidate_fret):
+        """
+        BO-57 -- how many of this note's own upcoming melody
+        phrase (melody_phrase_notes, starting at and including
+        this note itself) can be played without leaving the hand
+        position candidate_fret establishes.
+
+        Reuses the exact same open/fretted-position check
+        chord_service.py's own hp_notes_played() (BO-54) already
+        established -- an open note is always playable regardless
+        of position; a fretted note is playable when candidate_
+        fret lies within its own positions_covering_fret() set --
+        not a second, competing definition of hand-position
+        reachability.
+
+        Returns 0 when melody_phrase_notes is empty/None, or when
+        candidate_fret is 0 (an open-string candidate; open_
+        string_bonus above already gives open strings their own,
+        separate priority -- this mechanism concerns FRETTED
+        hand-position continuity specifically, matching BO-57's
+        own real investigation cases, both of which concern a
+        fretted candidate's own reach).
+        """
+
+        if not melody_phrase_notes or candidate_fret == 0:
+
+            return 0
+
+        notes_played = 0
+
+        for phrase_note in melody_phrase_notes:
+
+            playable = (
+                phrase_note.has_open_realization
+                or candidate_fret in phrase_note.fretted_positions
+            )
+
+            if not playable:
+
+                break
+
+            notes_played += 1
+
+        return notes_played
+
     def _sort_key(position):
 
         # BO-37: exact inclusion in the most recent preceding
@@ -2519,10 +2630,30 @@ def _choose_melody_position(
         # established pattern (the confirmed D#4/measure-23 case,
         # where the two notes immediately before it are both on
         # the same string) from a single, coincidental one.
+        # BO-57 -- "and not melody_phrase_notes" added: without
+        # it, this bonus still fires as a TIEBREAK whenever
+        # phrase_notes_played (below) itself ties between
+        # candidates, reintroducing the exact same unbounded
+        # same-string override this whole investigation exists to
+        # fix, just one priority level lower. Confirmed via a
+        # real regression this caused: Cousin Sally Brown / C
+        # Standard, measure 2's own E4 pair -- both the target
+        # low position (fret 2) and the old high one (fret 9) tie
+        # at notes_played=6 for that note's own real phrase
+        # window, so this bonus was still deciding the tie in
+        # favor of the established string, before -score ever got
+        # consulted. The richer, multi-note-aware phrase mechanism
+        # is meant to fully supersede this simpler one whenever
+        # it's genuinely active, not merely outrank it when it has
+        # a differentiated answer -- when melody_phrase_notes is
+        # unavailable (e.g. an existing caller that doesn't supply
+        # it), this reduces to the exact original condition,
+        # unchanged.
         pattern_continuity_bonus = (
             0
             if (
                 working_fret_anchor is None
+                and not melody_phrase_notes
                 and previous_string is not None
                 and second_previous_position is not None
                 and second_previous_position["string"]
@@ -2531,6 +2662,21 @@ def _choose_melody_position(
                 and position["score"] >= 0
             )
             else 1
+        )
+
+        # BO-57 -- checked in the SAME "no chord anchor at all"
+        # scope pattern_continuity_bonus above already uses, so a
+        # chord-anchored song's own existing behavior is
+        # completely unaffected. See _melody_phrase_notes_played()
+        # 's own docstring for the full mechanism/evidence.
+        phrase_notes_played = (
+            _melody_phrase_notes_played(position["fret"])
+            if (
+                working_fret_anchor is None
+                and following_working_fret_anchor is None
+                and preceding_chord_shape_values is None
+            )
+            else 0
         )
 
         # BO-30: when both a preceding and a following anchor
@@ -2564,7 +2710,32 @@ def _choose_melody_position(
 
         fret_distance = max(distances) if distances else 0
 
-        if previous_string is not None:
+        # BO-57 -- neutralized (forced to 0, tied for every
+        # candidate) in the exact same scope phrase_notes_played
+        # itself uses. Confirmed necessary via a second real
+        # regression matching the same root cause as pattern_
+        # continuity_bonus above: this general string-continuity
+        # tiebreak (BO-25, applies regardless of chord anchors)
+        # was still deciding a tie left by phrase_notes_played in
+        # favor of the established string, even with pattern_
+        # continuity_bonus itself already disabled -- Cousin
+        # Sally Brown / C Standard, measure 2's own E4 pair again:
+        # both the target and the old high position tie at
+        # notes_played=6, and this mechanism was the next one in
+        # line still preferring the established string over
+        # -score. Chord-anchored songs are unaffected: this
+        # condition is identical to phrase_notes_played's own, so
+        # it's never true for them.
+        no_chord_anchor_at_all = (
+            working_fret_anchor is None
+            and following_working_fret_anchor is None
+            and preceding_chord_shape_values is None
+        )
+
+        if (
+            previous_string is not None
+            and not (no_chord_anchor_at_all and melody_phrase_notes)
+        ):
 
             string_distance = min(
                 abs(position["string"] - previous_string),
@@ -2577,8 +2748,8 @@ def _choose_melody_position(
 
         return (
             preceding_fd_violation, open_string_bonus,
-            pattern_continuity_bonus, fret_distance,
-            string_distance, -position["score"]
+            -phrase_notes_played, pattern_continuity_bonus,
+            fret_distance, string_distance, -position["score"]
         )
 
     return sorted(positions, key=_sort_key)[0]
@@ -2781,6 +2952,35 @@ def generate_tab_from_template(
                 ] = _chord_working_fret(
                     chord_shape_by_position[next_key]
                 )
+
+    # BO-57 -- a forward-looking window of realize_note()-
+    # processed melody notes for each note event, starting at
+    # and including that event itself, up to MELODY_PHRASE_
+    # LOOKAHEAD notes. Reuses the same flat_note_events list and
+    # realize_note() (melody_box_analysis.py, unmodified) BO-54's
+    # own chord-shape HP-continuity already uses -- not a second,
+    # independently-derived window representation. Computed for
+    # EVERY note event unconditionally (not just ones lacking a
+    # chord anchor) since _choose_melody_position()'s own
+    # internal scoping already ignores this window entirely
+    # whenever any chord anchor applies -- simpler and no less
+    # correct than pre-filtering here.
+    melody_phrase_notes_by_event_id = {}
+
+    for index, (measure_number, event) in enumerate(
+        flat_note_events
+    ):
+
+        window_events = flat_note_events[
+            index:index + MELODY_PHRASE_LOOKAHEAD
+        ]
+
+        melody_phrase_notes_by_event_id[id(event)] = [
+            realize_note(
+                Note(midi=window_event["pitch"]), tuning
+            )
+            for _, window_event in window_events
+        ]
 
     # BO-37 (replacing BO-36's own corridor design): a SEPARATE
     # pass -- deliberately not merged into the loop above, since
@@ -3339,6 +3539,11 @@ def generate_tab_from_template(
                 ),
                 second_previous_position=(
                     second_previous_melody_position
+                ),
+                melody_phrase_notes=(
+                    melody_phrase_notes_by_event_id.get(
+                        id(event)
+                    )
                 )
             )
 
