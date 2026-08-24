@@ -2586,7 +2586,8 @@ def _choose_melody_position(
 
 def generate_tab_from_template(
     score_file, tuning, staff_number, template_path,
-    output_folder, chord_service, filename=None
+    output_folder, chord_service, filename=None,
+    include_notation=False
 ):
     """
     BO-23: populate a MuseScore-created TAB template (see this
@@ -2594,17 +2595,31 @@ def generate_tab_from_template(
     score's melody and chord symbols, rather than constructing
     TAB staff XML from scratch.
 
-    Output is TAB-ONLY -- the template's own linked treble staff
-    (Staff-definition and content) is removed entirely before
-    saving. This matches the settled design: BO does not attempt
+    Default output (include_notation=False) is TAB-ONLY -- the
+    template's own linked treble staff (Staff-definition and
+    content), if present, is removed entirely before saving.
+    This matches the settled BO-23 design: BO does not attempt
     or rely on genuine live-linked editing (three independently-
     tested approaches at reconstructing that were unsuccessful --
     see BO-23's own investigation notes); the user adds a linked
     treble staff manually via MuseScore's own "Add Linked Staff"
     feature afterward, only if/when they actually want one.
 
+    BO-56: include_notation=True populates the treble staff
+    instead of removing it, with genuine, independent standard
+    notation (pitch/tpc/rhythm) built from the exact same parsed
+    source events the TAB staff itself is built from -- NOT a
+    live link (the BO-23 investigation already established that
+    can't be reconstructed offline; see the docstring above).
+    Editing one staff afterward in MuseScore will not update the
+    other. Requires the template to actually have a second
+    staff -- raises a clear error if it does not (see this
+    function's own staff-detection section below).
+
     Chord symbols (Harmony) and FretDiagrams both go directly on
-    the TAB staff, since it's the only staff in the output.
+    the TAB staff regardless of include_notation, since chord
+    symbols/FDs are a TAB-specific concept in this project (BO-56
+    does not add chord symbols to the notation staff).
     FretDiagram generation reuses _apply_chord_shapes()
     UNMODIFIED -- the same melody-aware, position-aware, BO-18
     through BO-22 chord-shape selection already used by
@@ -2616,7 +2631,10 @@ def generate_tab_from_template(
     attempting perfect placement, matching this whole
     investigation's own established scope. String numbering
     follows the confirmed-reversed MuseScore convention
-    (3 - fretboard string_index).
+    (3 - fretboard string_index). include_notation's own written
+    pitch/tpc values are BO-54-independent -- the exact same
+    values already computed for the TAB staff's own Note, not a
+    second, separately-derived set.
 
     score_file: an opened MuseScoreFile with read_time_signature()
         and read_melody_notes() (or an equivalent staff_number)
@@ -2628,6 +2646,10 @@ def generate_tab_from_template(
     template_path: path to the TAB-linked-treble .mscz template.
     chord_service: a ChordService instance, passed straight
         through to _apply_chord_shapes().
+    include_notation: BO-56, default False (preserves this
+        function's own exact prior behavior unchanged). True
+        populates a genuine, independent standard-notation
+        treble staff instead of discarding it.
 
     Returns (output_path, chord_shapes_applied,
     chord_shapes_skipped, exceptions) -- exceptions is BO-21's
@@ -2838,39 +2860,130 @@ def generate_tab_from_template(
 
         string_el.text = str(midi)
 
-    # ---- Remove the template's linked treble staff entirely --
-    # TAB-only output (see this function's own docstring for
-    # why: no genuine live-link is being attempted or relied on,
-    # so there's no reason to carry a staff BO itself never
-    # populates with anything meaningful).
+    # ---- BO-56 -- explicit, validated staff-structure detection.
+    # Replaces the prior unconditional staff_defs[1] indexing
+    # (confirmed real: crashed with a bare, unhelpful IndexError
+    # the moment a template's own treble staff was removed --
+    # the BO-23/BO-55 investigation established that treble staff
+    # was never actually read or relied on for anything, purely
+    # a structural placeholder this code accidentally required).
+    #
+    # The one genuinely required structure: a <Staff id="1">
+    # definition (the TAB staff) in both Part and Score-level
+    # content. A second staff (id="2", the template's own treble
+    # placeholder) is now OPTIONAL -- present, it's removed
+    # exactly as before (unchanged TAB-only behavior); absent,
+    # there's simply nothing to remove, and a TAB-only template
+    # (exactly one staff) now works cleanly instead of crashing.
 
     part_el = root.find(".//{*}Part")
 
     staff_defs = part_el.findall("{*}Staff")
 
-    treble_staff_def = staff_defs[1]
-
-    part_el.remove(treble_staff_def)
-
-    for clef_el in list(instrument_el.findall("{*}clef")):
-
-        if clef_el.attrib.get("staff") == "2":
-
-            instrument_el.remove(clef_el)
-
     staves = [
         c for c in score_el if c.tag.split("}")[-1] == "Staff"
     ]
 
+    # BO-56 -- Part-level <Staff> definitions have no "id"
+    # attribute at all (confirmed real: only the Score-level
+    # content <Staff> elements do). The genuine, confirmed
+    # distinguishing feature is StaffType's own group attribute
+    # ("tablature" vs "pitched") -- not position/index, which is
+    # exactly what made the prior staff_defs[1] approach fragile.
+    tab_staff_def = next(
+        (
+            s for s in staff_defs
+            if s.find("{*}StaffType") is not None
+            and s.find("{*}StaffType").attrib.get("group")
+            == "tablature"
+        ),
+        None
+    )
+
     tab_staff = next(
-        s for s in staves if s.attrib.get("id") == "1"
+        (s for s in staves if s.attrib.get("id") == "1"), None
     )
 
-    treble_staff = next(
-        s for s in staves if s.attrib.get("id") == "2"
+    if tab_staff_def is None or tab_staff is None:
+
+        found_groups = [
+            (
+                s.find("{*}StaffType").attrib.get("group")
+                if s.find("{*}StaffType") is not None else None
+            )
+            for s in staff_defs
+        ]
+
+        raise ValueError(
+            "generate_tab_from_template()'s own template is "
+            "missing the required TAB staff -- found Part-level "
+            f"staff definition groups: {found_groups}, Score-"
+            f"level staff ids: "
+            f"{[s.attrib.get('id') for s in staves]}. The "
+            "template must contain a tablature-group staff "
+            "definition and Score-level content with id=\"1\"; "
+            "a second staff is optional."
+        )
+
+    # ---- Remove the template's linked treble staff, if the
+    # template has one (see this function's own docstring for
+    # why it's discarded rather than populated: no genuine
+    # live-link is being attempted or relied on) -- UNLESS
+    # include_notation=True, in which case it's kept and
+    # populated with real, independent notation content below
+    # instead (BO-56).
+
+    treble_staff_def = next(
+        (s for s in staff_defs if s is not tab_staff_def), None
     )
 
-    score_el.remove(treble_staff)
+    treble_staff = None
+
+    if include_notation:
+
+        if treble_staff_def is None:
+
+            raise ValueError(
+                "include_notation=True requires the template to "
+                "have a second staff to populate -- this "
+                "template only has the TAB staff. Use a template "
+                "with both a TAB and a treble staff, or leave "
+                "include_notation at its default (False)."
+            )
+
+        treble_staff = next(
+            (s for s in staves if s.attrib.get("id") == "2"),
+            None
+        )
+
+        if treble_staff is None:
+
+            raise ValueError(
+                "include_notation=True requires Score-level "
+                "content for the template's own second staff "
+                "(id=\"2\") -- the template's own Part-level "
+                "staff definition exists, but its Score-level "
+                "content does not."
+            )
+
+    elif treble_staff_def is not None:
+
+        part_el.remove(treble_staff_def)
+
+        for clef_el in list(instrument_el.findall("{*}clef")):
+
+            if clef_el.attrib.get("staff") == "2":
+
+                instrument_el.remove(clef_el)
+
+        treble_staff_to_remove = next(
+            (s for s in staves if s.attrib.get("id") == "2"),
+            None
+        )
+
+        if treble_staff_to_remove is not None:
+
+            score_el.remove(treble_staff_to_remove)
 
     # ---- BO-26: carry over the source's own Title and
     # Composer/arranger, replacing the template's own
@@ -2891,6 +3004,14 @@ def generate_tab_from_template(
     for old_measure in tab_staff.findall("{*}Measure"):
 
         tab_staff.remove(old_measure)
+
+    # BO-56 -- same clearing, applied to the treble staff too,
+    # only when it's actually being populated.
+    if include_notation:
+
+        for old_measure in treble_staff.findall("{*}Measure"):
+
+            treble_staff.remove(old_measure)
 
     open_notes = tuning.notes[1:]  # 4th to 1st
 
@@ -2973,6 +3094,63 @@ def generate_tab_from_template(
             ET.SubElement(tab_timesig, "sigN").text = sig_n
 
             ET.SubElement(tab_timesig, "sigD").text = sig_d
+
+        # BO-56 -- same first-measure KeySig/TimeSig setup,
+        # mirrored onto the treble staff, only when it's being
+        # populated. concertKey="0" here too (a known,
+        # documented BO-56 limitation -- see this function's own
+        # docstring: correct enharmonic spelling per note is
+        # still guaranteed via each note's own tpc value below,
+        # regardless of the displayed key signature; deriving a
+        # genuine, non-zero key signature from the source's own
+        # estimated key is a separate, not-yet-built piece).
+        treble_measure = None
+
+        treble_voice = None
+
+        if include_notation:
+
+            treble_measure = ET.SubElement(
+                treble_staff, "Measure"
+            )
+
+            if is_first_measure:
+
+                ET.SubElement(
+                    treble_measure, "eid"
+                ).text = _generate_eid()
+
+            treble_voice = ET.SubElement(treble_measure, "voice")
+
+            if is_first_measure:
+
+                treble_keysig = ET.SubElement(
+                    treble_voice, "KeySig"
+                )
+
+                ET.SubElement(
+                    treble_keysig, "eid"
+                ).text = _generate_eid()
+
+                ET.SubElement(
+                    treble_keysig, "concertKey"
+                ).text = "0"
+
+                treble_timesig = ET.SubElement(
+                    treble_voice, "TimeSig"
+                )
+
+                ET.SubElement(
+                    treble_timesig, "eid"
+                ).text = _generate_eid()
+
+                ET.SubElement(
+                    treble_timesig, "sigN"
+                ).text = sig_n
+
+                ET.SubElement(
+                    treble_timesig, "sigD"
+                ).text = sig_d
 
         for event in measure_events:
 
@@ -3060,6 +3238,48 @@ def generate_tab_from_template(
                 if event["tuplet_end"]:
 
                     ET.SubElement(tab_voice, "endTuplet")
+
+                # BO-56 -- same Rest mirrored onto the treble
+                # staff, identical duration/dots/tuplet handling.
+                if include_notation:
+
+                    if event["tuplet_start_element"] is not None:
+
+                        treble_tuplet_copy = copy.deepcopy(
+                            event["tuplet_start_element"]
+                        )
+
+                        eid_el = treble_tuplet_copy.find(
+                            "{*}eid"
+                        )
+
+                        if eid_el is not None:
+
+                            eid_el.text = _generate_eid()
+
+                        treble_voice.append(treble_tuplet_copy)
+
+                    treble_rest = ET.SubElement(
+                        treble_voice, "Rest"
+                    )
+
+                    ET.SubElement(
+                        treble_rest, "eid"
+                    ).text = _generate_eid()
+
+                    if event["dots"]:
+
+                        ET.SubElement(
+                            treble_rest, "dots"
+                        ).text = str(event["dots"])
+
+                    ET.SubElement(
+                        treble_rest, "durationType"
+                    ).text = event["duration_type"]
+
+                    if event["tuplet_end"]:
+
+                        ET.SubElement(treble_voice, "endTuplet")
 
                 continue
 
@@ -3183,6 +3403,88 @@ def generate_tab_from_template(
 
                     ET.SubElement(tab_voice, "endTuplet")
 
+                # BO-56 -- the treble staff writes the REAL note
+                # here (pitch/tpc), not a mirrored Rest. Standard
+                # notation is not constrained by this tuning's
+                # own reachable range at all -- a pitch unplayable
+                # on THIS banjo tuning is still a perfectly real,
+                # notatable pitch. Confirmed real: My Favorite
+                # Things has notes at B2/C3, below Old G's own
+                # lowest open string -- the TAB staff correctly
+                # can't represent these at all, but the treble
+                # staff genuinely can and should.
+                if include_notation:
+
+                    if event["tuplet_start_element"] is not None:
+
+                        treble_tuplet_copy = copy.deepcopy(
+                            event["tuplet_start_element"]
+                        )
+
+                        eid_el = treble_tuplet_copy.find(
+                            "{*}eid"
+                        )
+
+                        if eid_el is not None:
+
+                            eid_el.text = _generate_eid()
+
+                        treble_voice.append(treble_tuplet_copy)
+
+                    treble_chord = ET.SubElement(
+                        treble_voice, "Chord"
+                    )
+
+                    ET.SubElement(
+                        treble_chord, "eid"
+                    ).text = _generate_eid()
+
+                    if event["dots"]:
+
+                        ET.SubElement(
+                            treble_chord, "dots"
+                        ).text = str(event["dots"])
+
+                    ET.SubElement(
+                        treble_chord, "durationType"
+                    ).text = event["duration_type"]
+
+                    for lyrics_element in event[
+                        "lyrics_elements"
+                    ]:
+
+                        lyrics_copy = copy.deepcopy(
+                            lyrics_element
+                        )
+
+                        eid_el = lyrics_copy.find("{*}eid")
+
+                        if eid_el is not None:
+
+                            eid_el.text = _generate_eid()
+
+                        treble_chord.append(lyrics_copy)
+
+                    treble_note = ET.SubElement(
+                        treble_chord, "Note"
+                    )
+
+                    ET.SubElement(
+                        treble_note, "eid"
+                    ).text = _generate_eid()
+
+                    ET.SubElement(
+                        treble_note, "pitch"
+                    ).text = str(midi)
+
+                    ET.SubElement(
+                        treble_note, "tpc"
+                    ).text = str(tpc)
+
+                    if event["tuplet_end"]:
+
+                        ET.SubElement(treble_voice, "endTuplet")
+
                 continue
 
             is_chord_onset = (
@@ -3268,6 +3570,78 @@ def generate_tab_from_template(
             if event["tuplet_end"]:
 
                 ET.SubElement(tab_voice, "endTuplet")
+
+            # BO-56 -- same note mirrored onto the treble staff:
+            # identical pitch/tpc/duration/lyrics/tuplet handling,
+            # simply without fret/string (a notation staff has no
+            # such concept). Uses the exact same midi/tpc values
+            # already computed above for the TAB staff's own
+            # Note -- not a second, independently-derived pitch.
+            if include_notation:
+
+                if event["tuplet_start_element"] is not None:
+
+                    treble_tuplet_copy = copy.deepcopy(
+                        event["tuplet_start_element"]
+                    )
+
+                    eid_el = treble_tuplet_copy.find("{*}eid")
+
+                    if eid_el is not None:
+
+                        eid_el.text = _generate_eid()
+
+                    treble_voice.append(treble_tuplet_copy)
+
+                treble_chord = ET.SubElement(
+                    treble_voice, "Chord"
+                )
+
+                ET.SubElement(
+                    treble_chord, "eid"
+                ).text = _generate_eid()
+
+                if event["dots"]:
+
+                    ET.SubElement(
+                        treble_chord, "dots"
+                    ).text = str(event["dots"])
+
+                ET.SubElement(
+                    treble_chord, "durationType"
+                ).text = event["duration_type"]
+
+                for lyrics_element in event["lyrics_elements"]:
+
+                    lyrics_copy = copy.deepcopy(lyrics_element)
+
+                    eid_el = lyrics_copy.find("{*}eid")
+
+                    if eid_el is not None:
+
+                        eid_el.text = _generate_eid()
+
+                    treble_chord.append(lyrics_copy)
+
+                treble_note = ET.SubElement(
+                    treble_chord, "Note"
+                )
+
+                ET.SubElement(
+                    treble_note, "eid"
+                ).text = _generate_eid()
+
+                ET.SubElement(
+                    treble_note, "pitch"
+                ).text = str(midi)
+
+                ET.SubElement(
+                    treble_note, "tpc"
+                ).text = str(tpc)
+
+                if event["tuplet_end"]:
+
+                    ET.SubElement(treble_voice, "endTuplet")
 
     # ---- FretDiagrams: reuse the existing, unmodified BO-18
     # through BO-22 chord-shape selection (staff_harmonies was
