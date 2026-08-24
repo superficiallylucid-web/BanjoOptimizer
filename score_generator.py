@@ -3352,7 +3352,23 @@ def generate_tab_from_template(
 
             treble_staff.remove(old_measure)
 
-    open_notes = tuning.notes[1:]  # 4th to 1st
+    # BO-63 -- the 5th string is APPENDED, never prepended: the
+    # existing 4 strings must keep their exact existing indices
+    # (0-3) and exact existing behavior (confirmed directly,
+    # BO-63A: find_positions()/enumerate() assigns indices purely
+    # by list position, so appending here -- not modifying
+    # find_positions() itself -- is sufficient and doesn't touch
+    # find_positions() or best_position() at all). This makes the
+    # 5th string (always played open, fret 0) a genuine candidate
+    # at string_index=4 for the first time -- previously excluded
+    # from the melody candidate pool entirely. No new scoring,
+    # bonus, or preference is added anywhere; the existing,
+    # already-string-agnostic mechanisms (best_position()'s own
+    # fret==0 bonus, has_open_realization, open_string_hp()) see
+    # and evaluate it exactly as they already evaluate any other
+    # open string, unmodified.
+    open_notes = tuning.notes[1:] + [tuning.notes[0]]  # 4th to
+    # 1st, plus the 5th string appended last (string_index=4)
 
     sig_parts = score_file.score.time_signature.split("/")
 
@@ -4022,8 +4038,18 @@ def generate_tab_from_template(
 
             # Confirmed-reversed MuseScore <string> numbering
             # relative to fretboard.py's own string_index (see
-            # BO-23-FOLLOWUP's own investigation notes).
-            chosen_string = 3 - chosen["string"]
+            # BO-23-FOLLOWUP's own investigation notes) -- valid
+            # only for string_index 0-3. BO-63: string_index 4
+            # (the 5th string, now a genuine candidate) does NOT
+            # follow this reversal at all -- "3 - 4" would give
+            # -1, an invalid MuseScore value. Confirmed via real
+            # MuseScore-authored data (matching BO-40's own prior,
+            # independent finding): a real 5th-string note is
+            # always written as the literal MuseScore value 4,
+            # e.g. <pitch>67</pitch><fret>0</fret><string>4</string>.
+            chosen_string = (
+                4 if chosen["string"] == 4 else 3 - chosen["string"]
+            )
 
             if event["tuplet_start_element"] is not None:
 

@@ -348,9 +348,19 @@ def test_fret_string_values_decode_to_correct_pitches():
 
             ms_string = int(note.find("{*}string").text)
 
-            fretboard_string_index = 3 - ms_string
+            # BO-63 -- the 5th string (MuseScore string 4) does
+            # NOT follow the "3 - ms_string" reversal at all (see
+            # score_generator.py's own BO-63 comment); it's
+            # tuning.notes[0], always played open (fret 0).
+            if ms_string == 4:
 
-            computed = open_notes[fretboard_string_index] + fret
+                computed = A_MODAL_SAWMILL.notes[0] + fret
+
+            else:
+
+                fretboard_string_index = 3 - ms_string
+
+                computed = open_notes[fretboard_string_index] + fret
 
             assert computed == pitch, (
                 f"pitch={pitch} fret={fret} string={ms_string} "
@@ -770,9 +780,19 @@ def test_full_song_every_measure_duration_correct():
 
             ms_string = int(note.find("{*}string").text)
 
-            fretboard_string_index = 3 - ms_string
+            # BO-63 -- the 5th string (MuseScore string 4) does
+            # NOT follow the "3 - ms_string" reversal at all (see
+            # score_generator.py's own BO-63 comment); it's
+            # tuning.notes[0], always played open (fret 0).
+            if ms_string == 4:
 
-            computed = open_notes[fretboard_string_index] + fret
+                computed = A_MODAL_SAWMILL.notes[0] + fret
+
+            else:
+
+                fretboard_string_index = 3 - ms_string
+
+                computed = open_notes[fretboard_string_index] + fret
 
             assert computed == pitch
 
