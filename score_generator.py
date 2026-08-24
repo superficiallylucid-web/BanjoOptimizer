@@ -2822,9 +2822,57 @@ def _choose_melody_position(
                 1, abs(position["fret"] - current_hp.low)
             )
 
+        # BO-62 -- an HP-root/fret-offset metric, NOT a literal
+        # finger assignment (no such assignment exists elsewhere
+        # in this codebase): among candidates that have ALREADY
+        # survived hp_tiebreak's own inside-vs-outside decision
+        # above (this component never lets an outside candidate
+        # compete with an inside one -- it is only ever meaningful
+        # once hp_tiebreak has already been satisfied), prefer the
+        # one closest to current_hp.low -- the same index-finger/
+        # root fret BO-59 already established and BO-60 already
+        # reuses for between-HP movement, just applied WITHIN the
+        # HP instead of between HPs.
+        #
+        # Real, confirmed root cause this addresses (BO-61/BO-62
+        # investigation): Cousin Sally Brown / Double C, E4 at
+        # measures 6/10/14 -- fret 2 (offset 0 from HP root 2) and
+        # fret 4 (offset 2) both remain inside the same established
+        # HP and tie exactly on phrase coverage, so hp_tiebreak
+        # itself cannot distinguish them (both already (0,0)) --
+        # this was previously falling through, unopposed, to the
+        # legacy "favor middle strings" score, which incorrectly
+        # preferred the farther-from-root fret 4.
+        #
+        # Deliberately neutral (0) for: a chord-anchored note
+        # (reuses no_chord_anchor_at_all UNMODIFIED -- confirmed
+        # real during the BO-62 investigation that applying this
+        # metric to chord-anchored melody would change the
+        # already-validated Christmas Song Cmaj7/A4 result); no
+        # established HP at all; an open-string candidate (fret 0
+        # requires no hand position at all, and is already handled
+        # by the separate, earlier open_string_bonus -- this
+        # component must not penalize it for "distance from root",
+        # a concept that doesn't apply to an open string); and any
+        # candidate outside the current HP (irrelevant here, since
+        # hp_tiebreak above has already ranked it worse than every
+        # inside candidate regardless of this component's value).
+        if (
+            current_hp is not None
+            and no_chord_anchor_at_all
+            and position["fret"] != 0
+            and current_hp.low <= position["fret"] <= current_hp.high
+        ):
+
+            within_hp_offset = abs(position["fret"] - current_hp.low)
+
+        else:
+
+            within_hp_offset = 0
+
         return (
             preceding_fd_violation, open_string_bonus,
-            -phrase_notes_played, hp_tiebreak,
+            -phrase_notes_played, hp_tiebreak, within_hp_offset,
             pattern_continuity_bonus,
             fret_distance, string_distance, -position["score"]
         )
