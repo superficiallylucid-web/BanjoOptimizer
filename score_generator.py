@@ -2492,6 +2492,60 @@ def _choose_melody_position(
         if previous_position is not None else None
     )
 
+    # BO-74 -- the preceding chord's own shape remains
+    # authoritative (feeds preceding_fd_matches below, unchanged)
+    # ONLY while the immediately preceding CHOSEN melody position
+    # (previous_position) is still within the hand position that
+    # chord established -- reusing chord_hp_span() unmodified
+    # (the exact same BO-59/60 infrastructure, not a new HP
+    # concept). If an intervening melody note has already moved
+    # the hand outside that HP, the preceding chord's own exact
+    # shape is no longer a physically active reference, and
+    # preceding_fd_matches becomes empty -- preceding_fd_violation
+    # itself is untouched; it simply finds nothing to match
+    # against, becoming inert for every candidate automatically.
+    #
+    # Deliberately conservative when there is no real evidence
+    # either way: previous_position is None (no intervening
+    # melody note at all -- confirmed real, this is every
+    # existing BO-37 test's own scenario, where the chord
+    # immediately precedes the note) preserves the existing
+    # behavior exactly, matching BO-73's own explicit finding
+    # that "no evidence the hand left" must not be treated the
+    # same as "evidence the hand left".
+    #
+    # This is a GATE on relevance only -- once satisfied, the
+    # existing exact (string, fret) matching below is completely
+    # unchanged. Confirmed real motivating case (BO-71/72/73):
+    # The Christmas Song / A Modal Sawmill -- an Am chord
+    # establishes HP (7,10); the real, actual G4 immediately
+    # following it is chosen at fret 5, outside that HP;
+    # previously, the following A4 was still incorrectly pulled
+    # toward the Am shape's own exact fret-7 position regardless.
+    preceding_chord_still_relevant = True
+
+    # previous_position["fret"] != 0: an open-string intervening
+    # note tells us nothing about where the hand actually is (per
+    # BO-59's own established principle -- open strings never
+    # establish or move HP), so it must not be treated as
+    # "definitely left the HP" -- same conservative default as
+    # previous_position being None entirely.
+    if (
+        preceding_chord_shape_values is not None
+        and previous_position is not None
+        and previous_position["fret"] != 0
+    ):
+
+        preceding_hp = chord_hp_span(preceding_chord_shape_values)
+
+        if preceding_hp is not None:
+
+            preceding_chord_still_relevant = (
+                preceding_hp.low
+                <= previous_position["fret"]
+                <= preceding_hp.high
+            )
+
     preceding_fd_matches = (
         {
             (string_index, fret)
@@ -2499,7 +2553,10 @@ def _choose_melody_position(
                 preceding_chord_shape_values, open_notes, midi
             )
         }
-        if preceding_chord_shape_values is not None else set()
+        if (
+            preceding_chord_shape_values is not None
+            and preceding_chord_still_relevant
+        ) else set()
     )
 
     def _melody_phrase_notes_played(candidate_fret):
