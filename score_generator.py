@@ -3362,6 +3362,21 @@ def generate_tab_from_template(
     # correct than pre-filtering here.
     melody_phrase_notes_by_event_id = {}
 
+    # BO-117 -- a note whose own duration is >= this many beats
+    # provides a genuine, musically natural opportunity to change
+    # hand position afterward -- phrase lookahead should not look
+    # past the current note itself in that case. Deliberately a
+    # separate, distinct value from stroke_cycle.py's own
+    # ATTACK_ELIGIBILITY_THRESHOLD_BEATS (1.0): that threshold's
+    # own ">1.0" comparison would incorrectly suppress lookahead
+    # for an ordinary quarter note (duration exactly 1.0), which
+    # this rule explicitly keeps active (BO-116's own investigation
+    # confirmed real, quarter notes must retain phrase lookahead --
+    # 31/48/50 real occurrences across CSB/TCS/White Christmas).
+    # A dotted-quarter note (1.5 beats) is deliberately the first
+    # duration this suppresses.
+    PHRASE_LOOKAHEAD_SUSTAINED_NOTE_THRESHOLD_BEATS = 1.5
+
     for index, (measure_number, event) in enumerate(
         flat_note_events
     ):
@@ -3369,6 +3384,20 @@ def generate_tab_from_template(
         window_events = flat_note_events[
             index:index + MELODY_PHRASE_LOOKAHEAD
         ]
+
+        # BO-117 -- a sustained current note (>= 1.5 beats)
+        # restricts its own phrase-lookahead window to itself
+        # only: the player has a genuine, natural opportunity to
+        # move the hand after this note, so the following phrase
+        # should not influence this note's own candidate scoring.
+        # Not graduated/partial -- an all-or-nothing window
+        # truncation, exactly as specified.
+        if (
+            event["duration"]
+            >= PHRASE_LOOKAHEAD_SUSTAINED_NOTE_THRESHOLD_BEATS
+        ):
+
+            window_events = window_events[:1]
 
         melody_phrase_notes_by_event_id[id(event)] = [
             realize_note(
