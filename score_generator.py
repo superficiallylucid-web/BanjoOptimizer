@@ -99,6 +99,11 @@ from hand_position import (
     chord_hp_span, melody_note_hp, open_string_hp, HpTraceEntry
 )
 
+from stroke_cycle import (
+    compute_attack_sequence_by_event_id, filter_by_attack_role,
+    FIFTH_STRING_INDEX
+)
+
 
 def _sanitize_filename(text):
     """
@@ -2084,6 +2089,17 @@ def _extract_staff_events(score_file, staff_number):
                 "tpc": None,
                 "harmony_element": None,
                 "tuplet_start_element": pending_tuplet_element,
+                # BO-81 -- the event's own tuplet-scaled duration
+                # (in quarter-note beats) and its own raw
+                # tuplet_scale, computed from the exact same
+                # already-in-scope values used to advance `beat`
+                # just below -- not a second, independently-
+                # derived timing source.
+                "duration": (
+                    score_file._duration_value(element)
+                    * tuplet_scale
+                ),
+                "tuplet_scale": tuplet_scale,
                 "tuplet_end": False,
                 "lyrics_elements": lyrics_elements
             }
@@ -2254,7 +2270,8 @@ def _choose_melody_position(
     midi, open_notes, fd_shape_values=None, working_fret_anchor=None,
     following_working_fret_anchor=None, previous_position=None,
     preceding_chord_shape_values=None, second_previous_position=None,
-    melody_phrase_notes=None, current_hp=None
+    melody_phrase_notes=None, current_hp=None,
+    expected_attack_role=None
 ):
     """
     BO-24/BO-25/BO-30: choose a string/fret position for one
@@ -2416,6 +2433,49 @@ def _choose_melody_position(
     if not positions:
 
         return None
+
+    # BO-88 -- the clawhammer attack-sequence filter narrows the
+    # candidate pool BEFORE any scoring/sort logic below sees it
+    # (matching this whole investigation's own explicit
+    # architecture: a candidate-availability constraint, not a
+    # new _sort_key component -- see stroke_cycle.py's own
+    # docstring for why). Deliberately gated to fd_shape_values
+    # is None only: a chord-onset melody note's own exact-shape-
+    # match logic just below is untouched by this BO at all --
+    # narrowing its own candidate pool first could silently
+    # change which chord-onset positions are even reachable,
+    # which this BO's own explicit scope forbids touching.
+    #
+    # BO-83 -- also gated to working_fret_anchor is None: real,
+    # confirmed regression (BO-82's own investigation, The
+    # Christmas Song Cmaj7/A4) -- an established chord anchor's
+    # own fret_distance/HP reasoning can identify a candidate as
+    # musically relevant (real case: string 2/fret 7, close to
+    # anchor 9) even when that candidate is NOT rhythm-compatible
+    # and NOT literally inside the anchor's own HP span. The
+    # rhythmic filter has no visibility into that relevance at
+    # all, and would otherwise discard the candidate before
+    # fret_distance/HP logic -- unmodified below -- ever gets a
+    # chance to weigh it. Confirmed directly: retaining the full,
+    # unfiltered list here lets that same unmodified logic
+    # correctly restore fret 7 on its own -- this is candidate
+    # RETENTION, not a fret_distance/HP change of any kind.
+    # Deliberately per-note (this note's own working_fret_anchor),
+    # not per-song: CSB never has an anchor at all (confirmed
+    # chord-less throughout), so this condition never activates
+    # there and BO-81/88's own rhythmic behavior is completely
+    # unaffected for it.
+    #
+    # BO-88 -- expected_attack_role=None is now itself a
+    # meaningful value (an ineligible, >1-beat note), not merely
+    # "no information computed" -- filter_by_attack_role() already
+    # correctly treats it as fully inert, so unlike BO-81 there is
+    # no separate "is not None" check needed here at all.
+    if fd_shape_values is None and working_fret_anchor is None:
+
+        positions = filter_by_attack_role(
+            positions, expected_attack_role
+        )
 
     if fd_shape_values is not None:
 
@@ -2636,6 +2696,28 @@ def _choose_melody_position(
         # elsewhere" -- if a fretted candidate scores BETTER
         # than the open string, that IS a compelling reason, and
         # this bonus correctly does not apply.
+        #
+        # BO-93 -- also requires following_working_fret_anchor is
+        # not None, but ONLY for the 5th string specifically
+        # (BO-95 narrowing this per BO-94's own direct finding):
+        # the mechanism's own stated purpose above has always
+        # been protection against a FOLLOWING chord's own pull --
+        # but the original BO-93 implementation applied this
+        # check to every open string, not just the one the
+        # clawhammer attack-sequence concern actually involves.
+        # Confirmed real (BO-94's own direct investigation): the
+        # regressed CSB G3 case's own open candidate is on string
+        # 1, never string 4 (FIFTH_STRING_INDEX) at all -- while
+        # every one of the controlled Rhythmic Clawhammer Stroke
+        # Cycle score's own unwanted long-note cases is always,
+        # exclusively string 4. Restricting this check to the 5th
+        # string specifically restores ordinary open-string
+        # behavior on strings 0-3 to its exact pre-BO-93 form,
+        # while still correctly excluding the 5th string when no
+        # following chord anchor justifies it. The validated
+        # Christmas Song C4 case (following_working_fret_anchor=7)
+        # remains unaffected either way, since it was never on the
+        # 5th string to begin with.
         max_available_score = max(
             candidate["score"] for candidate in positions
         )
@@ -2645,6 +2727,10 @@ def _choose_melody_position(
             if (
                 position["fret"] == 0
                 and working_fret_anchor is None
+                and (
+                    position["string"] != FIFTH_STRING_INDEX
+                    or following_working_fret_anchor is not None
+                )
                 and position["score"] >= max_available_score
             )
             else 1
@@ -3070,6 +3156,27 @@ def generate_tab_from_template(
             chord_shape_by_position[
                 (harmony.measure, harmony.beat)
             ] = parse_shape(chosen_shape.shape)
+
+    # BO-88 -- the clawhammer attack sequence for every note/rest
+    # event's own onset, computed once up front over the FULL
+    # document-ordered event sequence (unlike flat_note_events
+    # just below, this deliberately includes rest events too -- a
+    # rest occupies its own sequence slot without an attack, and
+    # does NOT terminate the sequence, per the BO-87 investigation's
+    # own confirmed model; excluding it here would silently break
+    # that continuity). Harmony marker events carry no rhythmic
+    # duration of their own and are excluded, matching
+    # flat_note_events' own established filtering.
+    all_ordered_events_for_stroke_cycle = [
+        event
+        for measure_events in measures
+        for event in measure_events
+        if event["type"] in ("note", "rest")
+    ]
+
+    attack_role_by_event_id = compute_attack_sequence_by_event_id(
+        all_ordered_events_for_stroke_cycle
+    )
 
     # A flat, document-ordered list of every melody note event
     # (across all measures) so "the note immediately before/
@@ -3856,7 +3963,12 @@ def generate_tab_from_template(
                         id(event)
                     )
                 ),
-                current_hp=current_hp
+                current_hp=current_hp,
+                expected_attack_role=(
+                    attack_role_by_event_id[id(event)].role
+                    if id(event) in attack_role_by_event_id
+                    else None
+                )
             )
 
             if chosen is None:

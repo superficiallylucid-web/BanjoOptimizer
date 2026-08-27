@@ -1,149 +1,193 @@
 """
 stroke_cycle.py
 
-BO-81 -- the rhythmic clawhammer stroke cycle, established by the
-BO-77 through BO-80 investigation chain.
+BO-88 -- the clawhammer ATTACK SEQUENCE, established by the BO-85
+through BO-87 investigation chain, replacing BO-81's original
+continuous-elapsed-time model.
 
-The physical clawhammer motion alternates a down/finger stroke and
-a pull/thumb stroke, continuously, in musical time -- independent
-of note repetition, rests, sustained-note duration, or chord
-presence. A rest occupies its own stroke position(s) without an
-attack; a sustained note occupies its own duration's worth of
-stroke positions without repeated attacks. Confirmed real
-motivating evidence (BO-75/76): Cousin Sally Brown, C Standard --
+BO-84/85 found that BO-81's original model -- dividing all elapsed
+musical time into fixed eighth-note down/pull positions -- was
+wrong: it conflated two genuinely separate things, the hand's own
+continuous rhythmic motion versus which melody notes are actually
+eligible to be classified as a clawhammer attack at all.
 
-    G4 - rest - G4 - G4   ->  finger - rest/pull - finger - thumb
-    G4 - G4 - G4          ->  finger - thumb - finger
+The confirmed model (BO-87, validated directly against the real
+"Rhythmic Clawhammer Stroke Cycle" TAB fixture, matching 7 of its 8
+real measures exactly -- see the one known, documented exception
+below) is an ORDINAL SEQUENCE, not a phase clock:
 
-both fall out of ONE continuous eighth-note-unit cycle with no
-run-length or repeated-note special-casing at all (confirmed
-directly: BO-77's own investigation).
+    down -> pull -> down -> pull -> ...
 
-This module is deliberately pure and isolated, mirroring
-hand_position.py's own separation -- it knows nothing about
-scoring, HP, chords, or the existing _sort_key. It answers exactly
-two questions: (1) what stroke phase does a given event's own
-onset fall on, and (2) given that phase, which of a candidate
-list is stroke-compatible. Everything else (which compatible
-candidate is actually best) remains entirely the existing,
-unmodified selection machinery's job.
+- A note whose own duration is > 1 beat is NOT eligible for attack
+  classification at all, and TERMINATES any currently-running
+  sequence. The very next eligible attack after it starts a fresh
+  sequence at "down". Confirmed real (M3, M4, M6): a half note
+  never continues an established sequence and never receives a
+  forced role of its own.
+
+- The sequence's own RATE is established by whichever notes begin
+  it -- eighth notes start a fast sequence (M5, M6's own opening),
+  bare quarter notes (nothing faster nearby) start their own,
+  slower sequence (M1) -- confirmed real, both directions. Once
+  established, subsequent eligible notes take the next ordinal
+  slot regardless of their own individual duration (M6's own
+  quarter note continues an eighth-established sequence at "down",
+  rather than restarting its own slower cycle) -- this is why the
+  model is ordinal (position-in-sequence), not time-based at all.
+
+- A rest occupies its own slot in the sequence WITHOUT producing
+  an attack, and does NOT terminate the sequence -- confirmed real
+  (M2: down - rest/pull - down - pull, matching the established
+  CSB G4-rest-G4-G4 -> finger-rest-finger-thumb case exactly).
+
+- An ineligible (>1 beat) note is not merely "excluded from attack
+  classification" in some soft sense -- it is completely UNCON-
+  STRAINED by this mechanism. It may still end up on the 5th
+  string for entirely separate, pre-existing reasons (open_string_
+  bonus and similar existing mechanisms, untouched by this
+  module) -- confirmed real: M4's two half notes both land
+  fretted, while M6's single half note independently lands on the
+  5th string, even though neither is rhythmically constrained at
+  all. This is deliberate, not a gap: rhythmic attack classifi-
+  cation and ordinary candidate selection remain genuinely
+  separate concerns.
+
+KNOWN, DOCUMENTED DISCREPANCY (measure 8 of the real TAB fixture):
+after two consecutive ineligible dotted-half notes (1.5 beats
+each), the real fixture's own third note (an eligible quarter)
+is "pull" -- this implementation, matching every other real
+measure, predicts "down" (the first eligible attack after any
+ineligible note always starts a fresh sequence at down). No
+consistent rule reconciling this single case with the other 7
+(especially M3, which shows the analogous single-ineligible-note
+-> next-attack-is-down pattern clearly) was identified during
+BO-88's own investigation. Flagged explicitly rather than special-
+cased around.
 """
 
 from collections import namedtuple
 
 
-# One eighth note = one stroke unit, for ordinary (non-tuplet)
-# passages -- confirmed by BO-77/78's own direct fit against the
-# real CSB evidence above.
-EIGHTH_NOTE_BEATS = 0.5
+# BO-87/88 -- a note (or rest) with duration greater than this many
+# beats is not eligible for clawhammer attack classification at
+# all, and terminates any currently-running attack sequence.
+ATTACK_ELIGIBILITY_THRESHOLD_BEATS = 1.0
 
 # BO-63/81 -- the 5th string is the only stroke-compatibility
 # distinction available without drop-thumb classification (BO-80's
-# own explicit, deliberate scope limit: "do not attempt to
-# determine whether a thumb stroke is specifically a 5th-string
-# thumb stroke or a drop-thumb stroke" -- that remains future work).
+# own explicit, deliberate scope limit, unchanged by BO-88: "do
+# not attempt to determine whether a thumb stroke is specifically
+# a 5th-string thumb stroke or a drop-thumb stroke" -- that remains
+# future work).
 FIFTH_STRING_INDEX = 4
 
 
-StrokePhaseEntry = namedtuple(
-    "StrokePhaseEntry", ["phase", "units_elapsed"]
+AttackSequenceEntry = namedtuple(
+    "AttackSequenceEntry", ["role"]
 )
+# role is "down", "pull", or None (ineligible -- unconstrained).
 
 
-def compute_stroke_phase_by_event_id(ordered_events):
+def compute_attack_sequence_by_event_id(ordered_events):
     """
-    BO-81 -- walks ordered_events (a flat list of note/rest event
-    dicts, each with "duration" and "tuplet_scale" -- BO-81's own
-    small parser/extraction addition -- in the exact document
-    order they occur, harmony markers already excluded by the
-    caller) and returns a dict mapping id(event) -> StrokePhaseEntry
-    for every event, giving that event's own ONSET stroke phase
-    ("down" or "pull") and the cumulative stroke units elapsed at
-    that onset.
+    BO-88 -- walks ordered_events (a flat list of note/rest event
+    dicts, each with "duration", in the exact document order they
+    occur, harmony markers already excluded by the caller) and
+    returns a dict mapping id(event) -> AttackSequenceEntry, giving
+    each event's own attack role.
 
-    The cycle's own anchor (BO-81's own explicit, deliberate first-
-    implementation choice, per the investigation's own finding that
-    no existing phrase/grouping concept exists to reuse -- BO-79/80)
-    is simply the first event in ordered_events: units_elapsed
-    starts at 0.0 there, always an onset "down" stroke.
+    Algorithm (an ordinal sequence, not elapsed-time arithmetic --
+    see this module's own docstring for the real evidence this is
+    built from):
 
-    Tuplet handling (BO-80's own established musical decision: the
-    hand speeds up to match the tuplet subdivision, confirmed real
-    via The Christmas Song's own triplet passages): an event whose
-    own tuplet_scale != 1.0 advances the cycle by exactly ONE
-    stroke unit regardless of its own beat-length duration -- each
-    note within a tuplet gets its own down/pull assignment at the
-    tuplet's own accelerated pace, rather than being measured
-    against the surrounding eighth-note grid at all. A non-tuplet
-    event advances the cycle by its own duration, in eighth-note
-    units (duration / EIGHTH_NOTE_BEATS) -- this is what lets a
-    rest or a sustained note occupy MULTIPLE stroke positions
-    without any attack at all (BO-78's own confirmed refinement:
-    "a rest/sustained note occupies the same stroke positions a
-    note of equal duration would").
+        current_slot starts at None (no active sequence).
+
+        For each event, in order:
+
+            if event["duration"] > ATTACK_ELIGIBILITY_THRESHOLD_BEATS:
+                role = None (ineligible, unconstrained)
+                current_slot = None (terminates the sequence)
+
+            else:
+                role = current_slot if current_slot is not None
+                       else "down" (the first attack of a fresh
+                       sequence always starts down)
+                current_slot flips: "down" -> "pull", "pull" -> "down"
+
+    A rest event participates in this walk exactly like an eligible
+    note (its own role is computed and the slot still flips), but
+    since a rest has no real candidates at all, its own role is
+    never actually used for filtering -- only for correctly
+    advancing/flipping the sequence state for what follows it
+    (confirmed real: M2's own rest occupies the "pull" slot without
+    an attack, and the sequence correctly continues to "down" for
+    the note after it).
     """
 
-    phase_by_id = {}
+    role_by_id = {}
 
-    units_elapsed = 0.0
+    current_slot = None
 
     for event in ordered_events:
 
-        phase = (
-            "down" if round(units_elapsed) % 2 == 0 else "pull"
-        )
+        if event["duration"] > ATTACK_ELIGIBILITY_THRESHOLD_BEATS:
 
-        phase_by_id[id(event)] = StrokePhaseEntry(
-            phase=phase, units_elapsed=units_elapsed
-        )
+            role_by_id[id(event)] = AttackSequenceEntry(role=None)
 
-        tuplet_scale = event.get("tuplet_scale", 1.0)
-
-        if tuplet_scale != 1.0:
-
-            units_elapsed += 1.0
+            current_slot = None
 
         else:
 
-            units_elapsed += (
-                event["duration"] / EIGHTH_NOTE_BEATS
+            role = (
+                current_slot if current_slot is not None
+                else "down"
             )
 
-    return phase_by_id
+            role_by_id[id(event)] = AttackSequenceEntry(role=role)
+
+            current_slot = "pull" if role == "down" else "down"
+
+    return role_by_id
 
 
-def filter_by_stroke_phase(positions, expected_phase):
+def filter_by_attack_role(positions, expected_role):
     """
-    BO-81 -- given positions (the same list of candidate dicts
+    BO-88 -- given positions (the same list of candidate dicts
     find_positions()/best_position() already produce, each with
-    "string"/"fret") and an expected_phase ("down" or "pull"),
-    returns only the stroke-compatible subset.
+    "string"/"fret") and expected_role ("down", "pull", or None),
+    returns only the attack-compatible subset.
 
-    First-implementation scope (BO-80's own explicit, deliberate
-    limit): the only stroke-role distinction available without
-    drop-thumb classification is string index -- the OPEN 5th
-    string (FIFTH_STRING_INDEX, fret 0 -- confirmed real during
-    BO-81's own implementation: the 5th string can also be
-    FRETTED, e.g. reaching an adjacent pitch, exactly like any
-    other string, and a fretted 5th-string note is a normal
-    fretting-hand note, not a thumb-on-an-open-string stroke at
-    all) is the sole "pull/thumb" candidate; every other position
-    -- including a fretted 5th-string one -- is "down/finger".
-    This does NOT duplicate or replace open_string_bonus (a
-    different, pre-existing, already-validated mechanism) -- it
-    only ever narrows WHICH candidates reach that and every other
-    existing scoring mechanism unchanged; it never scores or
-    prefers among them itself.
+    expected_role=None (an ineligible, >1-beat note -- see this
+    module's own docstring): the mechanism is completely inert --
+    returns positions COMPLETELY UNFILTERED. This is deliberate,
+    not a fallback: an ineligible note was never rhythmically
+    constrained in the first place, so there is nothing to filter
+    at all -- existing, separate mechanisms (open_string_bonus,
+    etc.) remain fully responsible for its own candidate, exactly
+    as before this module existed.
 
-    Mandatory fallback (BO-79/80/81's own explicit, repeated
-    requirement): if no candidate matches expected_phase, returns
-    positions completely unfiltered. The rhythmic model must never
-    be able to make a note unplayable -- confirmed as essential
-    given not every melody pitch has a real 5th-string realization
-    at all, let alone one compatible with a specific phase.
+    expected_role="pull": only a genuinely OPEN 5th-string
+    candidate (string==FIFTH_STRING_INDEX, fret==0) qualifies -- a
+    FRETTED 5th-string candidate (confirmed real, BO-81's own
+    implementation: the 5th string can reach an adjacent pitch
+    fretted, exactly like any other string) is an ordinary
+    fretting-hand note, not a thumb-on-an-open-string stroke, and
+    must not be treated as pull-compatible merely because its own
+    string_index is 4.
+
+    expected_role="down": every other candidate (including a
+    fretted 5th-string one) qualifies.
+
+    Mandatory fallback (unchanged from BO-81/83): if no candidate
+    matches expected_role, returns positions completely unfiltered
+    -- this mechanism must never be able to make a note unplayable.
     """
 
-    if expected_phase == "pull":
+    if expected_role is None:
+
+        return positions
+
+    if expected_role == "pull":
 
         compatible = [
             p for p in positions

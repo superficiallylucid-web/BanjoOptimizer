@@ -114,9 +114,21 @@ def best_position(positions):
 
         # Favor middle melody strings
 
+        # BO-99 -- reduced from +6 to +4 (BO-98's own direct A/B
+        # confirmation: this is the smallest, narrowest correction
+        # to a real, confirmed contextless-decision tension where
+        # this string preference could outweigh a much larger
+        # fret-band difference, e.g. fret 12/string 1 (score 8)
+        # beating fret 5/string 3 (score 7) with no HP/phrase/
+        # chord evidence yet to arbitrate between them. Confirmed
+        # via exhaustive real-candidate-set testing across every
+        # tuning/pitch combination used by this project: this
+        # exact value changes only the 2 real cases motivating it
+        # -- G4 in C Standard and G4 in Open G -- with zero other
+        # effect anywhere else.
         if string == 1:
 
-            value += 6
+            value += 4
 
 
         elif string == 2:
