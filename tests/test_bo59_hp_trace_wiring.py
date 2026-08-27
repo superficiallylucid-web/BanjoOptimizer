@@ -127,9 +127,13 @@ def test_real_csb_gCGBD_open_first_note_no_hp():
         # open string.
         assert first.event_type == "open_note"
 
-        assert first.hp_before is None
+        # BO-103 -- current_hp now starts as HandPosition(1, 4)
+        # rather than None; an open string never changes HP (BO-
+        # 59's own rule, unchanged), so hp_before/hp_after are
+        # both the same, real initial value.
+        assert first.hp_before == HandPosition(1, 4)
 
-        assert first.hp_after is None
+        assert first.hp_after == HandPosition(1, 4)
 
     finally:
 
@@ -159,11 +163,16 @@ def test_real_csb_gCGBD_first_fretted_note_establishes_hp():
         # melody note in Cousin Sally Brown / C Standard.
         assert first_fretted.fret == 2
 
-        assert first_fretted.hp_before is None
+        # BO-103 -- current_hp now starts as HandPosition(1, 4);
+        # fret 2 is already inside that real initial HP, so this
+        # note genuinely stays there rather than establishing a
+        # new one -- a direct, real consequence of the new
+        # starting value, not a special case for this note.
+        assert first_fretted.hp_before == HandPosition(1, 4)
 
-        assert first_fretted.hp_after == HandPosition(2, 5)
+        assert first_fretted.hp_after == HandPosition(1, 4)
 
-        assert first_fretted.transition == "established_first"
+        assert first_fretted.transition == "unchanged"
 
     finally:
 
@@ -187,15 +196,18 @@ def test_real_csb_gCGBD_fretted_note_inside_hp_unchanged():
             e for e in trace if e.event_type == "fretted_note"
         ]
 
-        # Real, confirmed: C4 at fret 1 (right after A3@2)
-        # establishes a NEW hp (below the just-established (2,5))
-        # -- then E4@2 (measure 1's own last note) genuinely
-        # stays inside that new (1,4) hp.
+        # BO-103 -- current_hp now starts as HandPosition(1, 4);
+        # C4 at fret 1 (right after A3@2, itself already inside
+        # that same initial HP per the preceding test) genuinely
+        # stays there too, rather than establishing a different
+        # new HP -- and E4@2 continues to stay inside it as well.
         c4 = fretted_entries[1]
 
         assert c4.fret == 1
 
-        assert c4.transition == "established_new"
+        assert c4.transition == "unchanged"
+
+        assert c4.hp_before == HandPosition(1, 4)
 
         assert c4.hp_after == HandPosition(1, 4)
 

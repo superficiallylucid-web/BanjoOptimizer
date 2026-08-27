@@ -96,7 +96,8 @@ from melody_box_analysis import realize_note
 from models import Note
 
 from hand_position import (
-    chord_hp_span, melody_note_hp, open_string_hp, HpTraceEntry
+    chord_hp_span, melody_note_hp, open_string_hp, HpTraceEntry,
+    HandPosition
 )
 
 from stroke_cycle import (
@@ -2271,7 +2272,7 @@ def _choose_melody_position(
     following_working_fret_anchor=None, previous_position=None,
     preceding_chord_shape_values=None, second_previous_position=None,
     melody_phrase_notes=None, current_hp=None,
-    expected_attack_role=None
+    expected_attack_role=None, hp_is_earned=True
 ):
     """
     BO-24/BO-25/BO-30: choose a string/fret position for one
@@ -2538,11 +2539,103 @@ def _choose_melody_position(
     # than recomputed.
     default_choice = best_position(positions)
 
+    # BO-111 -- mirrors the chord-onset early-return pattern
+    # above (BO-24/BO-30): when the initial, UNEARNED HP from
+    # BO-103 is still active, treat it as an authoritative
+    # constraint -- the same architectural shape this codebase
+    # already uses for "a position is externally established,
+    # not merely preferred" -- rather than letting
+    # phrase_notes_played (BO-57), which has no awareness of HP
+    # at all (confirmed directly, BO-109's own investigation),
+    # decide the genuine first note before hp_tiebreak (BO-60)
+    # ever gets a turn.
+    #
+    # hp_is_earned (BO-111's own new, explicit flag -- NOT a
+    # value-equality proxy against (1, 4): BO-110's own finding
+    # that a proxy is too broad, since a later, genuinely-earned
+    # HP could legitimately revisit that exact value) is False
+    # only for the genuine first melody-note decision of a song,
+    # set True by the caller at each of the 3 real places
+    # current_hp itself ever changes (BO-109's own investigation)
+    # -- covering fretted, open, AND chord-established HP alike.
+    #
+    # Deliberately positioned AFTER the rhythmic attack-role
+    # filter above: operates only on whatever candidates already
+    # survived that filter, so BO-88/95's own clawhammer/5th-
+    # string behavior is completely unaffected -- for an eligible
+    # "pull" note, positions has already been narrowed to the
+    # open 5th string alone by that point, and this check simply
+    # finds nothing else to prefer.
+    #
+    # Also gated on working_fret_anchor/following_working_fret_
+    # anchor is None -- BO-24/BO-25's own real, chord-proximate
+    # first-note case (confirmed real: The Christmas Song's own
+    # measure-1 C4) must remain completely unaffected, exactly
+    # mirroring the same chord-proximity gate BO-83 already
+    # established for open_string_bonus.
+    #
+    # Deliberately does NOT touch fd_shape_values' own case above
+    # (already returned by then) or phrase_notes_played/
+    # hp_tiebreak themselves at all -- every later note continues
+    # through the completely unmodified sort key below exactly as
+    # before this BO.
+    if (
+        fd_shape_values is None
+        and working_fret_anchor is None
+        and following_working_fret_anchor is None
+        and current_hp is not None
+        and not hp_is_earned
+    ):
+
+        # BO-113 -- an open-string candidate (fret == 0) is
+        # retained regardless of the initial HP's own numeric
+        # range: it is trivially playable from any hand position
+        # at all, and was never supposed to be excluded from
+        # "practical low-position" consideration by a plain
+        # numeric fret comparison. Confirmed real (BO-112's own
+        # direct investigation): CSB/Open C's own real E4 has
+        # fret0(str3) and fret4(str2) exactly tied on raw score --
+        # the prior, un-fixed filter (`current_hp.low <= fret`,
+        # i.e. `1 <= fret`) silently discarded fret0 before the
+        # sort key was even reached, since 0 < 1.
+        inside_initial_hp = [
+            position for position in positions
+            if position["fret"] == 0
+            or current_hp.low <= position["fret"] <= current_hp.high
+        ]
+
+        # BO-111 -- a candidate-availability FILTER, matching
+        # BO-88's own rhythmic-filter architecture, not a direct
+        # return: narrowing `positions` here and falling through
+        # to the existing, completely unmodified sort key below
+        # (including phrase_notes_played) lets the full,
+        # already-validated machinery still decide AMONG the
+        # inside candidates -- confirmed real, this distinction
+        # matters: an early implementation that called
+        # best_position() directly here re-introduced exactly the
+        # kind of legacy string-preference bias BO-99 already
+        # fixed (a different string pair, CSB/Double C's own E4,
+        # str2 vs str3), by bypassing phrase coverage entirely.
+        if inside_initial_hp:
+
+            positions = inside_initial_hp
+
+    # BO-103 -- also requires current_hp is None: an established
+    # initial HP (BO-101/102's own investigation) has a genuine
+    # hp_tiebreak decision available to it once one exists, so
+    # this fast-path -- otherwise correct when nothing at all is
+    # available for the sort key to act on -- must not bypass it.
+    # Confirmed directly (BO-102's own A/B test against the real
+    # test suite): this clause changes nothing about any existing
+    # behavior on its own, since current_hp was always None
+    # wherever this fast-path could fire before this same BO's
+    # own initial-HP change above.
     if (
         working_fret_anchor is None
         and following_working_fret_anchor is None
         and previous_position is None
         and preceding_chord_shape_values is None
+        and current_hp is None
     ):
 
         return default_choice
@@ -3565,7 +3658,25 @@ def generate_tab_from_template(
     # resulting state is inspectable/testable against real
     # output, matching how every other *_by_event_id dict in
     # this function already works.
-    current_hp = None
+    # BO-103 -- starts as HandPosition(1, 4) rather than None:
+    # the intended initial hand position (BO-101/102's own
+    # investigation) for the genuine first note of a song, when
+    # no prior HP/context exists at all. Reuses hp_tiebreak
+    # entirely unmodified -- see _choose_melody_position()'s own
+    # BO-103 fast-path adjustment just below, which is required
+    # for this value to actually reach that mechanism rather than
+    # being bypassed.
+    current_hp = HandPosition(1, 4)
+
+    # BO-111 -- explicit "has current_hp been earned by a real
+    # note yet" flag, distinct from current_hp's own value (BO-
+    # 110's own finding: a value-equality proxy against (1, 4)
+    # is too broad, since a later, genuinely-earned HP could
+    # legitimately revisit that same value). Set True at each of
+    # the exact 3 real places current_hp itself ever changes
+    # (BO-109's own investigation) -- never inferred from
+    # current_hp's own value.
+    hp_is_earned = False
 
     current_hp_by_event_id = {}
 
@@ -3722,6 +3833,16 @@ def generate_tab_from_template(
                     if new_hp is not None:
 
                         current_hp = new_hp
+
+                        # BO-111 -- consistent with the melody-
+                        # note case below: only genuinely earning
+                        # if the resulting HP differs from the
+                        # initial (1, 4) value.
+                        if not (
+                            new_hp.low == 1 and new_hp.high == 4
+                        ):
+
+                            hp_is_earned = True
 
                         chord_lowest_fret = new_hp.low
 
@@ -3968,7 +4089,8 @@ def generate_tab_from_template(
                     attack_role_by_event_id[id(event)].role
                     if id(event) in attack_role_by_event_id
                     else None
-                )
+                ),
+                hp_is_earned=hp_is_earned
             )
 
             if chosen is None:
@@ -4181,6 +4303,22 @@ def generate_tab_from_template(
                 current_hp = open_string_hp(current_hp)
 
                 hp_transition = "open_string"
+
+            # BO-111 -- hp_is_earned becomes True the first time
+            # current_hp itself genuinely differs from the
+            # initial (1, 4) value -- NOT merely "a decision was
+            # made" (confirmed real: the actual target case, CSB/
+            # Open C's own G4, is measure 7 -- many notes in, with
+            # every preceding note legitimately staying inside
+            # (1, 4) the whole time; an "any decision earns it"
+            # rule would incorrectly mark the HP earned long
+            # before this note, never letting this mechanism
+            # apply to it at all). Once True, stays True for the
+            # rest of the song, even if current_hp later
+            # coincidentally revisits (1, 4) again.
+            if not (current_hp.low == 1 and current_hp.high == 4):
+
+                hp_is_earned = True
 
             current_hp_by_event_id[id(event)] = current_hp
 
