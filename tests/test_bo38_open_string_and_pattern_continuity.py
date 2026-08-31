@@ -326,13 +326,26 @@ def test_full_pipeline_real_examples_and_consistency():
 
         assert len(ds4_chords) == 2
 
-        for ds4_chord in ds4_chords:
+        # BO-123: string_distance's gate no longer lets a chord
+        # referenced from arbitrarily far back keep same-string
+        # matching active on its own. The first D#4 (beat 1.5,
+        # no working_fret_anchor or following_working_fret_anchor
+        # at all) now correctly lands on a lower, more defensible
+        # position instead of matching the previous note's string
+        # via stale chord context. The second D#4 (beat 2.5) has a
+        # genuine following_working_fret_anchor, so string_distance
+        # remains active there exactly as before -- unchanged.
+        first_ds4_note = ds4_chords[0].find("{*}Note")
 
-            ds4_note = ds4_chord.find("{*}Note")
+        assert first_ds4_note.find("{*}fret").text == "3"
 
-            assert ds4_note.find("{*}fret").text == "8"
+        assert first_ds4_note.find("{*}string").text == "1"
 
-            assert ds4_note.find("{*}string").text == "2"
+        second_ds4_note = ds4_chords[1].find("{*}Note")
+
+        assert second_ds4_note.find("{*}fret").text == "8"
+
+        assert second_ds4_note.find("{*}string").text == "2"
 
     finally:
 

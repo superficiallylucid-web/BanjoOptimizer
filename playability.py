@@ -20,6 +20,8 @@ filtered.
 
 from models import PlayabilityResult
 
+from shape_ratings import AVOID_SHAPES
+
 from fretboard import (
     parse_shape,
     hand_span,
@@ -180,6 +182,24 @@ def evaluate(shape_text):
     values = parse_shape(shape_text)
 
     warnings = []
+
+    # shape_ratings.py -- a human-curated list of shapes to
+    # avoid, checked before every algorithmic rule below.
+    # Confirmed directly why this is needed rather than another
+    # algorithmic rule: barre technique makes hand mechanics
+    # depend on which specific strings/fingers are involved in a
+    # way no simple formula reliably captures (e.g. "2552" is
+    # genuinely playable via a barre, "2225" is not, despite both
+    # already passing every existing algorithmic check below
+    # unchanged).
+    if shape_text in AVOID_SHAPES:
+
+        return PlayabilityResult(
+            accepted=False,
+            reason="Manually flagged as not playable",
+            warnings=warnings,
+            score=_score(values)
+        )
 
     span = hand_span(values)
 

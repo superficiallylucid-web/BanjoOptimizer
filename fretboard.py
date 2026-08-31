@@ -42,6 +42,29 @@ def find_positions(midi, open_notes):
 
         if 0 <= fret <= 22:
 
+            # 5th-string fretted positions are excluded from
+            # melody candidates entirely (per direct instruction):
+            # the 5th string is only ever practically playable
+            # open (fret 0) -- any fretted position there is
+            # difficult enough to be effectively unused, and every
+            # pitch reachable on a fretted 5th string is also
+            # reachable elsewhere (the 5th string is tuned the
+            # same as string 1's own fret 5, so any note playable
+            # there is playable on string 1 too). string_number==4
+            # is FIFTH_STRING_INDEX (stroke_cycle.py's own existing
+            # constant, not redefined here) -- this only ever
+            # activates for a caller whose own open_notes includes
+            # a 5th string at all; a 4-string open_notes list is
+            # completely unaffected. Chord-shape generation never
+            # calls find_positions() at all (it uses its own,
+            # separate find_frets_for_pitch_classes(), which
+            # already excludes the 5th string for the same reason
+            # -- this makes melody positions consistent with that
+            # existing behavior, not a new restriction).
+            if string_number == 4 and fret != 0:
+
+                continue
+
             positions.append(
                 {
                     "string": string_number,

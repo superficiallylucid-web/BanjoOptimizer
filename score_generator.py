@@ -91,6 +91,12 @@ from music import (
 
 from playing_model import _chord_working_fret
 
+# BO-126 -- reuses the exact same existing constant
+# hp_notes_played() (chord_service.py) already uses for its own
+# reachability gate, rather than a new, separately-maintained
+# value.
+from chord_service import POSITION_DISTANCE_CAP
+
 from melody_box_analysis import realize_note
 
 from models import Note
@@ -1175,17 +1181,202 @@ def _select_chord_shape_for_harmony(
             key=lambda n: (n.measure, n.beat)
         )
 
-        if box_notes:
-
-            following_box_notes = [
-                realize_note(note, tuning) for note in box_notes
-            ]
-
-    if melody_pitches:
-
+        # BO-126 -- moved earlier (was previously computed only
+        # inside the `if melody_pitches:` block below) so the
+        # preliminary-candidate reach check just below can use
+        # the same real value hp_notes_played() itself uses,
+        # rather than treating this candidate as unconditionally
+        # reachable regardless of distance from it. Value itself
+        # is unchanged -- still _preferred_melody_fret(onset_notes,
+        # tuning), computed once and reused at both call sites
+        # below instead of being recomputed a second time.
         preferred_melody_fret = _preferred_melody_fret(
             onset_notes, tuning
         )
+
+        if box_notes:
+
+            # BO-125 -- replaces BO-123's fixed 2-note cap with a
+            # dynamically determined boundary, derived from the
+            # actual fretboard reach of the chord's own
+            # intrinsically preferable candidate, rather than a
+            # fixed melody-note count.
+            #
+            # Step 1: identify the PRELIMINARY candidate -- the
+            # one the existing ranking would already choose
+            # BEFORE hp_notes_played() (BO-54) has any following
+            # melody to evaluate at all. Reuses the exact same,
+            # already-existing get_shapes_for_exact_melody_pitch()
+            # ranking (rank / melody containment / anchor_count /
+            # quality_score -- BO-124's own confirmed pre-reach
+            # priority set) rather than re-deriving any of that
+            # ordering here: calling it with following_box_notes=
+            # None is already documented, by that function's own
+            # docstring, to make hp_notes_played() return 0
+            # uniformly for every candidate -- a genuine no-op,
+            # not a special case introduced by this BO.
+            preliminary_shapes = (
+                chord_service.get_shapes_for_exact_melody_pitch(
+                    tuning,
+                    root_name,
+                    harmony.root_pc,
+                    harmony.quality_code,
+                    quality_display,
+                    melody_pitches,
+                    preferred_melody_fret=None,
+                    following_box_notes=None,
+                    incoming_shape=incoming_shape
+                )
+            )
+
+            preliminary_working_fret = None
+
+            if preliminary_shapes:
+
+                preliminary_values = parse_shape(
+                    preliminary_shapes[0].shape
+                )
+
+                if not any(v is None for v in preliminary_values):
+
+                    preliminary_working_fret = (
+                        _chord_working_fret(preliminary_values)
+                    )
+
+            # BO-126 -- matches hp_notes_played()'s own exact
+            # POSITION_DISTANCE_CAP gate (chord_service.py):
+            # confirmed, via BO-125's own focused review, that
+            # the preliminary-reach truncation below previously
+            # had no equivalent check at all. Without it, a
+            # preliminary candidate whose own working fret sits
+            # further than POSITION_DISTANCE_CAP frets from
+            # preferred_melody_fret would still have its own
+            # (potentially misleading) reach used to bound the
+            # window here, even though hp_notes_played() itself
+            # would already treat that same candidate as reaching
+            # nothing at all once the final ranking runs -- the
+            # same inconsistency POSITION_DISTANCE_CAP was
+            # originally introduced to prevent (White Christmas's
+            # own fret-21 case). Treated identically to the
+            # existing working_fret is None safeguard just below:
+            # this candidate cannot meaningfully bound the window,
+            # so the window is left unmodified rather than
+            # truncated by a distance-implausible position.
+            if (
+                preliminary_working_fret is not None
+                and preferred_melody_fret is not None
+                and abs(
+                    preliminary_working_fret - preferred_melody_fret
+                )
+                > POSITION_DISTANCE_CAP
+            ):
+
+                preliminary_working_fret = None
+
+            if preliminary_working_fret is None:
+
+                # BO-125 -- required safeguard: an all-open (or
+                # otherwise position-less) preliminary candidate
+                # has no working fret to measure reach from at
+                # all. Leave the window exactly as next_harmony's
+                # own existing boundary already determined it --
+                # confirmed necessary for White Christmas's own
+                # real G-chord case (BO-124's own investigation),
+                # where truncating by an undefined reach would
+                # incorrectly empty the window for every candidate
+                # alike, silently favoring the highest-raw-quality
+                # candidate regardless of position.
+                following_box_notes = [
+                    realize_note(note, tuning) for note in box_notes
+                ]
+
+            else:
+
+                # BO-125 -- Step 2: truncate box_notes at the
+                # first melody event the preliminary candidate's
+                # own working fret cannot reach, reusing
+                # hp_notes_played()'s own exact reachability
+                # check (has_open_realization or working_fret in
+                # fretted_positions) rather than a second,
+                # competing definition of reachability.
+                reachable_box_notes = []
+
+                for note in box_notes:
+
+                    realized_note = realize_note(note, tuning)
+
+                    reachable = (
+                        realized_note.has_open_realization
+                        or preliminary_working_fret
+                        in realized_note.fretted_positions
+                    )
+
+                    if not reachable:
+
+                        break
+
+                    reachable_box_notes.append(realized_note)
+
+                following_box_notes = reachable_box_notes
+
+    # BO-125 -- per direct instruction: for the OPENING chord of
+    # the piece specifically (incoming_shape is None -- no
+    # preceding chord exists at all, the same condition transition_
+    # anchor_count() already uses to mean "the first chord of a
+    # song"), if an all-open shape (every string open, working
+    # fret is None) genuinely sounds the onset melody note at this
+    # exact beat, that shape is selected directly -- not merely
+    # preferred among other candidates within a quality tolerance,
+    # but the ONLY one considered at all. This is a stronger,
+    # unconditional rule than BO-124's own quality-tolerance-scoped
+    # preference (chord_service.py's own sort_key), which still
+    # only breaks a tie among quality-close candidates. Confirmed
+    # real motivation: Open C's own opening C chord, where 0000 IS
+    # the tuning's own defining, canonical C-major voicing -- there
+    # is no genuine case for ever preferring a fretted alternative
+    # as the very first sound of the piece when a fully open,
+    # correct voicing is directly available. Scoped narrowly to
+    # the opening chord only (incoming_shape is None) -- every
+    # other chord in the piece continues through the existing,
+    # unmodified selection process below, unchanged.
+    if incoming_shape is None and melody_pitches:
+
+        all_shapes = chord_service.get_shapes(
+            tuning, root_name, harmony.root_pc,
+            harmony.quality_code, quality_display,
+            melody_pitches=melody_pitches
+        )
+
+        for candidate in all_shapes:
+
+            candidate_values = parse_shape(candidate.shape)
+
+            if any(v is None for v in candidate_values):
+
+                continue
+
+            candidate_working_fret = _chord_working_fret(
+                candidate_values
+            )
+
+            if candidate_working_fret is not None:
+
+                continue
+
+            candidate_notes = sounding_notes(
+                tuning, candidate.shape
+            )
+
+            contains_onset_pitch = any(
+                note.midi in melody_pitches
+                for note in candidate_notes
+            )
+
+            if contains_onset_pitch:
+
+                return candidate, False, None
+
+    if melody_pitches:
 
         shapes = chord_service.get_shapes_for_exact_melody_pitch(
             tuning,
@@ -1806,9 +1997,33 @@ def _add_tuning_text(staff_element, tuning):
 
     content_element = ET.SubElement(text_element, "text")
 
-    content_element.text = (
-        f"Banjo tuning: {tuning.symbol} ({tuning.name})"
-    )
+    # BO-130 -- for a capo'd tuning (tuning.capo > 0), a single
+    # line in the format "{sounded symbol} (open: {open symbol},
+    # capo {N})" -- tuning.base_tuning is now always set directly
+    # by the caller (main.py), since --tuning already specifies
+    # the open tuning explicitly; no search/derivation needed
+    # here at all (replacing BO-128's own search-based version,
+    # which is no longer necessary or correct now that the
+    # interface itself supplies the open tuning directly).
+    #
+    # Every existing, non-capo'd tuning (capo == 0, the default --
+    # every one of the 13 built-in tunings except Double D) is
+    # completely unchanged: "Banjo tuning: {symbol} ({name})",
+    # exactly as before BO-126 ever existed -- confirmed required
+    # by test_bo26/test_bo53's own existing, already-validated
+    # assertions against this exact string.
+    if tuning.capo:
+
+        content_element.text = (
+            f"{tuning.symbol} (open: {tuning.base_tuning}, "
+            f"capo {tuning.capo})"
+        )
+
+    else:
+
+        content_element.text = (
+            f"Banjo tuning: {tuning.symbol} ({tuning.name})"
+        )
 
 
 def generate_chord_diagrams_only(
@@ -1956,7 +2171,11 @@ def generate_chord_diagrams_only(
 # _apply_chord_shapes(), or anything else above.
 # ===========================================================
 
-def _extract_staff_events(score_file, staff_number):
+def _extract_staff_events(
+    score_file, staff_number, volta_sink=None,
+    rehearsal_mark_sink=None, tempo_sink=None,
+    repeat_sink=None, system_text_sink=None
+):
     """
     Walk one content staff's Measures/voice in document order,
     returning a list of measures, each a list of event dicts:
@@ -1988,6 +2207,50 @@ def _extract_staff_events(score_file, staff_number):
     """
 
     measures = []
+
+    # BO-131 -- raw <Spanner type="Volta"> XML element(s) per
+    # measure, from the input's own <Measure>/<voice> (confirmed
+    # real structure: a direct child of <voice>, sibling to
+    # <Chord> -- NOT a direct child of <Measure> itself, despite
+    # an earlier, explicitly-flagged guess to the contrary).
+    # Parallel to `measures` (one entry per measure, in the same
+    # order), rather than folded into the per-note/rest/harmony
+    # event list, since a Volta is a measure-level annotation,
+    # not an event tied to a single note.
+    measure_voltas = []
+
+    # BO-132 -- raw <RehearsalMark> XML element(s) per measure,
+    # same parallel-list shape and same position-tracking
+    # approach as measure_voltas above (learned directly from a
+    # real bug there: a voice-level element cannot be assumed to
+    # always sit at the start of its own measure -- it must be
+    # tracked by its real position relative to the Chord/Rest
+    # events around it). Unlike Volta, this is a single,
+    # standalone element with no opening/closing Spanner pair.
+    measure_rehearsal_marks = []
+
+    # BO-133 -- raw <Tempo> XML element(s) per measure, same
+    # parallel-list shape and position-tracking approach as
+    # measure_rehearsal_marks above.
+    measure_tempos = []
+
+    # BO-135 -- raw <SystemText> XML element(s) per measure, same
+    # parallel-list shape and position-tracking approach as
+    # measure_tempos above. Confirmed necessary here specifically
+    # (not just applied out of caution): the real input has one
+    # SystemText genuinely positioned BETWEEN two Chord siblings,
+    # not at the start of its measure.
+    measure_system_texts = []
+
+    # BO-134 -- raw <startRepeat>/<endRepeat> XML element(s) per
+    # measure. Structurally different from Volta/RehearsalMark/
+    # Tempo above: confirmed directly against the real input,
+    # these are direct children of <Measure> ITSELF (sibling to
+    # <voice>), not nested inside <voice> at all -- so no
+    # position-tracking relative to Chord/Rest events is needed;
+    # they always belong at a fixed spot (right after <eid>,
+    # before <voice>).
+    measure_repeats = []
 
     current_measure_events = None
 
@@ -2026,6 +2289,109 @@ def _extract_staff_events(score_file, staff_number):
             tuplet_scale = 1.0
 
             pending_tuplet_element = None
+
+            # BO-134 -- direct children of THIS <Measure> element
+            # itself (not its <voice> child) named startRepeat or
+            # endRepeat, in document order.
+            this_measure_repeats = [
+                measure_child
+                for measure_child in element
+                if measure_child.tag.split("}")[-1] in (
+                    "startRepeat", "endRepeat"
+                )
+            ]
+
+            measure_repeats.append(this_measure_repeats)
+
+            # BO-131 -- the full input tree is already parsed
+            # before this .iter() loop runs, so `element` (this
+            # <Measure>) already has its entire subtree attached
+            # -- safe to look ahead into its own <voice> child
+            # directly, regardless of iteration order.
+            #
+            # A Volta Spanner does NOT always belong at the start
+            # of its own measure -- confirmed directly against a
+            # real, genuine bug: a closing Volta spanner (e.g.
+            # <prev><location><fractions>-3/4</...) can sit AFTER
+            # some Chord/Rest siblings within the same <voice>,
+            # not before all of them. Placing it at the absolute
+            # start regardless (this function's own first attempt)
+            # broke the fractions-relative offset MuseScore uses
+            # to draw the bracket line -- the text still rendered
+            # (it belongs to the OPENING spanner, correctly placed
+            # at the start), but the line silently failed to draw
+            # for the closing spanner specifically.
+            #
+            # So each Volta is tracked as (event_index, element) --
+            # event_index counts only Chord/Rest siblings seen so
+            # far within this <voice> (matching how
+            # current_measure_events is itself indexed), i.e. "this
+            # spanner belongs immediately before the event_index'th
+            # Chord/Rest of this measure". event_index == 0 means
+            # before the first Chord/Rest (the old, only-correct-
+            # sometimes assumption); a higher value means later.
+            measure_voice_element = element.find("{*}voice")
+
+            this_measure_voltas = []
+
+            this_measure_rehearsal_marks = []
+
+            this_measure_tempos = []
+
+            this_measure_system_texts = []
+
+            if measure_voice_element is not None:
+
+                voice_event_index = 0
+
+                for voice_child in measure_voice_element:
+
+                    voice_child_tag = (
+                        voice_child.tag.split("}")[-1]
+                    )
+
+                    if voice_child_tag in ("Chord", "Rest"):
+
+                        voice_event_index += 1
+
+                    elif (
+                        voice_child_tag == "Spanner"
+                        and voice_child.get("type") == "Volta"
+                    ):
+
+                        this_measure_voltas.append(
+                            (voice_event_index, voice_child)
+                        )
+
+                    elif voice_child_tag == "RehearsalMark":
+
+                        this_measure_rehearsal_marks.append(
+                            (voice_event_index, voice_child)
+                        )
+
+                    elif voice_child_tag == "Tempo":
+
+                        this_measure_tempos.append(
+                            (voice_event_index, voice_child)
+                        )
+
+                    elif voice_child_tag == "SystemText":
+
+                        this_measure_system_texts.append(
+                            (voice_event_index, voice_child)
+                        )
+
+            measure_voltas.append(this_measure_voltas)
+
+            measure_rehearsal_marks.append(
+                this_measure_rehearsal_marks
+            )
+
+            measure_tempos.append(this_measure_tempos)
+
+            measure_system_texts.append(
+                this_measure_system_texts
+            )
 
         if tag == "Tuplet":
 
@@ -2081,6 +2447,23 @@ def _extract_staff_events(score_file, staff_number):
                 if tag == "Chord" else []
             )
 
+            # BO-131 -- raw <Spanner type="Slur"> XML element(s)
+            # from the input's own <Chord> (a direct child of
+            # <Chord>, sibling to <Note> -- confirmed a different
+            # nesting level than Tie, which lives inside <Note>
+            # itself; findall() with no ".//" only matches direct
+            # children, so this cannot also pick up a Tie Spanner
+            # nested one level deeper). Same copy-and-regenerate-
+            # eid pattern as lyrics_elements and Tie.
+            slur_elements = [
+                spanner_el
+                for spanner_el in (
+                    element.findall("{*}Spanner")
+                    if tag == "Chord" else []
+                )
+                if spanner_el.get("type") == "Slur"
+            ]
+
             current_event = {
                 "beat": round(beat, 4),
                 "type": "note" if tag == "Chord" else "rest",
@@ -2102,7 +2485,25 @@ def _extract_staff_events(score_file, staff_number):
                 ),
                 "tuplet_scale": tuplet_scale,
                 "tuplet_end": False,
-                "lyrics_elements": lyrics_elements
+                "lyrics_elements": lyrics_elements,
+                "slur_elements": slur_elements,
+                # BO-131 -- raw <Spanner type="Tie"> XML element(s)
+                # from the input's own <Note>, when present. A
+                # single note can carry two simultaneously (one
+                # closing a tie from the previous note via <prev>,
+                # one opening a new tie to the next note via
+                # <next>+<Tie>) -- a list, not a single value,
+                # avoids silently dropping one. Copied and
+                # re-emitted directly on output, reusing the exact
+                # same pattern already established for
+                # lyrics_elements above (copy the real XML
+                # element, regenerate its own eid on output)
+                # rather than parsing Tie into a new, separate
+                # data model field. Populated below, at the same
+                # point pitch/tpc are extracted from the input's
+                # own <Note> -- this is a <Note>-level element,
+                # not a <Chord>-level one like Lyrics.
+                "tie_elements": []
             }
 
             current_measure_events.append(current_event)
@@ -2149,9 +2550,44 @@ def _extract_staff_events(score_file, staff_number):
 
                 current_event["tpc"] = int(tpc_element.text)
 
+            for note_child in element:
+
+                note_child_tag = (
+                    note_child.tag.split("}")[-1]
+                )
+
+                if (
+                    note_child_tag == "Spanner"
+                    and note_child.get("type") == "Tie"
+                ):
+
+                    current_event["tie_elements"].append(
+                        note_child
+                    )
+
     if current_measure_events is not None:
 
         measures.append(current_measure_events)
+
+    if volta_sink is not None:
+
+        volta_sink.extend(measure_voltas)
+
+    if rehearsal_mark_sink is not None:
+
+        rehearsal_mark_sink.extend(measure_rehearsal_marks)
+
+    if tempo_sink is not None:
+
+        tempo_sink.extend(measure_tempos)
+
+    if repeat_sink is not None:
+
+        repeat_sink.extend(measure_repeats)
+
+    if system_text_sink is not None:
+
+        system_text_sink.extend(measure_system_texts)
 
     return measures
 
@@ -2975,9 +3411,40 @@ def _choose_melody_position(
             and preceding_chord_shape_values is None
         )
 
+        # BO-123 -- simplified per direct instruction: extensive
+        # investigation (BO-120.32, BO-120.32.1, BO-121, BO-122)
+        # found no clean signal distinguishing when a preceding
+        # chord's own historical shape should still gate this
+        # same-string tiebreak from when it shouldn't -- every
+        # candidate tested (working_fret_anchor presence, second_
+        # previous_position existence, raw score-gap magnitude)
+        # either failed outright or pointed backwards on at least
+        # one real case. Rather than continue searching, this
+        # gates string_distance SPECIFICALLY on the genuinely
+        # narrow, positional anchors alone (working_fret_anchor,
+        # following_working_fret_anchor) -- when neither is
+        # present, the base playability score (already, directly
+        # encoding "prefer a low, comfortable position") decides
+        # without same-string interference, rather than letting a
+        # chord referenced from arbitrarily far back keep same-
+        # string matching active. no_chord_anchor_at_all above is
+        # left UNMODIFIED for every other mechanism that already,
+        # correctly uses it (phrase_notes_played, hp_tiebreak,
+        # within_hp_offset) -- this is a deliberate simplification
+        # of string_distance's own gate specifically, not a
+        # proven-general principle -- it changes some previously-
+        # validated melody placements (see the BO-123 delivery
+        # notes); each changed case was checked directly and found
+        # to move to an equally or more defensible, typically
+        # lower position, never to a worse one.
+        no_relevant_chord_anchor = (
+            working_fret_anchor is None
+            and following_working_fret_anchor is None
+        )
+
         if (
             previous_string is not None
-            and not (no_chord_anchor_at_all and melody_phrase_notes)
+            and not (no_relevant_chord_anchor and melody_phrase_notes)
         ):
 
             string_distance = min(
@@ -3202,7 +3669,23 @@ def generate_tab_from_template(
     generate_chord_diagrams_only() already returns it.
     """
 
-    measures = _extract_staff_events(score_file, staff_number)
+    measure_voltas = []
+
+    measure_rehearsal_marks = []
+
+    measure_tempos = []
+
+    measure_repeats = []
+
+    measure_system_texts = []
+
+    measures = _extract_staff_events(
+        score_file, staff_number, volta_sink=measure_voltas,
+        rehearsal_mark_sink=measure_rehearsal_marks,
+        tempo_sink=measure_tempos,
+        repeat_sink=measure_repeats,
+        system_text_sink=measure_system_texts
+    )
 
     # ---- BO-24: read harmonies and pre-select each chord's own
     # shape BEFORE writing any melody note's fret/string, so
@@ -3754,6 +4237,16 @@ def generate_tab_from_template(
                 tab_measure, "eid"
             ).text = _generate_eid()
 
+        # BO-134 -- re-emit any startRepeat/endRepeat captured
+        # for this measure, right after <eid> and before <voice>
+        # -- matching the real, confirmed position in actual
+        # MuseScore-authored files. These have no eid of their
+        # own to regenerate (confirmed: <startRepeat/> is empty,
+        # <endRepeat> holds only a repeat count).
+        for repeat_element in measure_repeats[measure_index]:
+
+            tab_measure.append(copy.deepcopy(repeat_element))
+
         tab_voice = ET.SubElement(tab_measure, "voice")
 
         if is_first_measure:
@@ -3801,6 +4294,18 @@ def generate_tab_from_template(
                     treble_measure, "eid"
                 ).text = _generate_eid()
 
+            # BO-134 -- same startRepeat/endRepeat re-emission as
+            # the TAB staff's own Measure above, for this
+            # separate, independently-built notation-staff
+            # Measure.
+            for repeat_element in measure_repeats[
+                measure_index
+            ]:
+
+                treble_measure.append(
+                    copy.deepcopy(repeat_element)
+                )
+
             treble_voice = ET.SubElement(treble_measure, "voice")
 
             if is_first_measure:
@@ -3833,7 +4338,360 @@ def generate_tab_from_template(
                     treble_timesig, "sigD"
                 ).text = sig_d
 
-        for event in measure_events:
+        # BO-131 -- re-emit any Volta spanner(s) captured for
+        # this measure, at the very start of voice content --
+        # confirmed real ordering: a direct child of <voice>,
+        # before any <Chord> (and after KeySig/TimeSig on a first
+        # measure, matching how those are already sequenced
+        # above). Same copy-and-regenerate-eid pattern as Tie/
+        # Slur; written on both staves independently, same as
+        # those two, since the notation staff is a separate,
+        # independently-built voice.
+        #
+        # Only event_index == 0 Voltas belong here -- a Volta at
+        # a later event_index belongs after that many Chord/Rest
+        # events have already been written (see inside/after the
+        # event loop below). Confirmed a real bug otherwise: a
+        # closing Volta spanner that belongs after some notes
+        # silently lost its bracket line (though not its text)
+        # when placed here unconditionally regardless of its own
+        # real position.
+        for volta_index, volta_element in measure_voltas[
+            measure_index
+        ]:
+
+            if volta_index != 0:
+
+                continue
+
+            volta_copy = copy.deepcopy(volta_element)
+
+            volta_eid_el = volta_copy.find("{*}Volta/{*}eid")
+
+            if volta_eid_el is not None:
+
+                volta_eid_el.text = _generate_eid()
+
+            tab_voice.append(volta_copy)
+
+            if include_notation:
+
+                treble_volta_copy = copy.deepcopy(volta_element)
+
+                treble_volta_eid_el = treble_volta_copy.find(
+                    "{*}Volta/{*}eid"
+                )
+
+                if treble_volta_eid_el is not None:
+
+                    treble_volta_eid_el.text = _generate_eid()
+
+                treble_voice.append(treble_volta_copy)
+
+        # BO-132 -- same start-of-measure emission for
+        # RehearsalMark, position-tracked the same way as Volta.
+        for rehearsal_index, rehearsal_element in (
+            measure_rehearsal_marks[measure_index]
+        ):
+
+            if rehearsal_index != 0:
+
+                continue
+
+            rehearsal_copy = copy.deepcopy(rehearsal_element)
+
+            rehearsal_eid_el = rehearsal_copy.find("{*}eid")
+
+            if rehearsal_eid_el is not None:
+
+                rehearsal_eid_el.text = _generate_eid()
+
+            tab_voice.append(rehearsal_copy)
+
+            if include_notation:
+
+                treble_rehearsal_copy = copy.deepcopy(
+                    rehearsal_element
+                )
+
+                treble_rehearsal_eid_el = (
+                    treble_rehearsal_copy.find("{*}eid")
+                )
+
+                if treble_rehearsal_eid_el is not None:
+
+                    treble_rehearsal_eid_el.text = (
+                        _generate_eid()
+                    )
+
+                treble_voice.append(treble_rehearsal_copy)
+
+        # BO-133 -- same start-of-measure emission for Tempo,
+        # position-tracked the same way.
+        for tempo_index, tempo_element in (
+            measure_tempos[measure_index]
+        ):
+
+            if tempo_index != 0:
+
+                continue
+
+            tempo_copy = copy.deepcopy(tempo_element)
+
+            tempo_eid_el = tempo_copy.find("{*}eid")
+
+            if tempo_eid_el is not None:
+
+                tempo_eid_el.text = _generate_eid()
+
+            tab_voice.append(tempo_copy)
+
+            if include_notation:
+
+                treble_tempo_copy = copy.deepcopy(
+                    tempo_element
+                )
+
+                treble_tempo_eid_el = (
+                    treble_tempo_copy.find("{*}eid")
+                )
+
+                if treble_tempo_eid_el is not None:
+
+                    treble_tempo_eid_el.text = (
+                        _generate_eid()
+                    )
+
+                treble_voice.append(treble_tempo_copy)
+
+        # BO-135 -- same start-of-measure emission for
+        # SystemText, position-tracked the same way.
+        for system_text_index, system_text_element in (
+            measure_system_texts[measure_index]
+        ):
+
+            if system_text_index != 0:
+
+                continue
+
+            system_text_copy = copy.deepcopy(
+                system_text_element
+            )
+
+            system_text_eid_el = system_text_copy.find(
+                "{*}eid"
+            )
+
+            if system_text_eid_el is not None:
+
+                system_text_eid_el.text = _generate_eid()
+
+            tab_voice.append(system_text_copy)
+
+            if include_notation:
+
+                treble_system_text_copy = copy.deepcopy(
+                    system_text_element
+                )
+
+                treble_system_text_eid_el = (
+                    treble_system_text_copy.find("{*}eid")
+                )
+
+                if treble_system_text_eid_el is not None:
+
+                    treble_system_text_eid_el.text = (
+                        _generate_eid()
+                    )
+
+                treble_voice.append(treble_system_text_copy)
+
+        for event_position, event in enumerate(measure_events):
+
+            # BO-131 -- emit any Volta spanner(s) that belong
+            # immediately before this event (event_index matches
+            # this event's own 0-indexed position in the measure)
+            # -- same copy-and-regenerate-eid pattern as above.
+            for volta_index, volta_element in measure_voltas[
+                measure_index
+            ]:
+
+                if volta_index != event_position or (
+                    volta_index == 0
+                ):
+
+                    continue
+
+                volta_copy = copy.deepcopy(volta_element)
+
+                volta_eid_el = volta_copy.find(
+                    "{*}Volta/{*}eid"
+                )
+
+                if volta_eid_el is not None:
+
+                    volta_eid_el.text = _generate_eid()
+
+                tab_voice.append(volta_copy)
+
+                if include_notation:
+
+                    treble_volta_copy = copy.deepcopy(
+                        volta_element
+                    )
+
+                    treble_volta_eid_el = (
+                        treble_volta_copy.find(
+                            "{*}Volta/{*}eid"
+                        )
+                    )
+
+                    if treble_volta_eid_el is not None:
+
+                        treble_volta_eid_el.text = (
+                            _generate_eid()
+                        )
+
+                    treble_voice.append(treble_volta_copy)
+
+            # BO-132 -- same within-loop emission for
+            # RehearsalMark, position-tracked the same way.
+            for rehearsal_index, rehearsal_element in (
+                measure_rehearsal_marks[measure_index]
+            ):
+
+                if rehearsal_index != event_position or (
+                    rehearsal_index == 0
+                ):
+
+                    continue
+
+                rehearsal_copy = copy.deepcopy(
+                    rehearsal_element
+                )
+
+                rehearsal_eid_el = rehearsal_copy.find(
+                    "{*}eid"
+                )
+
+                if rehearsal_eid_el is not None:
+
+                    rehearsal_eid_el.text = _generate_eid()
+
+                tab_voice.append(rehearsal_copy)
+
+                if include_notation:
+
+                    treble_rehearsal_copy = copy.deepcopy(
+                        rehearsal_element
+                    )
+
+                    treble_rehearsal_eid_el = (
+                        treble_rehearsal_copy.find("{*}eid")
+                    )
+
+                    if treble_rehearsal_eid_el is not None:
+
+                        treble_rehearsal_eid_el.text = (
+                            _generate_eid()
+                        )
+
+                    treble_voice.append(
+                        treble_rehearsal_copy
+                    )
+
+            # BO-133 -- same within-loop emission for Tempo,
+            # position-tracked the same way.
+            for tempo_index, tempo_element in (
+                measure_tempos[measure_index]
+            ):
+
+                if tempo_index != event_position or (
+                    tempo_index == 0
+                ):
+
+                    continue
+
+                tempo_copy = copy.deepcopy(tempo_element)
+
+                tempo_eid_el = tempo_copy.find("{*}eid")
+
+                if tempo_eid_el is not None:
+
+                    tempo_eid_el.text = _generate_eid()
+
+                tab_voice.append(tempo_copy)
+
+                if include_notation:
+
+                    treble_tempo_copy = copy.deepcopy(
+                        tempo_element
+                    )
+
+                    treble_tempo_eid_el = (
+                        treble_tempo_copy.find("{*}eid")
+                    )
+
+                    if treble_tempo_eid_el is not None:
+
+                        treble_tempo_eid_el.text = (
+                            _generate_eid()
+                        )
+
+                    treble_voice.append(treble_tempo_copy)
+
+            # BO-135 -- same within-loop emission for
+            # SystemText, position-tracked the same way.
+            for system_text_index, system_text_element in (
+                measure_system_texts[measure_index]
+            ):
+
+                if system_text_index != event_position or (
+                    system_text_index == 0
+                ):
+
+                    continue
+
+                system_text_copy = copy.deepcopy(
+                    system_text_element
+                )
+
+                system_text_eid_el = system_text_copy.find(
+                    "{*}eid"
+                )
+
+                if system_text_eid_el is not None:
+
+                    system_text_eid_el.text = (
+                        _generate_eid()
+                    )
+
+                tab_voice.append(system_text_copy)
+
+                if include_notation:
+
+                    treble_system_text_copy = copy.deepcopy(
+                        system_text_element
+                    )
+
+                    treble_system_text_eid_el = (
+                        treble_system_text_copy.find(
+                            "{*}eid"
+                        )
+                    )
+
+                    if (
+                        treble_system_text_eid_el
+                        is not None
+                    ):
+
+                        treble_system_text_eid_el.text = (
+                            _generate_eid()
+                        )
+
+                    treble_voice.append(
+                        treble_system_text_copy
+                    )
 
             if event["type"] == "harmony":
 
@@ -4267,6 +5125,23 @@ def generate_tab_from_template(
 
                         treble_chord.append(lyrics_copy)
 
+                    # BO-131 -- same Slur re-emission as the TAB
+                    # staff's own block above, for this separate,
+                    # independently-built notation-staff Chord.
+                    for slur_element in event["slur_elements"]:
+
+                        slur_copy = copy.deepcopy(slur_element)
+
+                        slur_eid_el = slur_copy.find(
+                            "{*}Slur/{*}eid"
+                        )
+
+                        if slur_eid_el is not None:
+
+                            slur_eid_el.text = _generate_eid()
+
+                        treble_chord.append(slur_copy)
+
                     treble_note = ET.SubElement(
                         treble_chord, "Note"
                     )
@@ -4274,6 +5149,23 @@ def generate_tab_from_template(
                     ET.SubElement(
                         treble_note, "eid"
                     ).text = _generate_eid()
+
+                    # BO-131 -- same Tie re-emission as the TAB
+                    # staff's own Note above, for this separate,
+                    # independently-built notation-staff Note.
+                    for tie_element in event["tie_elements"]:
+
+                        tie_copy = copy.deepcopy(tie_element)
+
+                        tie_eid_el = tie_copy.find(
+                            "{*}Tie/{*}eid"
+                        )
+
+                        if tie_eid_el is not None:
+
+                            tie_eid_el.text = _generate_eid()
+
+                        treble_note.append(tie_copy)
 
                     ET.SubElement(
                         treble_note, "pitch"
@@ -4429,11 +5321,53 @@ def generate_tab_from_template(
 
                 tab_chord.append(lyrics_copy)
 
+            # BO-131 -- re-emit any Slur spanner(s) captured from
+            # the input's own <Chord>, right before <Note> --
+            # matching the real, confirmed ordering (durationType,
+            # then Spanner, then Note) in actual MuseScore-
+            # authored files. Same copy-and-regenerate-eid pattern
+            # as Tie and lyrics_elements.
+            for slur_element in event["slur_elements"]:
+
+                slur_copy = copy.deepcopy(slur_element)
+
+                slur_eid_el = slur_copy.find("{*}Slur/{*}eid")
+
+                if slur_eid_el is not None:
+
+                    slur_eid_el.text = _generate_eid()
+
+                tab_chord.append(slur_copy)
+
             tab_note = ET.SubElement(tab_chord, "Note")
 
             ET.SubElement(
                 tab_note, "eid"
             ).text = _generate_eid()
+
+            # BO-131 -- re-emit any Tie spanner(s) captured from
+            # the input's own <Note>, right after <eid> and before
+            # <pitch> -- matching the real, confirmed ordering in
+            # actual MuseScore-authored files (MuseScore's own XML
+            # reader is order-sensitive, per this project's own
+            # established findings elsewhere). Same copy-and-
+            # regenerate-eid pattern already used for
+            # lyrics_elements below -- the Spanner's own <next>/
+            # <prev><location> offsets are copied unchanged, since
+            # they're relative (measures/fractions from this note)
+            # and remain valid regardless of the note's own new
+            # position in the output.
+            for tie_element in event["tie_elements"]:
+
+                tie_copy = copy.deepcopy(tie_element)
+
+                tie_eid_el = tie_copy.find("{*}Tie/{*}eid")
+
+                if tie_eid_el is not None:
+
+                    tie_eid_el.text = _generate_eid()
+
+                tab_note.append(tie_copy)
 
             ET.SubElement(tab_note, "pitch").text = str(midi)
 
@@ -4503,6 +5437,23 @@ def generate_tab_from_template(
 
                     treble_chord.append(lyrics_copy)
 
+                # BO-131 -- same Slur re-emission as the TAB
+                # staff's own block above, for this separate,
+                # independently-built notation-staff Chord.
+                for slur_element in event["slur_elements"]:
+
+                    slur_copy = copy.deepcopy(slur_element)
+
+                    slur_eid_el = slur_copy.find(
+                        "{*}Slur/{*}eid"
+                    )
+
+                    if slur_eid_el is not None:
+
+                        slur_eid_el.text = _generate_eid()
+
+                    treble_chord.append(slur_copy)
+
                 treble_note = ET.SubElement(
                     treble_chord, "Note"
                 )
@@ -4510,6 +5461,21 @@ def generate_tab_from_template(
                 ET.SubElement(
                     treble_note, "eid"
                 ).text = _generate_eid()
+
+                # BO-131 -- same Tie re-emission as the TAB
+                # staff's own Note above, for this separate,
+                # independently-built notation-staff Note.
+                for tie_element in event["tie_elements"]:
+
+                    tie_copy = copy.deepcopy(tie_element)
+
+                    tie_eid_el = tie_copy.find("{*}Tie/{*}eid")
+
+                    if tie_eid_el is not None:
+
+                        tie_eid_el.text = _generate_eid()
+
+                    treble_note.append(tie_copy)
 
                 ET.SubElement(
                     treble_note, "pitch"
@@ -4522,6 +5488,170 @@ def generate_tab_from_template(
                 if event["tuplet_end"]:
 
                     ET.SubElement(treble_voice, "endTuplet")
+
+        # BO-131 -- emit any Volta spanner(s) whose own index is
+        # at or beyond this measure's last event -- they belong
+        # at the very end of this measure's voice content, after
+        # every Chord/Rest (this is Volta 2's own real, confirmed
+        # case: its closing spanners sit after all 3 notes in
+        # their own measure, not before any of them).
+        for volta_index, volta_element in measure_voltas[
+            measure_index
+        ]:
+
+            if volta_index < len(measure_events) or (
+                volta_index == 0
+            ):
+
+                continue
+
+            volta_copy = copy.deepcopy(volta_element)
+
+            volta_eid_el = volta_copy.find("{*}Volta/{*}eid")
+
+            if volta_eid_el is not None:
+
+                volta_eid_el.text = _generate_eid()
+
+            tab_voice.append(volta_copy)
+
+            if include_notation:
+
+                treble_volta_copy = copy.deepcopy(volta_element)
+
+                treble_volta_eid_el = treble_volta_copy.find(
+                    "{*}Volta/{*}eid"
+                )
+
+                if treble_volta_eid_el is not None:
+
+                    treble_volta_eid_el.text = _generate_eid()
+
+                treble_voice.append(treble_volta_copy)
+
+        # BO-132 -- same end-of-measure emission for
+        # RehearsalMark, position-tracked the same way.
+        for rehearsal_index, rehearsal_element in (
+            measure_rehearsal_marks[measure_index]
+        ):
+
+            if rehearsal_index < len(measure_events) or (
+                rehearsal_index == 0
+            ):
+
+                continue
+
+            rehearsal_copy = copy.deepcopy(rehearsal_element)
+
+            rehearsal_eid_el = rehearsal_copy.find("{*}eid")
+
+            if rehearsal_eid_el is not None:
+
+                rehearsal_eid_el.text = _generate_eid()
+
+            tab_voice.append(rehearsal_copy)
+
+            if include_notation:
+
+                treble_rehearsal_copy = copy.deepcopy(
+                    rehearsal_element
+                )
+
+                treble_rehearsal_eid_el = (
+                    treble_rehearsal_copy.find("{*}eid")
+                )
+
+                if treble_rehearsal_eid_el is not None:
+
+                    treble_rehearsal_eid_el.text = (
+                        _generate_eid()
+                    )
+
+                treble_voice.append(treble_rehearsal_copy)
+
+        # BO-133 -- same end-of-measure emission for Tempo,
+        # position-tracked the same way.
+        for tempo_index, tempo_element in (
+            measure_tempos[measure_index]
+        ):
+
+            if tempo_index < len(measure_events) or (
+                tempo_index == 0
+            ):
+
+                continue
+
+            tempo_copy = copy.deepcopy(tempo_element)
+
+            tempo_eid_el = tempo_copy.find("{*}eid")
+
+            if tempo_eid_el is not None:
+
+                tempo_eid_el.text = _generate_eid()
+
+            tab_voice.append(tempo_copy)
+
+            if include_notation:
+
+                treble_tempo_copy = copy.deepcopy(
+                    tempo_element
+                )
+
+                treble_tempo_eid_el = (
+                    treble_tempo_copy.find("{*}eid")
+                )
+
+                if treble_tempo_eid_el is not None:
+
+                    treble_tempo_eid_el.text = (
+                        _generate_eid()
+                    )
+
+                treble_voice.append(treble_tempo_copy)
+
+        # BO-135 -- same end-of-measure emission for SystemText,
+        # position-tracked the same way.
+        for system_text_index, system_text_element in (
+            measure_system_texts[measure_index]
+        ):
+
+            if system_text_index < len(measure_events) or (
+                system_text_index == 0
+            ):
+
+                continue
+
+            system_text_copy = copy.deepcopy(
+                system_text_element
+            )
+
+            system_text_eid_el = system_text_copy.find(
+                "{*}eid"
+            )
+
+            if system_text_eid_el is not None:
+
+                system_text_eid_el.text = _generate_eid()
+
+            tab_voice.append(system_text_copy)
+
+            if include_notation:
+
+                treble_system_text_copy = copy.deepcopy(
+                    system_text_element
+                )
+
+                treble_system_text_eid_el = (
+                    treble_system_text_copy.find("{*}eid")
+                )
+
+                if treble_system_text_eid_el is not None:
+
+                    treble_system_text_eid_el.text = (
+                        _generate_eid()
+                    )
+
+                treble_voice.append(treble_system_text_copy)
 
     # ---- FretDiagrams: reuse the existing, unmodified BO-18
     # through BO-22 chord-shape selection (staff_harmonies was

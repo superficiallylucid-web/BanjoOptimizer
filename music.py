@@ -478,6 +478,27 @@ CHORD_QUALITIES = {
     "sus4": {
         "intervals": [0, 5, 7],
         "display": "sus4"
+    },
+
+    # BO-121 -- diminished 7th: root, minor 3rd, diminished 5th
+    # (tritone), diminished 7th (enharmonic to a major 6th above
+    # the root, 9 semitones). Confirmed real: MuseScore emits
+    # quality_code "o7" for this chord (e.g. "C#(o7)") -- prior
+    # to this entry, chord_tones() returned None for it, so no
+    # FD was ever generated at all (BO-119/120's own
+    # investigation).
+    "o7": {
+        "intervals": [0, 3, 6, 9],
+        "display": "o7"
+    },
+
+    # BO-121 -- dominant 7th, sharp 5 (augmented 7th): root,
+    # major 3rd, augmented 5th, minor 7th. Confirmed real:
+    # MuseScore emits quality_code "7#5" for this chord (e.g.
+    # "E(7#5)") -- same prior gap as "o7" above.
+    "7#5": {
+        "intervals": [0, 4, 8, 10],
+        "display": "7#5"
     }
 
 }
@@ -825,6 +846,17 @@ QUALITY_CODE_TO_DISPLAY_NAME = {
     "5": "5 (no 3rd)",
     "sus2": "sus2",
     "sus4": "sus4",
+    # BO-121 -- matches CHORD_QUALITIES' own new "o7"/"7#5"
+    # entries above (music.py's own CHORD_QUALITIES dict): this
+    # second, separate lookup table gates
+    # _select_chord_shape_for_harmony()'s own earliest return
+    # (quality_display is None), reached BEFORE chord_tones()/
+    # generate_candidates() are ever consulted at all -- fixing
+    # only CHORD_QUALITIES was confirmed, via direct real-
+    # pipeline tracing, insufficient on its own: this dict is
+    # checked first and independently.
+    "o7": "dim7",
+    "7#5": "7#5",
 }
 
 

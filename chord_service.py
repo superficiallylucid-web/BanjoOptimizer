@@ -819,6 +819,57 @@ class ChordService:
 
             quality_tier = 0 if within_hp_tolerance else 1
 
+            # BO-124 -- an all-open candidate (working_fret is
+            # None) that genuinely sounds the onset melody pitch
+            # (already passed contains_melody_pitch above) and is
+            # within quality tolerance should never lose to a
+            # lower-quality, fretted alternative purely because
+            # hp_notes_played() treats "no working fret" as 0
+            # phrase coverage. Confirmed real, direct bug this
+            # caused: Open C's own C chord (0000, quality 19.5 --
+            # tied for the group's own best, and the tuning's own
+            # canonical, defining voicing) lost to 0500 (quality
+            # 19.0, missing only the non-defining 5th, same as
+            # HP_CONTINUITY_QUALITY_TOLERANCE's own citation
+            # above) purely because 0500's own working fret
+            # happened to reach 4 following notes while 0000's
+            # own hp_notes_played() short-circuited to 0 --
+            # producing an indefensible high-fret D4 immediately
+            # after, in a tuning literally named for this chord's
+            # own open voicing. Scoped narrowly to quality_tier=0
+            # (a genuinely close-quality alternative outside
+            # tolerance still wins normally, unchanged) and to
+            # contains_melody_pitch (already computed above, so
+            # this never activates for a candidate that doesn't
+            # actually sound the melody note at all -- confirmed
+            # this is why White Christmas's own real G-chord case,
+            # where 0000 does NOT contain that chord's own onset
+            # pitch, B4, is completely unaffected: 0000 never
+            # reaches this tiebreak there in the first place,
+            # since not-containing already excludes it earlier in
+            # this same sort key). This does not change anchor_
+            # count or notes_played themselves, or their own
+            # relative priority -- it only prevents an open
+            # candidate that requires no hand movement at all from
+            # being treated as reaching nothing.
+            open_check_values = parse_shape(shape.shape)
+
+            working_fret_for_open_check = (
+                _chord_working_fret(open_check_values)
+                if not any(v is None for v in open_check_values)
+                else None
+            )
+
+            open_shape_preference = (
+                0
+                if (
+                    within_hp_tolerance
+                    and contains_melody_pitch
+                    and working_fret_for_open_check is None
+                )
+                else 1
+            )
+
             anchor_count = (
                 transition_anchor_count(shape)
                 if within_hp_tolerance else 0
@@ -836,7 +887,8 @@ class ChordService:
 
             return (
                 -rank, not contains_melody_pitch,
-                quality_tier, -anchor_count, -notes_played,
+                quality_tier, open_shape_preference,
+                -anchor_count, -notes_played,
                 -shape.voicing_quality_score,
                 position_distance
             )

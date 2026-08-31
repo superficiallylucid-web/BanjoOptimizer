@@ -368,18 +368,20 @@ def test_csb_measure_12_c4_anticipates_following_g4_run():
 
         final_c4 = c4_notes[-1]
 
-        # This specific C4 is immediately followed by the real
-        # 3-note G4 run (measure 13) -- confirmed directly
-        # (compute_position_runs()-style check) that fret 5
-        # genuinely lets all 6 notes of the true following
-        # phrase (this C4 plus the G4 run and its own own
-        # continuation) stay in one hand position, while the
-        # CSV's own literal target (fret 1) only serves this
-        # single note. This is a deliberate, evidence-based
-        # divergence from the CSV, not a bug -- the CSV's own
-        # target for this specific row did not account for the
-        # immediately following G4 run.
-        assert final_c4 == (60, 5, 2)
+        # BO-117 -- this specific C4 is a 2.0-beat half note,
+        # immediately followed by the real 3-note G4 run (measure
+        # 13). Prior to BO-117, fret 5 was deliberately preferred
+        # here because it let all 6 notes of the following phrase
+        # (this C4 plus the G4 run and its own continuation) stay
+        # in one hand position -- a duration-blind reading of
+        # phrase coverage. BO-117 established that a note >= 1.5
+        # beats provides a genuine, natural opportunity to move
+        # the hand afterward, so phrase lookahead no longer looks
+        # past this C4 at all -- it now correctly matches the
+        # CSV's own literal target (fret 1), and the following G4
+        # run remains correctly handled by the existing HP/
+        # position logic once the hand actually moves for it.
+        assert final_c4 == (60, 1, 1)
 
     finally:
 
