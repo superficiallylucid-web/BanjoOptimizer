@@ -870,9 +870,12 @@ def _set_fret_diagram_content(
       is written the same way regardless of fretOffset, since
       they were never assigned a fret to make relative.
 
-    Returns False (and leaves the element untouched) if `values`
-    contains a muted string -- see module notes on why that's
-    not attempted.
+    Returns False (and leaves the element untouched) only if
+    `values` is somehow empty (defensive; parse_shape() always
+    returns exactly one entry per string in real use). A muted
+    (None) string is written correctly below and does not, on
+    its own, prevent this function from writing content --
+    BO-132.5.
 
     is_exception: BO-21 -- when True, marks the diagram red
     (<color r="255" g="0" b="4" a="255" />, a direct child of
@@ -888,7 +891,7 @@ def _set_fret_diagram_content(
     every FretDiagram this project generated before BO-21.
     """
 
-    if any(value is None for value in values):
+    if not values:
 
         return False
 
@@ -987,6 +990,21 @@ def _set_fret_diagram_content(
             )
 
             dot_element.text = "normal"
+
+        else:
+
+            # BO-132.5: fret is None (muted/do-not-play
+            # string) -- MuseScore's own FretDiagram marker
+            # convention for this is "cross" (parallel to
+            # "circle" for an open string above). No branch
+            # existed here before this BO; a muted string
+            # previously produced an empty <string> element
+            # with no marker/dot child at all.
+            marker_element = ET.SubElement(
+                string_element, "marker"
+            )
+
+            marker_element.text = "cross"
 
     return True
 

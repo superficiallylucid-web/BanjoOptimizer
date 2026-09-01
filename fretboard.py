@@ -129,6 +129,33 @@ def best_position(positions):
             value += 2
 
 
+        elif fret <= 17:
+
+            # BO-133.1 -- a new, intermediate tier, matching the
+            # same graduated fret-band structure already
+            # established above (0, <=4, <=7, <=12). Without
+            # this, EVERY fret above 12 fell into one
+            # undifferentiated -3 catch-all, letting the "favor
+            # middle strings" bonus below (+2 to +4) decide
+            # between candidates that could differ by many real
+            # frets within that same band -- confirmed directly:
+            # TCS/A Minor's own real m33 b4.5 case had candidates
+            # at frets 15/19/22, all landing in that single
+            # undifferentiated band, so the +2-point string-
+            # preference gap (string_index 3's +2 vs 1/2's +4)
+            # was deciding the outcome instead of the real 7-fret
+            # spread between the best and worst option. This
+            # value (0) is deliberately set so the new tier's own
+            # gap from the >17 tier below (0 vs -3, a 3-point
+            # spread) exceeds the largest string-preference gap
+            # above (2 points, string_index 3's +2 vs 1/2's +4) --
+            # confirmed directly this resolves the real case
+            # without disturbing any fret already inside an
+            # existing tier.
+
+            value += 0
+
+
         else:
 
             value -= 3

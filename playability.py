@@ -97,6 +97,97 @@ def _has_spike(values):
     return False
 
 
+LEFTWARD_FRET_EXCESS_THRESHOLD = 2
+
+
+def _has_leftward_fret_excess(values):
+    """
+    BO-132.3: true if any earlier (leftward) fretted position in
+    the shape string exceeds a later (rightward) fretted
+    position by more than LEFTWARD_FRET_EXCESS_THRESHOLD frets.
+
+    IMPORTANT -- string numbering. This shape string's own
+    left-to-right position order (index 0 = leftmost character)
+    is BO's own internal string1...string4 (ascending pitch,
+    confirmed throughout this project's own convention). The
+    player's own real-world banjo numbering is the reverse
+    (string1 = highest-pitched, closest to the floor; string4 =
+    lowest-pitched, closest to the 5th string) -- so the
+    player's own stated rule, "a higher-(player)-numbered string
+    may not be fretted more than 2 frets above a lower-(player)-
+    numbered string", translates to exactly this: an EARLIER
+    (lower-index, leftward) position in this raw string may not
+    exceed a LATER (higher-index, rightward) position by more
+    than 2. Confirmed directly (BO-132.2) against two real
+    examples using the player's own explicit string-by-string
+    breakdown: "7470" (positions 0 vs 1: fret 7 vs fret 4, excess
+    3) and "5502" (positions 0/1 vs 3: fret 5 vs fret 2, excess
+    3) -- both match this exact direction precisely.
+
+    This is a hard, physical rejection rule -- not a scoring
+    preference -- because it can be technically fingered (often
+    via a barre) while still being a poor practical choice; the
+    player has confirmed this directly, including for "2552"
+    specifically, which passes every other existing check here.
+
+    Open strings never participate -- only pairs where BOTH
+    positions are genuinely fretted (not open, not muted) are
+    compared. A shape with 0 or 1 fretted position automatically
+    passes, since there's no pair to compare at all.
+    """
+
+    fretted = [
+        (index, value)
+        for index, value in enumerate(values)
+        if value is not None and value > 0
+    ]
+
+    for earlier_index in range(len(fretted)):
+
+        earlier_position, earlier_fret = fretted[earlier_index]
+
+        for later_index in range(
+            earlier_index + 1, len(fretted)
+        ):
+
+            later_position, later_fret = fretted[later_index]
+
+            if (
+                earlier_fret - later_fret
+                > LEFTWARD_FRET_EXCESS_THRESHOLD
+            ):
+
+                return True
+
+    return False
+
+
+def _has_interior_string_omitted(values):
+    """
+    BO-132.5: true if a muted (None) string occupies an
+    INTERIOR position -- index 1 or index 2 in this raw shape
+    string.
+
+    IMPORTANT -- numbering, same translation established in
+    BO-132.2/BO-132.3. Index 0 (leftmost char) = player's string
+    4, index 3 (rightmost char) = player's string 1; indices 1
+    and 2 are the player's own strings 3 and 2 -- the two
+    interior strings.
+
+    The player's own stated rule: a three-string shape (exactly
+    one muted string) is permitted only when the omitted string
+    is string 1 or string 4 (the two OUTER positions, index 0 or
+    index 3). Omitting string 2 or string 3 (index 1 or index 2)
+    is never permitted, regardless of how many strings are
+    muted overall.
+
+    A shape with no muted strings at all trivially passes (no
+    interior position is None).
+    """
+
+    return values[1] is None or values[2] is None
+
+
 def _is_simple_barre(values):
     """
     True if two or more ADJACENT strings share the same
@@ -188,10 +279,13 @@ def evaluate(shape_text):
     # Confirmed directly why this is needed rather than another
     # algorithmic rule: barre technique makes hand mechanics
     # depend on which specific strings/fingers are involved in a
-    # way no simple formula reliably captures (e.g. "2552" is
-    # genuinely playable via a barre, "2225" is not, despite both
-    # already passing every existing algorithmic check below
-    # unchanged).
+    # way no simple formula reliably captures (e.g. "2225" is
+    # not playable despite passing every existing algorithmic
+    # check below unchanged; a technically-fingerable barre like
+    # "2552" is a separate, deliberate case -- BO-132.3 blocks it
+    # via the leftward-fret-excess rule below instead, since the
+    # player considers it a poor practical choice regardless of
+    # whether the barre itself is possible).
     if shape_text in AVOID_SHAPES:
 
         return PlayabilityResult(
@@ -212,6 +306,33 @@ def evaluate(shape_text):
                 "lower frets on both sides -- likely "
                 "impossible without crossing fingers over "
                 "each other"
+            ),
+            warnings=warnings,
+            score=_score(values)
+        )
+
+    if _has_leftward_fret_excess(values):
+
+        return PlayabilityResult(
+            accepted=False,
+            reason=(
+                "A string closer to the palm is fretted too "
+                "far above a string farther out -- a poor "
+                "practical choice even if technically "
+                "fingerable"
+            ),
+            warnings=warnings,
+            score=_score(values)
+        )
+
+    if _has_interior_string_omitted(values):
+
+        return PlayabilityResult(
+            accepted=False,
+            reason=(
+                "An interior string is muted -- a three-string "
+                "shape is only permitted when the omitted "
+                "string is string 1 or string 4"
             ),
             warnings=warnings,
             score=_score(values)
