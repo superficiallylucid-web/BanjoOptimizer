@@ -9,7 +9,10 @@ from fretboard import (
     best_position as choose_best_position
 )
 
-from playing_model import analyze_tuning_playing_model, _chord_working_fret
+from playing_model import (
+    analyze_tuning_playing_model, _chord_working_fret,
+    analyze_chord_shape_playability
+)
 
 from chord_service import ChordService
 
@@ -736,7 +739,8 @@ class TuningAnalyzer:
 
         (
             avg_awkwardness, chord_fd_quality,
-            unplayable_note_count, unplayable_note_proportion
+            unplayable_note_count, unplayable_note_proportion,
+            avg_generated_chord_playability
         ) = self.chord_fd_quality_bonus(tuning)
 
         advantages, tradeoffs = classify_reasons(reasons)
@@ -770,7 +774,11 @@ class TuningAnalyzer:
 
             unplayable_note_count=unplayable_note_count,
 
-            unplayable_note_proportion=unplayable_note_proportion
+            unplayable_note_proportion=unplayable_note_proportion,
+
+            avg_generated_chord_playability=(
+                avg_generated_chord_playability
+            )
 
             # shared_features and confidence are left at
             # their defaults ([] and None) -- shared_features
@@ -1163,7 +1171,23 @@ class TuningAnalyzer:
         of its own.
 
         Returns (avg_awkwardness, chord_fd_quality,
-        unplayable_note_count, unplayable_note_proportion).
+        unplayable_note_count, unplayable_note_proportion,
+        avg_generated_chord_playability).
+
+        avg_generated_chord_playability -- BO-131.4. Mean
+        analyze_chord_shape_playability().score across this same
+        loop's own real chord occurrences, evaluated on the
+        EXACT shape _select_chord_shape_for_harmony() selects
+        (the same call already made above for avg_awkwardness --
+        not a second, independent chord selection). Unlike
+        chord_fd_quality, this never passes through
+        analyze_tuning_playing_model(), so it carries none of
+        that path's own melody-combination contribution -- a
+        measurement of chord-shape quality alone, on the shapes
+        BO would actually generate for this tuning. Deliberately
+        not yet part of combined_score or any existing weight;
+        see TuningResult.avg_generated_chord_playability's own
+        docstring in models.py.
 
         avg_awkwardness (BO-43/44/46 definition, UNCHANGED --
         mean of max(0, working_fret - WORKING_FRET_COMFORT_
@@ -1204,7 +1228,7 @@ class TuningAnalyzer:
 
         if not self.melody_notes:
 
-            return 0.0, 1.0, 0, 0.0
+            return 0.0, 1.0, 0, 0.0, 0.0
 
         # Matches score_tuning()'s own existing `impossible`
         # check exactly: tuning.notes (all 5 strings, including
@@ -1235,8 +1259,7 @@ class TuningAnalyzer:
 
             return 0.0, 1.0, unplayable_note_count, (
                 unplayable_note_proportion
-            )
-
+            ), 0.0
         try:
 
             chord_service = ChordService(ChordLibrary())
@@ -1249,6 +1272,12 @@ class TuningAnalyzer:
             awkwardness_sum = 0.0
 
             total_chord_onsets = 0
+
+            # BO-131.4 -- independent chord-quality signal,
+            # accumulated in this same loop (not a second
+            # traversal) from the exact shape this call already
+            # selects for awkwardness above.
+            generated_chord_playability_sum = 0.0
 
             incoming_shape = None
 
@@ -1301,10 +1330,29 @@ class TuningAnalyzer:
 
                 awkwardness_sum += awkwardness
 
+                # BO-131.4 -- same shape, same loop, same
+                # denominator (total_chord_onsets) as
+                # avg_awkwardness -- analyze_chord_shape_
+                # playability() takes only the shape string
+                # itself, never melody or the Playing Model, so
+                # this carries none of chord_fd_quality's own
+                # melody-combination contribution.
+                generated_chord_playability_sum += (
+                    analyze_chord_shape_playability(
+                        shape.shape
+                    ).score
+                )
+
                 total_chord_onsets += 1
 
             avg_awkwardness = (
                 awkwardness_sum / total_chord_onsets
+                if total_chord_onsets else 0.0
+            )
+
+            avg_generated_chord_playability = (
+                generated_chord_playability_sum
+                / total_chord_onsets
                 if total_chord_onsets else 0.0
             )
 
@@ -1327,7 +1375,7 @@ class TuningAnalyzer:
 
                 return 0.0, 1.0, unplayable_note_count, (
                     unplayable_note_proportion
-                )
+                ), avg_generated_chord_playability
 
             average_phrase_score = (
                 playing_model_result.total_score / phrase_count
@@ -1341,11 +1389,12 @@ class TuningAnalyzer:
 
             return (
                 avg_awkwardness, chord_fd_quality,
-                unplayable_note_count, unplayable_note_proportion
+                unplayable_note_count, unplayable_note_proportion,
+                avg_generated_chord_playability
             )
 
         except Exception:
 
             return 0.0, 1.0, unplayable_note_count, (
                 unplayable_note_proportion
-            )
+            ), 0.0

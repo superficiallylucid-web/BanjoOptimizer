@@ -1082,6 +1082,53 @@ def _melody_notes_at_harmony_onset(harmony, melody_notes):
     return matches
 
 
+def _chord_candidate_has_melody_support(
+    shape_values, melody_candidate_positions
+):
+    """
+    BO-131.11, Rule B: does the onset melody note's own real
+    candidate set (from fretboard.find_positions() -- every
+    playable position for that pitch, not the position the
+    sequential melody algorithm would eventually pick) contain
+    at least one position whose fret is at or above this chord
+    candidate's own working fret?
+
+    Deliberately an availability test, not a preference: this
+    never claims the melody SHOULD be played at the highest
+    available position, only that a real option exists which
+    would make this chord candidate's own height genuinely
+    supportable -- confirmed via BO-131.7/131.8's own real
+    examples that this is the distinction that actually mattered
+    (a melody candidate existing at the right height vs. the
+    sequential algorithm merely having picked something high).
+
+    working_fret is computed via the EXISTING, unmodified
+    playing_model._chord_working_fret() -- the same definition
+    already used elsewhere in this file, not a new one.
+
+    Returns True/False. No numeric threshold, no "close enough"
+    tolerance -- purely "does an at-or-above position exist in
+    the real candidate set", per BO-131.10's own explicit
+    instruction against inventing a cutoff.
+    """
+
+    working_fret = _chord_working_fret(shape_values)
+
+    if working_fret is None:
+
+        # An all-open shape (no fretted position at all) has no
+        # height to support in the first place -- trivially
+        # compatible, matching _capped_position_distance()'s own
+        # existing convention elsewhere in this codebase that a
+        # working_fret of None means "no positional constraint".
+        return True
+
+    return any(
+        position["fret"] >= working_fret
+        for position in melody_candidate_positions
+    )
+
+
 def _select_chord_shape_for_harmony(
     harmony, tuning, chord_service, melody_notes=None,
     next_harmony=None, incoming_shape=None
@@ -1404,7 +1451,52 @@ def _select_chord_shape_for_harmony(
 
         return None, False, None
 
+    # BO-131.11 -- joint chord/melody selection, v1: scoped
+    # exactly to "one chord occurrence + its onset melody note"
+    # per BO-131.10's own design. onset_notes is the SAME
+    # variable already computed above (for preferred_melody_fret)
+    # -- reused, not recomputed. When it's empty (no melody note
+    # at this chord's onset), this block is skipped entirely and
+    # chosen_shape falls through to shapes[0] exactly as before
+    # this BO existed -- today's behavior, unmodified, for every
+    # case outside this narrow scope.
     chosen_shape = shapes[0]
+
+    if onset_notes:
+
+        # BO-131.10's own established convention (matching
+        # _preferred_melody_fret()'s own docstring): when more
+        # than one note shares the onset, use the first --
+        # reused here rather than inventing a stricter rule.
+        onset_melody_positions = find_positions(
+            onset_notes[0].midi, tuning.notes[1:]
+        )
+
+        # Rule A: walk the EXISTING ranked candidate list in its
+        # existing order -- no new chord-quality ranking at all.
+        for candidate_shape in shapes:
+
+            candidate_values = parse_shape(candidate_shape.shape)
+
+            if any(value is None for value in candidate_values):
+
+                continue
+
+            # Rule B: does the onset melody's own real candidate
+            # set contain a position at/above this candidate's
+            # own working fret?
+            if _chord_candidate_has_melody_support(
+                candidate_values, onset_melody_positions
+            ):
+
+                chosen_shape = candidate_shape
+
+                break
+
+        # If no candidate passes Rule B at all, chosen_shape
+        # remains shapes[0] -- BO-131.10 Section 7's own
+        # "unsupported/ambiguous circumstances retain today's
+        # existing behavior", not a newly-invented rule.
 
     values = parse_shape(chosen_shape.shape)
 

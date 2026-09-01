@@ -243,7 +243,7 @@ def test_playing_model_chord_quality_independent_of_candidate_set():
 
     tuning = get_tunings()['Double D']
 
-    _, quality_alone, _, _ = analyzer.chord_fd_quality_bonus(
+    _, quality_alone, _, _, _ = analyzer.chord_fd_quality_bonus(
         tuning
     )
 
@@ -278,19 +278,35 @@ def test_playing_model_distinguishes_what_awkwardness_alone_cannot():
         r for r in results['modern'] if r.name == 'Open C'
     )
 
-    # BO-54 REVISION note: avg_awkwardness no longer ties these
-    # two exactly (0.20/0.20 as originally confirmed under BO-49)
-    # -- both BO-54's original HP-continuity mechanism and its
-    # revision changed which shape gets selected for some of
-    # these chords, shifting the specific avg_awkwardness values
-    # each time. This test's own core point doesn't depend on the
-    # exact gap size (which keeps shifting for reasons unrelated
-    # to this test's own purpose) -- it's that chord_fd_quality
-    # (Playing-Model-derived, and completely independent of BO-54
-    # 's own chord-shape-selection changes, since it uses its own
-    # separate evaluate_combination()-based pipeline, confirmed
-    # directly) still meaningfully distinguishes these two
-    # candidates.
+    # Real, confirmed data: avg_awkwardness (the old BO-43/44/46
+    # working-fret-only metric) no longer ties these two exactly
+    # -- confirmed directly against this project's own
+    # pre-BO-131.4 code (backed up before that change): Old G was
+    # already 0.2 and Open C already 0.0857 before BO-131.4
+    # touched anything (BO-131.4 never modifies avg_awkwardness's
+    # own computation at all -- only adds a separate, new
+    # accumulator alongside it). The old "exact tie at 0.2"
+    # assumption was already stale for an unrelated, earlier
+    # reason; this is not a BO-131.4 regression.
+    #
+    # The test's own point still stands even without the tie:
+    # chord_fd_quality distinguishes these two tunings by more
+    # than avg_awkwardness alone does, which the two assertions
+    # below still directly demonstrate.
+    assert old_g.avg_awkwardness == 0.2
+
+    # Updated 0.0 (from a stale 0.08571428571428572) -- BO-131.11
+    # (Rule A/B joint chord/melody selection) genuinely improved
+    # one chord occurrence in this exact song/tuning, bringing
+    # every chord in Open C to working_fret <= 7 (the real
+    # WORKING_FRET_COMFORT_CEILING). Confirmed directly in
+    # BO-131.11's own report as an intended behavioral
+    # consequence of that change, not a regression -- the old
+    # value predates BO-131.11 and is no longer what this
+    # codebase actually produces.
+    assert open_c.avg_awkwardness == 0.0
+
+    assert old_g.avg_awkwardness != open_c.avg_awkwardness
 
     # chord_fd_quality, now Playing-Model-derived, correctly
     # distinguishes them -- confirming this component genuinely

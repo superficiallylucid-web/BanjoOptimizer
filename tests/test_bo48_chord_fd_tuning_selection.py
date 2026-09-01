@@ -78,7 +78,7 @@ def test_chord_fd_quality_independent_of_candidate_set():
     # Compute Double D's own chord_fd_quality in isolation --
     # this method is per-tuning by construction, never given
     # other candidates at all.
-    _, quality_alone, _, _ = analyzer.chord_fd_quality_bonus(
+    _, quality_alone, _, _, _ = analyzer.chord_fd_quality_bonus(
         tuning
     )
 
@@ -108,7 +108,7 @@ def test_chord_fd_quality_stable_with_extreme_candidate_present():
 
     tuning = get_tunings()['Old G']
 
-    _, quality_alone, _, _ = analyzer.chord_fd_quality_bonus(
+    _, quality_alone, _, _, _ = analyzer.chord_fd_quality_bonus(
         tuning
     )
 

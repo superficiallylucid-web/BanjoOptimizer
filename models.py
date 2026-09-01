@@ -318,6 +318,26 @@ class TuningResult:
 
     unplayable_note_proportion: float = 0.0
 
+    # BO-131.4 -- mean analyze_chord_shape_playability().score
+    # across this tuning's own real chord occurrences, evaluated
+    # on the EXACT shape _select_chord_shape_for_harmony() itself
+    # selects (the same call chord_fd_quality_bonus() already
+    # makes for avg_awkwardness, reused rather than a second,
+    # independent selection). Unlike chord_fd_quality above, this
+    # does NOT pass through analyze_tuning_playing_model() at
+    # all, so it carries none of that path's own melody-
+    # combination contribution -- a measurement of chord-shape
+    # quality alone, on the shapes BO would actually generate.
+    #
+    # Deliberately NOT yet part of combined_score or any existing
+    # weight (CHORD_FD_INFLUENCE, PLAYING_MODEL_WEIGHT) -- BO-131
+    # scoped this as a measurement correction only; whether/how
+    # to weight it into the actual ranking is a separate,
+    # subsequent decision. 0.0 for a song with no harmony data or
+    # no chord shape selectable for this tuning (matching
+    # avg_awkwardness's own "nothing to measure" convention).
+    avg_generated_chord_playability: float = 0.0
+
     # The score `analyze()` actually sorts and recommends by --
     # `score` (melody) blended with `chord_fd_quality` at
     # CHORD_FD_INFLUENCE, then the separate unplayable-note

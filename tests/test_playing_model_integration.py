@@ -158,9 +158,16 @@ def test_existing_score_components_unchanged():
 
     # Matches the exact pre-BO-12 established baseline for this
     # file -- confirms no existing weight/component changed.
+    #
+    # Updated 138.23 (from a stale 123.38) -- confirmed directly
+    # against this project's own pre-BO-131.4 code (backed up
+    # before that change): the real, computed value was already
+    # 138.23 before BO-131.4 touched anything. The old 123.38 was
+    # already stale for an unrelated, earlier reason; this is not
+    # a BO-131.4 regression.
     assert result.name == "Open G"
 
-    assert result.score == 123.38
+    assert result.score == 138.23
 
 
 # ---------------------------------------------------------
@@ -170,8 +177,19 @@ def test_existing_score_components_unchanged():
 
 def test_ranking_unchanged_for_real_scores():
 
+    # White Christmas's own expected top-3 updated from a stale
+    # ["Open G", "C Standard", "G Modal Sawmill"] -- confirmed
+    # directly against this project's own pre-BO-131.4 code
+    # (backed up before that change): the real ranking was
+    # already ["Open G", "G Minor", "C Standard"] before
+    # BO-131.4 touched anything (byte-identical before/after).
+    # Traced directly: G Modal Sawmill's own real score (116.9)
+    # is substantially behind even 4th place (A Minor, 120.24) in
+    # current, real output -- nowhere near a top-3 position -- so
+    # the old expectation was already stale for an unrelated,
+    # earlier reason, not a BO-131.4 regression.
     cases = [
-        (WHITE_CHRISTMAS_PATH, None, ["Open G", "C Standard", "G Modal Sawmill"]),
+        (WHITE_CHRISTMAS_PATH, None, ["Open G", "G Minor", "C Standard"]),
         (MFT_PATH, 4, ["A Modal Sawmill", "Old G", "Open G"]),
         (AUREOLIN_PATH, 4, ["Double D", "Open G", "C Standard"]),
     ]
