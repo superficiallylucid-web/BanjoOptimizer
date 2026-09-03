@@ -79,6 +79,359 @@ def find_positions(midi, open_notes):
 
 
 # ---------------------------------------------------------
+# Choose a compact simultaneous voicing (BO-133.5)
+# ---------------------------------------------------------
+#
+# For genuine multi-note melody events (two or more pitches
+# sounding at the same onset, e.g. a real dyad within the
+# melody line itself -- confirmed real, distinct from a chord
+# symbol, via BO-133.3's own investigation). v1 scope: exactly
+# two simultaneous pitches; a third or more is out of scope
+# (see this function's own docstring below).
+
+def _best_same_octave_combination(pitches, open_notes):
+    """
+    The best playable, different-string pairing for these exact
+    pitches, no octave consideration at all. Returns (span,
+    position_a, position_b) or None if no valid pairing exists.
+    Factored out so choose_simultaneous_positions() can reuse it
+    identically for both the source pitches and any octave-
+    shifted alternative -- one search, not a parallel copy.
+
+    BO-133.5 Part A -- "best" balances fret span AND absolute
+    fret comfort together, reusing the existing fret-band values
+    (fretboard._fret_band_value(), the same tiers best_position()
+    itself uses -- not a new, separate scale) rather than
+    minimizing span alone. Confirmed directly against the real
+    Gamboge case that pure span-minimization picks a technically-
+    zero-span but musically poor high-neck voicing (both notes
+    at fret 17) over a genuinely comfortable, still-compact
+    voicing one fret apart at frets 9/10 -- span alone can't
+    distinguish "close together" from "close together AND
+    reasonably placed". combined_score = the sum of both
+    positions' own fret-band value, minus 1 point per fret of
+    span (SPAN_PENALTY_WEIGHT -- deliberately the same unit scale
+    as the fret-band values themselves, not an arbitrarily large
+    or small number chosen to force one particular case). The
+    combination with the HIGHEST combined_score wins; span (this
+    tuple's own first element) is still returned and still used
+    by choose_simultaneous_positions()'s own outer "is the
+    original good enough to skip octave search" gate, which
+    remains a direct span comparison against
+    playability.MAX_ACCEPTABLE_SPAN, unchanged by this addition.
+    """
+
+    positions_a = find_positions(pitches[0], open_notes)
+
+    positions_b = find_positions(pitches[1], open_notes)
+
+    SPAN_PENALTY_WEIGHT = 1
+
+    valid_combinations = []
+
+    for position_a in positions_a:
+
+        for position_b in positions_b:
+
+            if position_a["string"] == position_b["string"]:
+
+                continue
+
+            span = abs(position_a["fret"] - position_b["fret"])
+
+            combined_score = (
+                _fret_band_value(position_a["fret"])
+                + _fret_band_value(position_b["fret"])
+                - SPAN_PENALTY_WEIGHT * span
+            )
+
+            valid_combinations.append(
+                (span, combined_score, position_a, position_b)
+            )
+
+    if not valid_combinations:
+
+        return None
+
+    valid_combinations.sort(
+        key=lambda combination: (
+            -combination[1],
+            min(
+                combination[2]["fret"], combination[3]["fret"]
+            )
+        )
+    )
+
+    return valid_combinations[0]
+
+
+def _positions_from_fd_anchor(
+    pitches, open_notes, fd_anchor_shape_values
+):
+    """
+    BO-135 -- check whether the already-selected chord shape at
+    this exact onset (fd_anchor_shape_values, BO-internal parsed
+    values, e.g. from _select_chord_shape_for_harmony()) already
+    sounds both of the two simultaneous melody pitches, each on
+    its own distinct string.
+
+    Confirmed real, direct root cause (BO-135's own investigation
+    report): choose_simultaneous_positions() previously searched
+    for a compact voicing entirely independently of any chord
+    shape already selected for this same onset, even when that
+    shape already, correctly contained both melody pitches --
+    producing a TAB that didn't match the FD despite a matching,
+    already-known-good representation existing. This reuses the
+    chord shape's own already-selected positions exactly, rather
+    than searching for a new, separate compact voicing that may
+    happen to disagree with it.
+
+    Matched by PITCH CLASS (mod 12), not exact MIDI value.
+    Confirmed directly against the real Gamboge case this was
+    built for: chord selection had already, independently chosen
+    a shape voicing the melody's own D a different octave (62)
+    than the source melody note's own raw pitch (74) -- same
+    pitch class, different octave, consistent with this whole
+    function's own already-established BO-133.5-FOLLOWUP octave-
+    adjustment philosophy elsewhere. Matching by exact MIDI value
+    here would have meant this anchor never applied to the exact
+    case it exists to fix. The returned position's own "pitch"
+    is the anchor's own actual sounding pitch (e.g. 62), not the
+    original melody pitch passed in (e.g. 74) -- the whole point
+    is for the TAB to represent the same, already-selected chord
+    voicing the FD does, not merely to find a differently-voiced
+    position for the original pitch.
+
+    Returns a list of exactly two position dicts (same
+    {"pitch", "string", "fret", "score"} shape this module's own
+    choose_simultaneous_positions() returns), in the same order
+    as `pitches`, if and only if the anchor shape sounds a note
+    of BOTH pitches' own pitch classes, on two DIFFERENT strings.
+    Returns None otherwise (the anchor doesn't cover one or both
+    pitch classes, or would require the same physical string for
+    both) -- callers should fall back to the existing independent
+    search in that case, not treat this as an error.
+    """
+
+    used_strings = set()
+
+    positions = []
+
+    for pitch in pitches:
+
+        match = None
+
+        for string_index, fret in enumerate(
+            fd_anchor_shape_values
+        ):
+
+            if fret is None:
+
+                continue
+
+            if string_index >= len(open_notes):
+
+                continue
+
+            if string_index in used_strings:
+
+                continue
+
+            sounding_pitch = open_notes[string_index] + fret
+
+            if sounding_pitch % 12 == pitch % 12:
+
+                match = {
+                    "string": string_index,
+                    "fret": fret,
+                    "score": 0,
+                    "pitch": sounding_pitch
+                }
+
+                break
+
+        if match is None:
+
+            return None
+
+        used_strings.add(match["string"])
+
+        positions.append(match)
+
+    return positions
+
+
+def choose_simultaneous_positions(
+    pitches, open_notes, fd_anchor_shape_values=None
+):
+    """
+    Given exactly two simultaneous melody pitches, choose a
+    compact, physically playable pair of positions -- one per
+    pitch, each reusing the existing, unmodified
+    find_positions() candidate source.
+
+    BO-135 -- fd_anchor_shape_values: optional, the already-
+    selected chord shape's own parsed values (BO-internal order)
+    at this exact onset, if one exists. When provided and it
+    genuinely sounds both pitches on two different strings, its
+    own positions are used directly -- see
+    _positions_from_fd_anchor()'s own docstring for the full
+    reasoning. Falls through to the existing, unmodified
+    independent search below whenever no anchor is given, or the
+    anchor doesn't cover both pitches -- this is strictly
+    additive; every case this function already handled before
+    BO-135 is completely unaffected.
+
+    Two notes can never sound from the same physical string at
+    once, so any combination pairing both pitches onto the same
+    string is rejected outright, not merely deprioritized -- the
+    only hard rejection here, since it's a genuine physical
+    impossibility rather than a preference.
+
+    Among the remaining, physically playable combinations,
+    always prefers the smallest fret span -- deliberately NOT
+    hard-capped against playability.MAX_ACCEPTABLE_SPAN when NO
+    alternative exists (confirmed directly against the real
+    Gamboge case that a genuine 2-note melodic interval can
+    require a real span every same-octave combination exceeds --
+    e.g. midi 57/74, a 17-semitone interval, where the closest
+    same-octave pairing in A Minor tuning is still a span of 5).
+
+    BO-133.5-FOLLOWUP -- octave consideration: when the best
+    SAME-octave combination's own span exceeds
+    playability.MAX_ACCEPTABLE_SPAN (reusing this project's own
+    existing "genuinely compact" threshold, not a new number),
+    also tries exactly one of the two pitches shifted by exactly
+    one octave (+12 or -12), the other left at its own written
+    pitch -- matching the specific, bounded alternatives named
+    directly (BO-133.5-FOLLOWUP's own report): shift the first
+    pitch, or shift the second, in either direction. This is
+    deliberately narrow, not a general search across every
+    octave/every note -- exactly one note, exactly one octave,
+    only ever considered as a mechanism for making THIS
+    simultaneous pair playable as a compact voicing, never
+    applied to an ordinary single-note melody event at all.
+
+    An octave-shifted alternative is only ever PREFERRED over the
+    original, same-octave result when its own best span is
+    ITSELF within MAX_ACCEPTABLE_SPAN (the same "genuinely
+    compact enough to be worth it" bar, not merely "somewhat
+    smaller than before") -- among multiple qualifying
+    alternatives, the smallest span wins; ties broken the same
+    way as the same-octave search. If no octave-shifted
+    alternative qualifies, the original, same-octave result is
+    kept even though it isn't compact -- consistent with this
+    function's own existing "never return None when a real,
+    playable combination exists" philosophy elsewhere.
+
+    Returns a list of exactly two position dicts (each
+    {"pitch", "string", "fret", "score"} -- "pitch" added by
+    BO-133.5-FOLLOWUP so callers can see the ACTUAL pitch used
+    for each position, which may differ from the corresponding
+    entry in `pitches` if an octave shift was applied; "string"/
+    "fret"/"score" remain the same shape find_positions() itself
+    returns), in the same order as `pitches`, or None if no
+    valid combination exists at all in any octave considered --
+    callers should treat None as "no compact simultaneous
+    voicing available", not an error.
+
+    v1 scope only: len(pitches) must be exactly 2. Returns None
+    for any other count -- a genuine 3+-note simultaneous event
+    is out of scope (see BO-133.5's own report).
+    """
+
+    if len(pitches) != 2:
+
+        return None
+
+    if fd_anchor_shape_values is not None:
+
+        anchor_positions = _positions_from_fd_anchor(
+            pitches, open_notes, fd_anchor_shape_values
+        )
+
+        if anchor_positions is not None:
+
+            return anchor_positions
+
+    from playability import MAX_ACCEPTABLE_SPAN
+
+    same_octave_best = _best_same_octave_combination(
+        pitches, open_notes
+    )
+
+    best_span = (
+        same_octave_best[0] if same_octave_best else None
+    )
+
+    best_score = (
+        same_octave_best[1] if same_octave_best else None
+    )
+
+    best_combination = same_octave_best
+
+    best_pitches = pitches
+
+    if best_span is None or best_span > MAX_ACCEPTABLE_SPAN:
+
+        for shifted_index in (0, 1):
+
+            for octave_shift in (12, -12):
+
+                candidate_pitches = list(pitches)
+
+                candidate_pitches[shifted_index] += octave_shift
+
+                candidate_best = _best_same_octave_combination(
+                    candidate_pitches, open_notes
+                )
+
+                if candidate_best is None:
+
+                    continue
+
+                if candidate_best[0] > MAX_ACCEPTABLE_SPAN:
+
+                    continue
+
+                # BO-133.5 Part A -- compare octave-shifted
+                # alternatives to each other, and to the
+                # original, using the same combined fret-band-
+                # comfort-minus-span score used inside
+                # _best_same_octave_combination() itself, not
+                # raw span -- consistent with this whole
+                # correction's own point (span alone can't tell
+                # "close together" apart from "close together AND
+                # reasonably placed").
+                if (
+                    best_combination is None
+                    or best_score is None
+                    or candidate_best[1] > best_score
+                ):
+
+                    best_span = candidate_best[0]
+
+                    best_score = candidate_best[1]
+
+                    best_combination = candidate_best
+
+                    best_pitches = candidate_pitches
+
+    if best_combination is None:
+
+        return None
+
+    _, _, best_a, best_b = best_combination
+
+    return [
+        {**best_a, "pitch": best_pitches[0]},
+        {**best_b, "pitch": best_pitches[1]}
+    ]
+
+
+
+
+# ---------------------------------------------------------
 # Choose best fingering position (melody use)
 # ---------------------------------------------------------
 #
@@ -87,6 +440,49 @@ def find_positions(midi, open_notes):
 # a melody-playing preference specifically -- not reused by
 # chord generation, which needs its own scoring (see
 # chord_generator.py).
+
+def _fret_band_value(fret):
+    """
+    The graduated fret-band comfort value used by
+    best_position() -- extracted (BO-133.5 Part A) so it can be
+    reused by fretboard.choose_simultaneous_positions() too,
+    rather than duplicating these same tier boundaries a second
+    time. Pure refactor of what was previously inline in
+    best_position() -- confirmed via the full regression suite
+    this produces byte-identical output to before the
+    extraction.
+
+    Higher value = more comfortable/lower on the neck. See
+    best_position()'s own docstring/history for why these
+    specific tier boundaries and values were chosen (0, <=4,
+    <=7, <=12, <=17, else), including BO-133.1's own addition of
+    the <=17 tier.
+    """
+
+    if fret == 0:
+
+        return 10
+
+    elif fret <= 4:
+
+        return 8
+
+    elif fret <= 7:
+
+        return 5
+
+    elif fret <= 12:
+
+        return 2
+
+    elif fret <= 17:
+
+        return 0
+
+    else:
+
+        return -3
+
 
 def best_position(positions):
 
@@ -105,60 +501,7 @@ def best_position(positions):
         string = position["string"]
 
 
-        value = 0
-
-
-
-        if fret == 0:
-
-            value += 10
-
-
-        elif fret <= 4:
-
-            value += 8
-
-
-        elif fret <= 7:
-
-            value += 5
-
-
-        elif fret <= 12:
-
-            value += 2
-
-
-        elif fret <= 17:
-
-            # BO-133.1 -- a new, intermediate tier, matching the
-            # same graduated fret-band structure already
-            # established above (0, <=4, <=7, <=12). Without
-            # this, EVERY fret above 12 fell into one
-            # undifferentiated -3 catch-all, letting the "favor
-            # middle strings" bonus below (+2 to +4) decide
-            # between candidates that could differ by many real
-            # frets within that same band -- confirmed directly:
-            # TCS/A Minor's own real m33 b4.5 case had candidates
-            # at frets 15/19/22, all landing in that single
-            # undifferentiated band, so the +2-point string-
-            # preference gap (string_index 3's +2 vs 1/2's +4)
-            # was deciding the outcome instead of the real 7-fret
-            # spread between the best and worst option. This
-            # value (0) is deliberately set so the new tier's own
-            # gap from the >17 tier below (0 vs -3, a 3-point
-            # spread) exceeds the largest string-preference gap
-            # above (2 points, string_index 3's +2 vs 1/2's +4) --
-            # confirmed directly this resolves the real case
-            # without disturbing any fret already inside an
-            # existing tier.
-
-            value += 0
-
-
-        else:
-
-            value -= 3
+        value = _fret_band_value(fret)
 
 
 

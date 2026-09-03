@@ -480,6 +480,26 @@ CHORD_QUALITIES = {
         "display": "sus4"
     },
 
+    "7sus2": {
+        "intervals": [0, 2, 7, 10],
+        "display": "7sus2"
+    },
+
+    "maj7sus2": {
+        "intervals": [0, 2, 7, 11],
+        "display": "maj7sus2"
+    },
+
+    "7sus4": {
+        "intervals": [0, 5, 7, 10],
+        "display": "7sus4"
+    },
+
+    "maj7sus4": {
+        "intervals": [0, 5, 7, 11],
+        "display": "maj7sus4"
+    },
+
     # BO-121 -- diminished 7th: root, minor 3rd, diminished 5th
     # (tritone), diminished 7th (enharmonic to a major 6th above
     # the root, 9 semitones). Confirmed real: MuseScore emits
@@ -863,12 +883,33 @@ QUALITY_CODE_TO_DISPLAY_NAME = {
 def quality_code_to_display_name(quality_code):
     """
     Return the chord_library.py CSV-style display name for a
-    quality_code (e.g. "maj7" -> "Maj 7"), or None if the code
-    isn't recognized. A None result isn't an error -- callers
-    should treat it the same as any other "no data available
-    for this chord" case (e.g. pass it straight through to
-    ChordService, which will simply find no verified/generated
-    shapes for an unrecognized quality).
+    quality_code (e.g. "maj7" -> "Maj 7"), or, when this exact
+    quality has no library-specific mapping (no verified shapes
+    exist for it in the CSV -- confirmed real for "7sus2"/
+    "maj7sus2", among others), fall back to CHORD_QUALITIES' own
+    "display" field for this same quality_code instead.
+
+    A quality with no library mapping at all is not a "no data
+    available" case -- chord_service.get_shapes() already, on
+    its own, generates real candidate shapes with no library
+    match whatsoever (confirmed directly); quality_display is
+    only ever used there as a label on the resulting ChordShape,
+    not as a gate on whether generation itself can proceed. The
+    only genuine "no data" case is a quality_code recognized by
+    neither mapping at all, which still correctly returns None
+    here (letting callers skip the chord exactly as before).
     """
 
-    return QUALITY_CODE_TO_DISPLAY_NAME.get(quality_code)
+    display_name = QUALITY_CODE_TO_DISPLAY_NAME.get(quality_code)
+
+    if display_name is not None:
+
+        return display_name
+
+    quality_entry = CHORD_QUALITIES.get(quality_code)
+
+    if quality_entry is not None:
+
+        return quality_entry["display"]
+
+    return None

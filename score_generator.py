@@ -82,7 +82,8 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 from fretboard import (
-    find_positions, best_position, parse_shape, sounding_notes
+    find_positions, best_position, parse_shape, sounding_notes,
+    choose_simultaneous_positions
 )
 
 from music import (
@@ -1055,6 +1056,32 @@ def _preferred_melody_fret(onset_notes, tuning):
 
     open_notes = tuning.notes[1:]
 
+    # BO-133.5 -- a genuine two-note onset (e.g. Gamboge's own
+    # real m1/b1 case) uses the EXACT SAME compact-voicing logic
+    # melody-writing itself uses (fretboard.choose_simultaneous_
+    # positions(), a pure function -- calling it here and again
+    # later, for the same input pitches, deterministically
+    # produces the same result both times), rather than only
+    # ever looking at onset_notes[0] and silently ignoring the
+    # second note. The lower of the two chosen frets is used as
+    # this value's own existing "where does the melody naturally
+    # sit" meaning. Falls back to the existing, unmodified
+    # single-note path below when there's no valid simultaneous
+    # voicing (or only one onset note) -- unchanged behavior for
+    # every case this project's existing tests already cover.
+    if len(onset_notes) == 2:
+
+        simultaneous_positions = choose_simultaneous_positions(
+            [onset_notes[0].midi, onset_notes[1].midi], open_notes
+        )
+
+        if simultaneous_positions is not None:
+
+            return min(
+                position["fret"]
+                for position in simultaneous_positions
+            )
+
     positions = find_positions(onset_notes[0].midi, open_notes)
 
     if not positions:
@@ -1098,6 +1125,43 @@ def _melody_notes_at_harmony_onset(harmony, melody_notes):
             matches.append(note)
 
     return matches
+
+
+def _chord_candidate_contains_melody_pitches(
+    shape_values, open_notes, resolved_melody_pitches
+):
+    """
+    BO-138.3 -- how many of the given resolved melody pitches
+    (exact MIDI, already reflecting any existing octave
+    substitution -- see this BO's own report) does this chord
+    shape's own sounding pitches actually contain?
+
+    Distinct from _chord_candidate_has_melody_support() below
+    (BO-131.11's own, pre-existing test): that one only checks
+    whether SOME real melody candidate position, anywhere on the
+    fretboard, has a fret at or above this shape's own working
+    fret -- never whether the shape actually sounds the melody's
+    own exact pitch. Confirmed directly (BO-138.2's own
+    investigation) both notions can diverge: a chord shape can
+    pass the existing test while containing none of the melody's
+    own real pitches at all.
+
+    Returns an integer count (0, 1, or 2 for a dyad) rather than
+    a bool, so a candidate supporting BOTH notes of a genuine
+    two-note melody event can be preferred over one supporting
+    only one -- per this BO's own explicit dyad requirement.
+    """
+
+    sounding_pitches = {
+        open_note + value
+        for open_note, value in zip(open_notes, shape_values)
+        if value is not None
+    }
+
+    return sum(
+        1 for pitch in resolved_melody_pitches
+        if pitch in sounding_pitches
+    )
 
 
 def _chord_candidate_has_melody_support(
@@ -1515,6 +1579,86 @@ def _select_chord_shape_for_harmony(
         # remains shapes[0] -- BO-131.10 Section 7's own
         # "unsupported/ambiguous circumstances retain today's
         # existing behavior", not a newly-invented rule.
+
+        # BO-138.3 -- resolved melody pitches: onset_notes[*]
+        # .midi ALREADY reflects any existing octave substitution
+        # (BO-133.4 modifies the underlying Note object directly,
+        # before this ever runs), so no separate resolution step
+        # is needed here -- matching this BO's own explicit
+        # "use the resolved pitch, don't introduce new octave
+        # logic" requirement. Every onset note is included (not
+        # just the first), per this BO's own dyad requirement.
+        resolved_melody_pitches = [
+            note.midi for note in onset_notes
+        ]
+
+        best_containment_count = 0
+
+        melody_containing_shape = None
+
+        for candidate_shape in shapes:
+
+            candidate_values = parse_shape(candidate_shape.shape)
+
+            if any(value is None for value in candidate_values):
+
+                continue
+
+            containment_count = (
+                _chord_candidate_contains_melody_pitches(
+                    candidate_values, tuning.notes[1:],
+                    resolved_melody_pitches
+                )
+            )
+
+            if containment_count > best_containment_count:
+
+                best_containment_count = containment_count
+
+                melody_containing_shape = candidate_shape
+
+        # BO-138.3 -- only override Rule A/B's own choice above
+        # when it does NOT already achieve the best possible
+        # melody-pitch containment found across every candidate.
+        # Corrected during implementation: an earlier version
+        # unconditionally preferred the highest-ranked melody-
+        # containing candidate, which caused a real, confirmed
+        # regression -- My Favorite Things/Open C's own m73 (G
+        # chord, melody G at 55) already had an existing,
+        # comfortable, melody-containing Rule A/B choice ("7777",
+        # working_fret=7), but a DIFFERENT, higher-ranked, ALSO
+        # melody-containing candidate ("(11)0(11)(10)",
+        # working_fret=10) unnecessarily replaced it, needlessly
+        # sacrificing working-fret comfort Rule A/B's own existing
+        # ranking had already preserved. Checking Rule A/B's own
+        # result first, and only reaching further when it
+        # genuinely falls short of what's achievable, preserves
+        # this case exactly while still fixing the real Moon
+        # River gap: "0012" contains none of the resolved melody
+        # pitches at all (best_containment_count there is
+        # achieved only by "4555"), so the override still,
+        # correctly, applies there.
+        if best_containment_count > 0:
+
+            chosen_shape_values = parse_shape(chosen_shape.shape)
+
+            chosen_shape_containment = (
+                0
+                if any(
+                    value is None for value in chosen_shape_values
+                )
+                else _chord_candidate_contains_melody_pitches(
+                    chosen_shape_values, tuning.notes[1:],
+                    resolved_melody_pitches
+                )
+            )
+
+            if (
+                chosen_shape_containment < best_containment_count
+                and melody_containing_shape is not None
+            ):
+
+                chosen_shape = melody_containing_shape
 
     values = parse_shape(chosen_shape.shape)
 
@@ -2581,6 +2725,35 @@ def _extract_staff_events(
                 "dots": dots,
                 "pitch": None,
                 "tpc": None,
+                # BO-133.5 -- every <Note> pitch seen within this
+                # <Chord> in document order, additive only. The
+                # existing "pitch"/"tpc" fields above still get
+                # set exactly as before (see the "Note" handling
+                # below, unmodified) -- this is a NEW, separate
+                # field so every existing single-note-melody
+                # consumer of event["pitch"] is completely
+                # unaffected. Only consulted by the new multi-
+                # note-voicing code path when len() > 1.
+                "all_pitches": [],
+                "all_tpcs": [],
+                # BO-137.3 -- additive only, same reasoning as
+                # all_pitches above. Per-pitch tie role, built
+                # from the existing tie_elements' own source
+                # <Spanner type="Tie"> elements (not a new
+                # parsing pass) -- see the "Note" handling below,
+                # which appends to these two lists alongside the
+                # existing, unmodified tie_elements append.
+                "tie_continuation_pitches": [],
+                "tie_start_pitches": [],
+                # BO-138 -- per-note tie Spanner elements, one
+                # list per note (parallel to all_pitches, even
+                # when empty for a given note). Fixes a known,
+                # already-documented BO-133.5 limitation: the
+                # dyad-writing block only ever re-emitted
+                # tie_elements (a flat, non-per-note list) for
+                # pitch_index 0, silently dropping a second
+                # note's own, separate tie entirely.
+                "tie_elements_by_note_index": [],
                 "harmony_element": None,
                 "tuplet_start_element": pending_tuplet_element,
                 # BO-81 -- the event's own tuplet-scaled duration
@@ -2641,6 +2814,11 @@ def _extract_staff_events(
                 "dots": 0,
                 "pitch": None,
                 "tpc": None,
+                "all_pitches": [],
+                "all_tpcs": [],
+                "tie_continuation_pitches": [],
+                "tie_start_pitches": [],
+                "tie_elements_by_note_index": [],
                 "harmony_element": pending_harmony
             })
 
@@ -2656,9 +2834,31 @@ def _extract_staff_events(
                     pitch_element.text
                 )
 
+                # BO-133.5 -- additive only; every existing
+                # single-note-melody consumer of event["pitch"]
+                # above is completely unaffected by this line.
+                current_event["all_pitches"].append(
+                    int(pitch_element.text)
+                )
+
+                # BO-138 -- a new, empty, per-note list, kept
+                # parallel to all_pitches (appended here, once
+                # per Note, regardless of whether this note
+                # turns out to have a tie at all) -- populated
+                # below, within the existing tie-detection loop.
+                current_event["tie_elements_by_note_index"].append(
+                    []
+                )
+
             if tpc_element is not None:
 
                 current_event["tpc"] = int(tpc_element.text)
+
+                # BO-133.5 -- additive only, same reasoning as
+                # all_pitches above.
+                current_event["all_tpcs"].append(
+                    int(tpc_element.text)
+                )
 
             for note_child in element:
 
@@ -2674,6 +2874,58 @@ def _extract_staff_events(
                     current_event["tie_elements"].append(
                         note_child
                     )
+
+                    # BO-138 -- also record this Spanner against
+                    # THIS specific note (the last entry in the
+                    # parallel list, appended above when this
+                    # Note's own pitch was processed) -- not just
+                    # the flat, non-per-note tie_elements list.
+                    current_event[
+                        "tie_elements_by_note_index"
+                    ][-1].append(note_child)
+
+                    # BO-137.3 -- per-note tie role, using the
+                    # same real, confirmed MuseScore structural
+                    # distinction identified directly in BO-137.2:
+                    # a tie START has its own <Tie><eid> child and
+                    # a <next>; a tie CONTINUATION has only a
+                    # <prev>, no <Tie> sub-element of its own at
+                    # all. A single note can legitimately be both
+                    # at once (the middle link of a tie chain).
+                    # This does not touch tie_elements itself or
+                    # its own, existing single-note re-emission
+                    # use elsewhere -- purely additive.
+                    has_own_tie_start = (
+                        note_child.find("{*}Tie") is not None
+                    )
+
+                    has_prev = (
+                        note_child.find("{*}prev") is not None
+                    )
+
+                    has_next = (
+                        note_child.find("{*}next") is not None
+                    )
+
+                    if (
+                        pitch_element is not None
+                        and has_prev
+                        and not has_own_tie_start
+                    ):
+
+                        current_event[
+                            "tie_continuation_pitches"
+                        ].append(int(pitch_element.text))
+
+                    if (
+                        pitch_element is not None
+                        and has_next
+                        and has_own_tie_start
+                    ):
+
+                        current_event[
+                            "tie_start_pitches"
+                        ].append(int(pitch_element.text))
 
     if current_measure_events is not None:
 
@@ -4259,6 +4511,26 @@ def generate_tab_from_template(
     # melody note, never a recomputed or assumed one.
     previous_melody_position = None
 
+    # BO-137.3 -- resolved tie results, propagated by sequence
+    # (a plain list, not a pitch-keyed dict) rather than by
+    # source pitch. Corrected during implementation: an earlier,
+    # pitch-keyed version broke on a real, direct test -- an
+    # explicit octave substitution (BO-133.4) at a tie start
+    # only ever modifies THAT note's own <pitch> element in the
+    # source XML; the continuation has its own, separate <pitch>
+    # element, still holding the original, un-substituted value,
+    # so a pitch-keyed lookup could never match the two. A tie
+    # continuation, by musical definition, always immediately
+    # follows its own tie-start with no other note of the same
+    # role intervening, so sequence -- "the most recently
+    # resolved tie-start result(s), consumed by the very next
+    # tie-continuation event" -- is both safe and correct,
+    # without needing to track pitch identity across a possible
+    # substitution at all. Set only when the current event
+    # genuinely has tie-start pitches; consumed (and naturally
+    # replaced) by the next genuine tie-continuation event.
+    pending_tie_start_results = None
+
     # BO-38 Group C: the value previous_melody_position held
     # BEFORE its own most recent update -- i.e. the actual
     # chosen position two melody notes back, threaded the same
@@ -5021,6 +5293,43 @@ def generate_tab_from_template(
 
             # event["type"] == "note"
 
+            # BO-137.3 -- tie-continuation inheritance. A tie
+            # continuation is not a new note to optimize: if
+            # EVERY pitch in this event is a genuine tie
+            # continuation (per the real MuseScore <prev>/<next>
+            # structure, tie_continuation_pitches built directly
+            # from it -- not a pitch-only guess) AND each one's
+            # own tie-start result was already resolved and
+            # stored, that stored result is used directly,
+            # skipping choose_simultaneous_positions()/
+            # _choose_melody_position() entirely for this event.
+            # A dyad only inherits when BOTH notes qualify --
+            # deliberately no partial-dyad inheritance, since
+            # that mixed case isn't part of this BO's own scope.
+            # Falls through to the existing, unmodified
+            # independent path below whenever any pitch isn't a
+            # tie continuation, or its tie-start result can't be
+            # found -- explicit fallback, not a silent guess, per
+            # this BO's own explicit requirement.
+            inherited_positions = None
+
+            all_pitches_are_tie_continuations = (
+                len(event["all_pitches"]) > 0
+                and all(
+                    pitch in event["tie_continuation_pitches"]
+                    for pitch in event["all_pitches"]
+                )
+            )
+
+            if (
+                all_pitches_are_tie_continuations
+                and pending_tie_start_results is not None
+                and len(pending_tie_start_results)
+                == len(event["all_pitches"])
+            ):
+
+                inherited_positions = pending_tie_start_results
+
             midi = event["pitch"]
 
             tpc = event["tpc"]
@@ -5052,43 +5361,135 @@ def generate_tab_from_template(
             # this is deliberately a separate, wider-reaching
             # lookup from the two anchors immediately above, and
             # why it takes priority over them in the sort key.
-            chosen = _choose_melody_position(
-                midi, open_notes,
-                fd_shape_values=fd_anchor_by_event_id.get(
-                    id(event)
-                ),
-                working_fret_anchor=(
-                    preceding_working_fret_anchor_by_event_id.get(
-                        id(event)
+            # BO-133.5 -- a genuine multi-note melody event (two
+            # simultaneous pitches within the same source
+            # <Chord>, e.g. Gamboge's own real m1/b1 case -- see
+            # BO-133.3's own investigation). None for every
+            # ordinary single-note event, unaffected. When two
+            # pitches are present but choose_simultaneous_
+            # positions() itself can't find a valid combination
+            # at all (e.g. no shared different-string option
+            # exists in range), falls back to the existing,
+            # unmodified single-note path below using event
+            # ["pitch"] -- same behavior as before this BO, not a
+            # new failure mode.
+            #
+            # BO-135 -- pass the same, already-computed FD
+            # anchor (fd_anchor_by_event_id) the neighboring
+            # single-note _choose_melody_position() call already
+            # receives just below, so the multi-note TAB voicing
+            # can reuse the chord shape already selected for this
+            # exact onset when it genuinely covers both pitches,
+            # rather than independently searching for a possibly-
+            # different compact voicing. Confirmed real root
+            # cause (BO-135's own investigation): this information
+            # already existed here, in memory, at this exact
+            # point -- it simply wasn't being passed to this one
+            # call.
+            #
+            # BO-137.3 -- when inherited_positions is already
+            # set (this whole event is a genuine tie continuation
+            # with a resolved tie-start available), reuse it
+            # directly for both the dyad and single-note cases
+            # below, skipping choose_simultaneous_positions()/
+            # _choose_melody_position() entirely -- the tie-start
+            # result is authoritative, not to be recomputed.
+            simultaneous_positions = None
+
+            if inherited_positions is not None and len(
+                event["all_pitches"]
+            ) == 2:
+
+                simultaneous_positions = inherited_positions
+
+            elif len(event["all_pitches"]) == 2:
+
+                simultaneous_positions = (
+                    choose_simultaneous_positions(
+                        event["all_pitches"], open_notes,
+                        fd_anchor_shape_values=(
+                            fd_anchor_by_event_id.get(id(event))
+                        )
                     )
-                ),
-                following_working_fret_anchor=(
-                    following_working_fret_anchor_by_event_id.get(
+                )
+
+            if (
+                inherited_positions is not None
+                and len(event["all_pitches"]) == 1
+            ):
+
+                chosen = inherited_positions[0]
+
+                # midi drives the single-note <pitch> write
+                # below -- must reflect the inherited, possibly
+                # octave-substituted pitch (e.g. the real
+                # Gamboge case: source 66/F#4 already resolved
+                # to 54/F#3 at the tie start), not the original
+                # source XML pitch.
+                midi = chosen["pitch"]
+
+            elif (
+                inherited_positions is not None
+                and len(event["all_pitches"]) == 2
+            ):
+
+                # BO-137.3 -- the dyad-inheritance case also
+                # needs chosen (not just simultaneous_positions)
+                # set from the inherited result: chosen_fret
+                # (used below for HP-updating) must reflect the
+                # inherited, not a freshly/independently
+                # computed, position. event["pitch"] is event[
+                # "all_pitches"]'s own last entry (pre-override,
+                # confirmed the existing, established BO-133.5
+                # convention) -- match it to its own inherited
+                # position by original source pitch.
+                matching_index = event["all_pitches"].index(
+                    event["pitch"]
+                )
+
+                chosen = inherited_positions[matching_index]
+
+                midi = chosen["pitch"]
+
+            else:
+
+                chosen = _choose_melody_position(
+                    midi, open_notes,
+                    fd_shape_values=fd_anchor_by_event_id.get(
                         id(event)
-                    )
-                ),
-                previous_position=previous_melody_position,
-                preceding_chord_shape_values=(
-                    preceding_chord_shape_values_by_event_id.get(
-                        id(event)
-                    )
-                ),
-                second_previous_position=(
-                    second_previous_melody_position
-                ),
-                melody_phrase_notes=(
-                    melody_phrase_notes_by_event_id.get(
-                        id(event)
-                    )
-                ),
-                current_hp=current_hp,
-                expected_attack_role=(
-                    attack_role_by_event_id[id(event)].role
-                    if id(event) in attack_role_by_event_id
-                    else None
-                ),
-                hp_is_earned=hp_is_earned
-            )
+                    ),
+                    working_fret_anchor=(
+                        preceding_working_fret_anchor_by_event_id.get(
+                            id(event)
+                        )
+                    ),
+                    following_working_fret_anchor=(
+                        following_working_fret_anchor_by_event_id.get(
+                            id(event)
+                        )
+                    ),
+                    previous_position=previous_melody_position,
+                    preceding_chord_shape_values=(
+                        preceding_chord_shape_values_by_event_id.get(
+                            id(event)
+                        )
+                    ),
+                    second_previous_position=(
+                        second_previous_melody_position
+                    ),
+                    melody_phrase_notes=(
+                        melody_phrase_notes_by_event_id.get(
+                            id(event)
+                        )
+                    ),
+                    current_hp=current_hp,
+                    expected_attack_role=(
+                        attack_role_by_event_id[id(event)].role
+                        if id(event) in attack_role_by_event_id
+                        else None
+                    ),
+                    hp_is_earned=hp_is_earned
+                )
 
             if chosen is None:
 
@@ -5304,6 +5705,38 @@ def generate_tab_from_template(
 
             previous_was_chord_onset = is_chord_onset
 
+            # BO-137.3 -- set the pending, sequence-based tie
+            # result whenever this event has any genuine tie-
+            # start pitch (tie_start_pitches, built directly
+            # from the real MuseScore <next>/own <Tie>
+            # structure). Covers both a fresh tie start and a
+            # tie chain's own middle link (which is
+            # simultaneously a continuation of the previous link
+            # and a start for the next one) -- in the chain-
+            # middle case, this re-sets the SAME inherited
+            # result verbatim, not a freshly recomputed one,
+            # since inherited_positions/chosen already hold it.
+            # Sequence-based, not pitch-keyed (corrected during
+            # implementation -- see this variable's own
+            # initialization comment for why): the full results
+            # list is stored/consumed together, matching how a
+            # dyad's own two notes are always resolved and
+            # inherited as one unit.
+            resolved_positions_this_event = (
+                simultaneous_positions
+                if simultaneous_positions is not None
+                else [{**chosen, "pitch": midi}]
+            )
+
+            if any(
+                pitch in event["tie_start_pitches"]
+                for pitch in event["all_pitches"]
+            ):
+
+                pending_tie_start_results = (
+                    resolved_positions_this_event
+                )
+
             chosen_fret = chosen["fret"]
 
             # BO-59 -- a fretted note updates HP per melody_note_
@@ -5449,47 +5882,141 @@ def generate_tab_from_template(
 
                 tab_chord.append(slur_copy)
 
-            tab_note = ET.SubElement(tab_chord, "Note")
+            if simultaneous_positions is not None:
 
-            ET.SubElement(
-                tab_note, "eid"
-            ).text = _generate_eid()
+                # BO-133.5 -- a genuine multi-note melody event
+                # with a valid compact voicing found. Write BOTH
+                # notes into this same <Chord>, simultaneous in
+                # the output, matching the input.
+                #
+                # BO-138 -- fixes BO-133.5's own, previously
+                # documented limitation here: each note's own
+                # Tie spanner(s) are now re-emitted individually
+                # (tie_elements_by_note_index, parallel to
+                # simultaneous_positions/all_pitches -- confirmed
+                # real, direct root cause: a dyad's two notes can
+                # each have their own, separate, independent tie,
+                # and the previous "only pitch_index 0" logic
+                # silently dropped the second note's own tie
+                # marking entirely, even though both notes'
+                # positions already, correctly matched end to
+                # end after BO-137.3).
+                for pitch_index, position in enumerate(
+                    simultaneous_positions
+                ):
 
-            # BO-131 -- re-emit any Tie spanner(s) captured from
-            # the input's own <Note>, right after <eid> and before
-            # <pitch> -- matching the real, confirmed ordering in
-            # actual MuseScore-authored files (MuseScore's own XML
-            # reader is order-sensitive, per this project's own
-            # established findings elsewhere). Same copy-and-
-            # regenerate-eid pattern already used for
-            # lyrics_elements below -- the Spanner's own <next>/
-            # <prev><location> offsets are copied unchanged, since
-            # they're relative (measures/fractions from this note)
-            # and remain valid regardless of the note's own new
-            # position in the output.
-            for tie_element in event["tie_elements"]:
+                    tab_note = ET.SubElement(tab_chord, "Note")
 
-                tie_copy = copy.deepcopy(tie_element)
+                    ET.SubElement(
+                        tab_note, "eid"
+                    ).text = _generate_eid()
 
-                tie_eid_el = tie_copy.find("{*}Tie/{*}eid")
+                    this_note_tie_elements = (
+                        event["tie_elements_by_note_index"][
+                            pitch_index
+                        ]
+                        if pitch_index < len(
+                            event["tie_elements_by_note_index"]
+                        )
+                        else []
+                    )
 
-                if tie_eid_el is not None:
+                    for tie_element in this_note_tie_elements:
 
-                    tie_eid_el.text = _generate_eid()
+                        tie_copy = copy.deepcopy(tie_element)
 
-                tab_note.append(tie_copy)
+                        tie_eid_el = tie_copy.find(
+                            "{*}Tie/{*}eid"
+                        )
 
-            ET.SubElement(tab_note, "pitch").text = str(midi)
+                        if tie_eid_el is not None:
 
-            ET.SubElement(tab_note, "tpc").text = str(tpc)
+                            tie_eid_el.text = _generate_eid()
 
-            ET.SubElement(
-                tab_note, "fret"
-            ).text = str(chosen_fret)
+                        tab_note.append(tie_copy)
 
-            ET.SubElement(
-                tab_note, "string"
-            ).text = str(chosen_string)
+                    # BO-133.5-FOLLOWUP -- position["pitch"] is
+                    # the ACTUAL pitch used, which may differ
+                    # from event["all_pitches"][pitch_index] (the
+                    # original, written source pitch) if an
+                    # octave shift was applied to make this pair
+                    # playable as a compact voicing. Writing the
+                    # source pitch here would leave the notation
+                    # silently inconsistent with the real TAB
+                    # position -- the exact defect this output
+                    # requirement exists to prevent.
+                    ET.SubElement(
+                        tab_note, "pitch"
+                    ).text = str(position["pitch"])
+
+                    # tpc is genuinely octave-independent
+                    # (confirmed directly against real data,
+                    # BO-133.4) -- the original, per-note tpc
+                    # remains correct even after an octave shift,
+                    # since the pitch CLASS (letter/spelling)
+                    # is unchanged by a ±12 semitone shift.
+                    ET.SubElement(
+                        tab_note, "tpc"
+                    ).text = str(
+                        event["all_tpcs"][pitch_index]
+                    )
+
+                    note_string = (
+                        4 if position["string"] == 4
+                        else 3 - position["string"]
+                    )
+
+                    ET.SubElement(
+                        tab_note, "fret"
+                    ).text = str(position["fret"])
+
+                    ET.SubElement(
+                        tab_note, "string"
+                    ).text = str(note_string)
+
+            else:
+
+                tab_note = ET.SubElement(tab_chord, "Note")
+
+                ET.SubElement(
+                    tab_note, "eid"
+                ).text = _generate_eid()
+
+                # BO-131 -- re-emit any Tie spanner(s) captured from
+                # the input's own <Note>, right after <eid> and before
+                # <pitch> -- matching the real, confirmed ordering in
+                # actual MuseScore-authored files (MuseScore's own XML
+                # reader is order-sensitive, per this project's own
+                # established findings elsewhere). Same copy-and-
+                # regenerate-eid pattern already used for
+                # lyrics_elements below -- the Spanner's own <next>/
+                # <prev><location> offsets are copied unchanged, since
+                # they're relative (measures/fractions from this note)
+                # and remain valid regardless of the note's own new
+                # position in the output.
+                for tie_element in event["tie_elements"]:
+
+                    tie_copy = copy.deepcopy(tie_element)
+
+                    tie_eid_el = tie_copy.find("{*}Tie/{*}eid")
+
+                    if tie_eid_el is not None:
+
+                        tie_eid_el.text = _generate_eid()
+
+                    tab_note.append(tie_copy)
+
+                ET.SubElement(tab_note, "pitch").text = str(midi)
+
+                ET.SubElement(tab_note, "tpc").text = str(tpc)
+
+                ET.SubElement(
+                    tab_note, "fret"
+                ).text = str(chosen_fret)
+
+                ET.SubElement(
+                    tab_note, "string"
+                ).text = str(chosen_string)
 
             if event["tuplet_end"]:
 

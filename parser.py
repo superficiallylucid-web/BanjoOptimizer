@@ -636,6 +636,163 @@ class MuseScoreFile:
 
     # -----------------------------------------------------
 
+    def apply_octave_substitutions(
+        self, staff_number, substitutions
+    ):
+        """
+        BO-133.4: apply one or more EXPLICITLY requested
+        octave substitutions to already-parsed melody notes.
+
+        This is NOT automatic octave selection (that is future
+        work, BOF-004) -- every substitution here must be
+        explicitly supplied by the caller; this method never
+        decides on its own that a pitch should change.
+
+        substitutions: a list of dicts, each
+        {"measure": int, "beat": float, "original_midi": int,
+        "new_midi": int} -- identifying exactly which note to
+        change (by its own measure/beat/current pitch, matching
+        self.score.notes) and what pitch to substitute. Reusable
+        for any explicit substitution (e.g. a future C5->C4 or
+        G4->G5), not hardcoded to BO-133.2's own B4->B3 case.
+
+        Must be called AFTER read_melody_notes()/read_staff_notes
+        (so self.score.notes already exists) and BEFORE any
+        downstream chord/melody-position selection, so every
+        mechanism that already, correctly reads from
+        self.score.notes -- chord selection's own melody_pitches,
+        BO-131 Rule A/B's own onset_notes, BO-132's own rules --
+        automatically, consistently sees the substituted pitch
+        with no changes of their own required.
+
+        Also patches the underlying XML's own matching <Note>
+        element's <pitch> text in place, since
+        _retune_melody_notes() (score_generator.py) reads pitch
+        directly from the XML, independently of self.score.notes
+        -- confirmed directly (BO-133.4) this is a separate,
+        parallel path that would otherwise still write the
+        ORIGINAL pitch's fret/string, undoing the substitution.
+
+        <tpc> is deliberately left untouched -- confirmed
+        directly against this project's own real score data
+        (BO-133.4) that <tpc> is genuinely octave-independent
+        (the same real file's own B4 and B3 notes both carry
+        tpc=19); only <pitch> encodes the octave. This method
+        is therefore only correct for a same-pitch-class,
+        octave-only substitution (e.g. B4->B3), matching every
+        example given for this capability -- it does not attempt
+        to change the note's letter/spelling.
+
+        Raises ValueError if a substitution's own
+        (measure, beat, original_midi) does not match exactly
+        one existing note -- never silently applies to the wrong
+        note, or silently does nothing, on a mismatch.
+        """
+
+        for substitution in substitutions:
+
+            target_measure = substitution["measure"]
+
+            target_beat = substitution["beat"]
+
+            original_midi = substitution["original_midi"]
+
+            new_midi = substitution["new_midi"]
+
+            matches = [
+                note for note in self.score.notes
+                if note.measure == target_measure
+                and abs(note.beat - target_beat) < 0.01
+                and note.midi == original_midi
+            ]
+
+            if len(matches) != 1:
+
+                raise ValueError(
+                    f"Expected exactly one note at measure "
+                    f"{target_measure}, beat {target_beat}, "
+                    f"midi {original_midi} -- found "
+                    f"{len(matches)}. Refusing to apply this "
+                    f"substitution rather than guess."
+                )
+
+            matched_note = matches[0]
+
+            ordinal_index = self.score.notes.index(matched_note)
+
+            # Patch the underlying XML's own matching <Note>
+            # element in place -- same staff-filtering and
+            # <Note>-with-<pitch>-child criteria
+            # read_staff_notes() itself already, exactly applies
+            # (confirmed directly against its own implementation)
+            # so the Nth such element in document order
+            # corresponds to the Nth entry in self.score.notes.
+            # This avoids re-deriving beat/tuplet tracking a
+            # second, independent time -- a real, needless risk
+            # of subtly diverging from the existing, already-
+            # correct logic.
+            current_staff = 0
+
+            note_ordinal = -1
+
+            xml_note_element = None
+
+            for element in self.root.iter():
+
+                tag = element.tag.split("}")[-1]
+
+                if tag == "Staff":
+
+                    current_staff += 1
+
+                if current_staff != staff_number:
+
+                    continue
+
+                if tag != "Note":
+
+                    continue
+
+                pitch_element = element.find("{*}pitch")
+
+                if pitch_element is None:
+
+                    continue
+
+                note_ordinal += 1
+
+                if note_ordinal == ordinal_index:
+
+                    xml_note_element = element
+
+                    break
+
+            if xml_note_element is None:
+
+                raise ValueError(
+                    f"Could not locate the underlying XML "
+                    f"<Note> element for measure "
+                    f"{target_measure}, beat {target_beat}, "
+                    f"midi {original_midi} -- refusing to "
+                    f"apply this substitution."
+                )
+
+            xml_pitch_element = xml_note_element.find(
+                "{*}pitch"
+            )
+
+            xml_pitch_element.text = str(new_midi)
+
+            # Update the already-parsed Note object too -- this
+            # is what every downstream mechanism (chord
+            # selection, BO-131/132 rules, melody-position
+            # selection itself) already, directly reads from.
+            matched_note.midi = new_midi
+
+
+
+    # -----------------------------------------------------
+
     def read_harmonies(self, staff_number):
         """
         Reads chord symbols (Harmony elements) from the score,

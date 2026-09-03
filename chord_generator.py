@@ -129,6 +129,38 @@ def _sounding_pitch_classes(values, melody_strings):
     return frozenset(pitch % 12 for pitch in sounding_pitches)
 
 
+def _shape_contains_any_pitch(values, melody_strings, pitches):
+    """
+    BO-138.3 -- does this shape's own sounding pitches include
+    ANY of the given exact MIDI pitches (not merely the same
+    pitch class)?
+
+    Deliberately exact-MIDI, not pitch-class: BO-138.2's own
+    investigation confirmed pitch-class matching wouldn't
+    distinguish the real Moon River case at all (0012 already
+    sounds an E, at a different octave, 64 -- checking pitch
+    class alone would treat 0012 as "melody-containing" too,
+    exactly the ambiguity this exists to avoid).
+
+    pitches: an empty/falsy value (no melody context at all)
+    always returns False -- this is purely additive, never
+    changes behavior for a caller that doesn't pass melody
+    pitches.
+    """
+
+    if not pitches:
+
+        return False
+
+    sounding_pitches = {
+        open_note + value
+        for open_note, value in zip(melody_strings, values)
+        if value is not None
+    }
+
+    return bool(sounding_pitches & set(pitches))
+
+
 def _voicing_signature(values, melody_strings):
     """
     Identity used for duplicate removal: the set of distinct
@@ -492,23 +524,53 @@ def generate_candidates(
 
         existing = best_by_signature.get(signature)
 
+        # BO-138.3 -- does this candidate contain any of the
+        # resolved melody pitches (exact MIDI)? Computed once
+        # here regardless of whether there's an existing entry
+        # to compare against, so it's stored alongside every
+        # other per-candidate fact needed for a later comparison.
+        contains_melody_pitch = _shape_contains_any_pitch(
+            values, melody_strings, melody_pitches
+        )
+
         if existing is None:
 
             best_by_signature[signature] = (
                 values, is_full, playability_score,
-                quality_category, quality_score, ranking_key
+                quality_category, quality_score, ranking_key,
+                contains_melody_pitch
             )
 
         else:
 
-            _, existing_is_full, _, _, _, existing_ranking_key = (
-                existing
-            )
+            (
+                _, existing_is_full, _, _, _,
+                existing_ranking_key, existing_contains_melody
+            ) = existing
 
+            # BO-138.3 -- within the same is_full status, a
+            # candidate containing a resolved melody pitch is
+            # preferred over one that doesn't, ahead of the
+            # existing ranking_key tie-break -- confirmed root
+            # cause (BO-138.1/138.2): the prior, score-only
+            # tie-break let a non-melody-containing candidate
+            # (extra open string, higher generic score) silently
+            # eliminate a melody-containing one that shared its
+            # voicing signature. Only ever breaks a tie WITHIN
+            # the same is_full status -- a full voicing still
+            # always outranks a reduced/rescue one regardless of
+            # melody content, unchanged from before this BO.
             prefer_new = (
                 (is_full and not existing_is_full)
                 or (
                     is_full == existing_is_full
+                    and contains_melody_pitch
+                    and not existing_contains_melody
+                )
+                or (
+                    is_full == existing_is_full
+                    and contains_melody_pitch
+                    == existing_contains_melody
                     and ranking_key > existing_ranking_key
                 )
             )
@@ -518,7 +580,7 @@ def generate_candidates(
                 best_by_signature[signature] = (
                     values, is_full, playability_score,
                     quality_category, quality_score,
-                    ranking_key
+                    ranking_key, contains_melody_pitch
                 )
 
     deduped = list(best_by_signature.values())
@@ -542,7 +604,8 @@ def generate_candidates(
 
     for (
         values, is_full, playability_score,
-        quality_category, quality_score, ranking_key
+        quality_category, quality_score, ranking_key,
+        contains_melody_pitch
     ) in top:
 
         shape_text = format_shape(values)
