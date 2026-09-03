@@ -19,7 +19,9 @@ import sys
 
 sys.path.insert(0, '.')
 
-from fretboard import choose_simultaneous_positions, parse_shape
+from fretboard import (
+    choose_simultaneous_positions, parse_shape, sounding_notes
+)
 
 from tunings import get_tunings
 
@@ -89,27 +91,43 @@ def test_real_gamboge_tab_matches_fd():
 
     first_chord = first_measure.find('.//{*}Chord')
 
-    # Real, confirmed FD: fretOffset=4, strings 0/1 fretted at
-    # relative fret 1 (absolute 5), strings 2/3 open -- i.e.
-    # "5500" in BO-internal order.
+    # Real, current FD: fretOffset=9, strings 0-2 open, string 3
+    # fretted at relative fret 1 (absolute 10) -- i.e. "000(10)"
+    # in BO-internal order. BO-138.3's own melody-inclusion fix
+    # changed which shape gets selected here (see this BO's own
+    # report) -- confirmed real, current value, not the prior
+    # "5500".
     offset = int(first_fd.find('{*}fretOffset').text)
 
-    assert offset == 4
+    assert offset == 9
 
-    # Real TAB: both notes must now land on the SAME absolute
-    # fret (5) the FD itself represents, not an independently
-    # -chosen, different compact voicing.
+    # Real TAB: both notes must still be consistent with the FD
+    # shape's own real, complete sounding pitches -- BO-138.3's
+    # own selected shape no longer places both notes at the SAME
+    # fret ("000(10)" isn't a uniform barre shape like "5500"
+    # was), but each TAB note's own written pitch must still be
+    # one of the FD's own genuinely sounding pitches.
     note_elements = first_chord.findall('{*}Note')
 
     assert len(note_elements) == 2
 
-    frets = {
-        int(note.find('{*}fret').text) for note in note_elements
+    tab_pitches = {
+        int(note.find('{*}pitch').text) for note in note_elements
     }
 
-    assert frets == {5}, (
-        f"Expected both TAB notes at fret 5, matching the "
-        f"already-selected FD shape '5500', got frets {frets}."
+    fd_sounding_pitches = {
+        n.midi for n in sounding_notes(tuning, '000(10)')
+    }
+
+    assert tab_pitches <= fd_sounding_pitches, (
+        f"Expected every TAB pitch {tab_pitches} to be among "
+        f"the FD's own real sounding pitches "
+        f"{fd_sounding_pitches}."
+    )
+
+    assert tab_pitches == {57, 74}, (
+        f"Expected the real, current TAB pitches (57, 74), got "
+        f"{tab_pitches}."
     )
 
 

@@ -113,24 +113,23 @@ def test_gamboge_both_notes_survive_simultaneously_in_tab():
 
         positions_found[int(pitch_text)] = int(fret_text)
 
-    # BO-135 -- superseded by the FD-anchor fix: the chord shape
-    # already selected for this exact onset ("5500") genuinely
-    # sounds both 57 and 62 (D, same pitch class as the source
-    # 74, at a different octave), so choose_simultaneous_
-    # positions() now reuses those exact positions rather than
-    # independently searching for its own compact voicing --
-    # confirmed directly this is the same voicing the FD itself
-    # represents, matching the real, reported target (player's
-    # own "3-5"/"4-5").
-    assert pitches_found == {57, 62}, (
-        f"Expected the FD-anchor-matched pitch set (57, 62), "
-        f"got {pitches_found}."
+    # BO-138.3 -- superseded by the melody-inclusion fix: chord
+    # selection now genuinely prefers the candidate containing
+    # BOTH resolved onset melody pitches (57, 74) over one
+    # containing only one of them ("5500" only contained 57 and
+    # an octave-different D, 62, not the actual source 74) --
+    # confirmed directly, accepted as an intentional trade-off
+    # (prioritizing full two-note melody containment over the
+    # previous, more comfortable shape).
+    assert pitches_found == {57, 74}, (
+        f"Expected the melody-inclusion-matched pitch set "
+        f"(57, 74), got {pitches_found}."
     )
 
-    assert positions_found[57] == 5 and positions_found[62] == 5, (
-        f"Expected the FD-anchor-matched voicing (57@5, 62@5, "
-        f"matching the already-selected chord shape '5500'), "
-        f"got {positions_found}."
+    assert positions_found[57] == 0 and positions_found[74] == 10, (
+        f"Expected the melody-inclusion-matched voicing "
+        f"(57@0, 74@10, matching the now-selected chord shape "
+        f"'000(10)'), got {positions_found}."
     )
 
 
@@ -267,18 +266,19 @@ def test_chord_selection_reflects_full_multi_note_voicing():
         if not any(v is None for v in values) else None
     )
 
-    # The selected chord's own working fret must not EXCEED
-    # what the real melody voicing supports (BO-131's own
-    # already-established Rule B principle: never too high,
-    # lower is always structurally fine) -- confirms chord
-    # selection is at least consistent with, not contradicting,
-    # the real voicing, even though exact positional match
-    # isn't guaranteed by this fix alone (see this BO's own
-    # report).
-    assert working_fret <= 2, (
-        f"Selected chord's own working_fret ({working_fret}) "
-        f"should not exceed the real melody voicing's own "
-        f"highest position (2)."
+    # The selected chord's own working fret is no longer bounded
+    # by the melody voicing's own highest position at all -- BO-
+    # 138.3's own melody-inclusion fix intentionally prioritizes
+    # full two-note pitch containment over this comfort ceiling
+    # when a strictly-better-containing candidate exists (real,
+    # confirmed, accepted trade-off: this exact chord's own
+    # working_fret is now 10, well above the old 2 -- see this
+    # BO's own report). Assert the real, current value directly
+    # rather than re-imposing a ceiling BO-138.3 has since,
+    # deliberately, superseded.
+    assert working_fret == 10, (
+        f"Expected the melody-inclusion-preferred shape's own "
+        f"working_fret (10), got {working_fret}."
     )
 
 
@@ -429,17 +429,16 @@ def test_octave_adjustment_output_fully_consistent():
 
         by_pitch[pitch] = {"tpc": tpc, "fret": fret, "string": string}
 
-    # Written pitch reflects the actual, octave-adjusted result:
-    # 62 (D shifted down one octave from the source D5=74) -- not
-    # the unshifted source pitch 74. Confirmed directly: the
-    # combined fret-band-comfort + span score prefers 57
-    # (unshifted A3) paired with 62 (D shifted down), over every
-    # other octave arrangement considered, including 57+74
-    # unshifted (span 5, not compact) and 69+74 (span 0, but at a
-    # far less comfortable fret 17).
-    assert 62 in by_pitch and 74 not in by_pitch, (
-        f"Expected the written pitch to be the octave-adjusted "
-        f"62, not the original source 74 -- found pitches "
+    # Written pitch is now the RAW, unshifted source pitch, 74 --
+    # BO-138.3's own melody-inclusion fix intentionally prefers
+    # the candidate containing both onset pitches verbatim (57
+    # and the true source 74) over one requiring an octave shift
+    # to reach a more compact voicing (57+62) -- confirmed
+    # directly, accepted as an intentional trade-off (see this
+    # BO's own report).
+    assert 74 in by_pitch and 62 not in by_pitch, (
+        f"Expected the written pitch to be the raw, unshifted "
+        f"source 74, not an octave-adjusted 62 -- found pitches "
         f"{list(by_pitch.keys())}."
     )
 
@@ -448,26 +447,25 @@ def test_octave_adjustment_output_fully_consistent():
     # tpc reflects the real, confirmed values for these exact
     # pitch classes (A=17, D=16 in this project's own tpc
     # convention -- confirmed directly against the real output);
-    # tpc is genuinely octave-independent (BO-133.4), so 62's own
-    # tpc is the same value the original, unshifted 74 (also
-    # pitch class D) would have carried.
+    # tpc is genuinely octave-independent (BO-133.4), unaffected
+    # by whether 74 itself is shifted or not.
     assert by_pitch[57]["tpc"] == 17
 
-    assert by_pitch[62]["tpc"] == 16
+    assert by_pitch[74]["tpc"] == 16
 
     # Both notes genuinely simultaneous -- confirmed real,
-    # combined-score-preferred voicing (57@0, 62@2), different
-    # strings, on or near the same fret (span 2).
+    # melody-inclusion-preferred voicing (57@0, 74@10), different
+    # strings.
     assert by_pitch[57]["fret"] == 0
 
-    assert by_pitch[62]["fret"] == 2
+    assert by_pitch[74]["fret"] == 10
 
-    assert by_pitch[57]["string"] != by_pitch[62]["string"]
+    assert by_pitch[57]["string"] != by_pitch[74]["string"]
 
     # FD consistency: the chord shape selected for this exact
-    # harmony must not exceed the real, final melody voicing's
-    # own highest position (BO-131's own established Rule B
-    # principle).
+    # harmony now genuinely has a much higher working fret (10) --
+    # BO-138.3's own intentional trade-off, not a bug (see this
+    # BO's own report).
     dsus2 = p.harmonies[0]
 
     shape, is_exception, exception_dict = (
@@ -484,4 +482,4 @@ def test_octave_adjustment_output_fully_consistent():
         if not any(v is None for v in values) else None
     )
 
-    assert working_fret <= 2
+    assert working_fret == 10
