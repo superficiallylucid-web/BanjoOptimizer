@@ -3348,6 +3348,23 @@ MELODY_PHRASE_LOOKAHEAD = 6  # notes -- BO-57. How many
 # minimum/maximum" convention, e.g. MAX_AWKWARDNESS_REFERENCE),
 # not itself required by either real case.
 
+MAX_PHRASE_PRECEDING_CHORD_DISTANCE_BEATS = 4.0  # BO-147.4 --
+# see phrase_notes_played's own use in _sort_key() below.
+# Deliberately a SEPARATE constant from chord_service.py's own
+# MAX_INCOMING_SHAPE_DISTANCE_BEATS (BO-144.2) -- same value and
+# same underlying "elapsed beats since the anchor" concept, but
+# a genuinely different mechanism (BO-144.2 gates hp_tiebreak's
+# own chord-shape continuity; this gates phrase_notes_played's
+# own melody-only phrase lookahead) that happens to share this
+# boundary, not a shared setting between them. Confirmed
+# directly, BO-147.3's own investigation: the real Alizarin A3
+# case (preceding Bm shape, 5.0 beats old) must allow phrase
+# planning, and the real Christmas Song case (preceding C shape,
+# 1.0 beat old) already correctly suppresses it under every rule
+# tested -- this boundary sits with genuine margin between both,
+# matching the same real gap BO-144.2's own investigation found
+# for its own, separate mechanism.
+
 
 def _fd_positions_for_pitch(shape_values, open_notes, target_midi):
     """
@@ -3379,7 +3396,8 @@ def _choose_melody_position(
     following_working_fret_anchor=None, previous_position=None,
     preceding_chord_shape_values=None, second_previous_position=None,
     melody_phrase_notes=None, current_hp=None,
-    expected_attack_role=None, hp_is_earned=True
+    expected_attack_role=None, hp_is_earned=True,
+    preceding_chord_shape_elapsed_beats=None
 ):
     """
     BO-24/BO-25/BO-30: choose a string/fret position for one
@@ -3488,6 +3506,22 @@ def _choose_melody_position(
     The Christmas Song / Double C); the exact-inclusion candidate
     is real, verified fretboard data in every one of those cases,
     not an invented approximation.
+
+    preceding_chord_shape_elapsed_beats (BO-147.4): elapsed
+    musical beats from preceding_chord_shape_values's own chord
+    onset to this note's own onset, or None when preceding_
+    chord_shape_values itself is None (no preceding chord shape
+    at all). ONLY affects phrase_notes_played below -- every
+    other use of preceding_chord_shape_values in this function
+    (the exact-inclusion fast path above, no_chord_anchor_at_all,
+    hp_tiebreak, string_distance) is completely unaffected,
+    deliberately kept separate from BO-144.2's own, similarly-
+    shaped but genuinely different incoming_shape_elapsed_beats
+    mechanism. When the elapsed distance exceeds
+    MAX_PHRASE_PRECEDING_CHORD_DISTANCE_BEATS, phrase planning is
+    no longer suppressed by that chord's mere presence -- see
+    MAX_PHRASE_PRECEDING_CHORD_DISTANCE_BEATS's own comment for
+    the real, confirmed evidence behind this boundary.
 
     melody_phrase_notes (BO-57): a forward-looking window of this
     note's own upcoming melody notes (already realize_note()-
@@ -3645,6 +3679,29 @@ def _choose_melody_position(
     # ["score"] as a side effect -- reused directly below rather
     # than recomputed.
     default_choice = best_position(positions)
+
+    # BO-147.4 -- phrase_notes_played's OWN, separate temporal
+    # gate. Deliberately computed as its own local variable, used
+    # ONLY at phrase_notes_played's own guard below -- every
+    # other use of preceding_chord_shape_values in this function
+    # (the exact-inclusion fast path above, no_chord_anchor_at_
+    # all, hp_tiebreak, string_distance) still reads the raw
+    # parameter directly, completely unaffected. See this
+    # function's own docstring (preceding_chord_shape_elapsed_
+    # beats) and MAX_PHRASE_PRECEDING_CHORD_DISTANCE_BEATS's own
+    # comment for the full reasoning/evidence.
+    phrase_effective_preceding_chord_shape_values = (
+        preceding_chord_shape_values
+    )
+
+    if (
+        preceding_chord_shape_values is not None
+        and preceding_chord_shape_elapsed_beats is not None
+        and preceding_chord_shape_elapsed_beats
+        > MAX_PHRASE_PRECEDING_CHORD_DISTANCE_BEATS
+    ):
+
+        phrase_effective_preceding_chord_shape_values = None
 
     # BO-111 -- mirrors the chord-onset early-return pattern
     # above (BO-24/BO-30): when the initial, UNEARNED HP from
@@ -4015,16 +4072,25 @@ def _choose_melody_position(
         )
 
         # BO-57 -- checked in the SAME "no chord anchor at all"
-        # scope pattern_continuity_bonus above already uses, so a
-        # chord-anchored song's own existing behavior is
-        # completely unaffected. See _melody_phrase_notes_played()
-        # 's own docstring for the full mechanism/evidence.
+        # scope pattern_continuity_bonus above already uses,
+        # EXCEPT for the preceding-chord-shape check itself,
+        # which uses phrase_effective_preceding_chord_shape_
+        # values (BO-147.4) instead of the raw parameter -- a
+        # chord-anchored song within the real, confirmed 4-beat
+        # boundary is still completely unaffected; only a
+        # preceding chord shape old enough to no longer be a
+        # useful hand-position constraint stops suppressing
+        # phrase planning. See _melody_phrase_notes_played()'s
+        # own docstring for the full mechanism/evidence, and
+        # MAX_PHRASE_PRECEDING_CHORD_DISTANCE_BEATS's own comment
+        # for this specific boundary's own reasoning.
         phrase_notes_played = (
             _melody_phrase_notes_played(position["fret"])
             if (
                 working_fret_anchor is None
                 and following_working_fret_anchor is None
-                and preceding_chord_shape_values is None
+                and phrase_effective_preceding_chord_shape_values
+                is None
             )
             else 0
         )
@@ -4637,6 +4703,15 @@ def generate_tab_from_template(
     # example called for a wider-reaching following lookup.
     preceding_chord_shape_values_by_event_id = {}
 
+    # BO-147.4 -- the elapsed beats from that same preceding
+    # chord's own onset to each event's own onset, built
+    # alongside preceding_chord_shape_values_by_event_id in the
+    # same loop below (nearest_preceding_key is already exactly
+    # that chord's own real onset position -- no new timing
+    # representation introduced, matching _beats_between()'s own
+    # existing, established BO-144.2 pattern).
+    preceding_chord_shape_elapsed_beats_by_event_id = {}
+
     nearest_preceding_key = None
 
     nearest_preceding_by_index = [None] * len(flat_note_events)
@@ -4671,6 +4746,14 @@ def generate_tab_from_template(
 
         preceding_chord_shape_values_by_event_id[id(event)] = (
             chord_shape_by_position[preceding_key]
+        )
+
+        preceding_chord_shape_elapsed_beats_by_event_id[
+            id(event)
+        ] = _beats_between(
+            preceding_key[0], preceding_key[1],
+            measure_number, event["beat"],
+            time_signature=score_file.time_signature
         )
 
     with zipfile.ZipFile(template_path) as z:
@@ -5959,6 +6042,11 @@ def generate_tab_from_template(
                     previous_position=previous_melody_position,
                     preceding_chord_shape_values=(
                         preceding_chord_shape_values_by_event_id.get(
+                            id(event)
+                        )
+                    ),
+                    preceding_chord_shape_elapsed_beats=(
+                        preceding_chord_shape_elapsed_beats_by_event_id.get(
                             id(event)
                         )
                     ),

@@ -337,7 +337,24 @@ def test_chord_anchored_song_unaffected():
 
         assert a4 == (69, 7, 1)
 
-        assert g4 == (67, 10, 2)
+        # BO-147.6 -- updated from the stale (67, 10, 2). BO-74's
+        # own preceding_chord_still_relevant gate (added after
+        # this value was first set here) correctly finds the
+        # intervening A4 at fret 7 already outside the preceding
+        # Cmaj7 shape's own hand-position span (9,12), so that
+        # chord's exact shape is no longer treated as a live
+        # reference for G4 -- confirmed directly, BO-147.5's own
+        # investigation: both the current and the pre-BO-147.4
+        # pipeline produce (67, 3, 0), and BO-147.4 itself plays
+        # no part in this note's own result (phrase_notes_played
+        # is 0 for every candidate here regardless; the deciding
+        # component is BO-145.5's own lower_fret_preference).
+        # This assertion still verifies this test's own real
+        # purpose: a close preceding chord anchor (Cmaj7, 1.0
+        # beat away) still suppresses phrase planning for this
+        # note -- fret 3 wins on ordinary chord-anchored
+        # tiebreaking, not via the phrase-lookahead mechanism.
+        assert g4 == (67, 3, 0)
 
         assert f4 == (65, 8, 2)
 
