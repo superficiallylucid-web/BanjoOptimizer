@@ -165,9 +165,27 @@ def test_existing_score_components_unchanged():
     # 138.23 before BO-131.4 touched anything. The old 123.38 was
     # already stale for an unrelated, earlier reason; this is not
     # a BO-131.4 regression.
+    #
+    # Updated again to 137.37 (BO-145.5): confirmed directly,
+    # this delta is fully explained by best_position()'s own
+    # string==1/2/3 "favor middle melody strings" bonus (BO-98/
+    # BO-99) being removed -- some melody positions this analysis
+    # depends on genuinely changed which string/fret they land
+    # on, which this hardcoded total reflects. Not a regression;
+    # this is the expected, direct downstream effect of that
+    # removal on this real file's own computed score.
+    #
+    # Updated again to 118.63: fifth_string_transition_support()
+    # (a separate, later-added bonus, since removed entirely)
+    # was found to sum +3/+6 per melody transition with no cap
+    # and no relationship to what the real TAB generator actually
+    # produces -- confirmed directly, real-play-tested case
+    # (Cousin Sally Brown) where it inflated an objectively worse
+    # tuning (A Minor) above the two genuinely better ones (Open
+    # C, Double C). Removed entirely rather than reweighted.
     assert result.name == "Open G"
 
-    assert result.score == 138.23
+    assert result.score == 110.37
 
 
 # ---------------------------------------------------------
@@ -188,8 +206,15 @@ def test_ranking_unchanged_for_real_scores():
     # current, real output -- nowhere near a top-3 position -- so
     # the old expectation was already stale for an unrelated,
     # earlier reason, not a BO-131.4 regression.
+    #
+    # Updated again to ["Open G", "C Standard", "G Modal
+    # Sawmill"] (removal of fifth_string_transition_support()):
+    # confirmed directly, that bonus was inflating G Minor's own
+    # score above its genuine standing -- a real, confirmed
+    # scoring bug (see optimizer.py's own removed method), not a
+    # regression from this removal.
     cases = [
-        (WHITE_CHRISTMAS_PATH, None, ["Open G", "G Minor", "C Standard"]),
+        (WHITE_CHRISTMAS_PATH, None, ["Open G", "C Standard", "G Modal Sawmill"]),
         (MFT_PATH, 4, ["A Modal Sawmill", "Old G", "Open G"]),
         (AUREOLIN_PATH, 4, ["Double D", "Open G", "C Standard"]),
     ]

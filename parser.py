@@ -56,12 +56,41 @@ def normalize_quality_code(raw_quality_code):
     """
     Strip a "(no5)" suffix from a raw MuseScore quality code,
     if present -- e.g. "7(no5)" -> "7", "m(no5)" -> "m".
-    Returns the code unchanged if the suffix isn't there.
+
+    BO-142 -- also folds a case-variant "maj" prefix to its
+    canonical lowercase form -- e.g. "Maj7" -> "maj7",
+    "MAJ7" -> "maj7" -- confirmed real: a genuine, standard
+    notation convention (a capital M, or "Maj", explicitly
+    distinguishes a major 7th from a minor 7th; MuseScore
+    preserves chord-symbol text verbatim as typed, with no case
+    normalization of its own, so this exact spelling was
+    silently unrecognized before this fix).
+
+    Deliberately narrow: only ever touches a genuine "maj"
+    prefix (the literal 3-letter sequence m-a-j, in any case
+    combination) -- never a bare "m" alone. This matters
+    musically, not just technically: per the same standard
+    convention, capital M and lowercase m are NOT
+    interchangeable -- "M7" would, under a careless case-fold,
+    collide with the existing, genuinely different "m7" (minor
+    7th) quality. Confirmed directly: CHORD_QUALITIES' own
+    "maj"-prefixed keys (maj7, maj7sus2, maj7sus4) and its
+    bare-"m"-prefixed keys (m, m7, mb5) never share a
+    3-character prefix at all, so this fold can never cross
+    that boundary -- it only ever recognizes an already-genuine
+    "maj" spelling, regardless of its own internal casing.
+
+    Only the leading "maj" token itself is touched; everything
+    after it (e.g. "7", "7sus2") is left exactly as given.
     """
 
     if raw_quality_code.endswith(NO5_SUFFIX):
 
-        return raw_quality_code[:-len(NO5_SUFFIX)]
+        raw_quality_code = raw_quality_code[:-len(NO5_SUFFIX)]
+
+    if raw_quality_code[:3].lower() == "maj":
+
+        raw_quality_code = "maj" + raw_quality_code[3:]
 
     return raw_quality_code
 
@@ -247,6 +276,89 @@ class MuseScoreFile:
             if not self.score.composer:
 
                 self.score.composer = value
+
+
+    # -----------------------------------------------------
+
+    def read_subtitle(self):
+        """
+        BO-143 -- same pattern as read_composer() above: read
+        the "subtitle" metaTag value from the score's own
+        Project Properties. Confirmed directly against the
+        supplied BO-143 reference score.
+
+        Leaves Score.subtitle at its own default ("") when the
+        tag has no real value -- never invents one.
+        """
+
+        for element in self.root.iter():
+
+            tag = element.tag.split("}")[-1]
+
+            if tag != "metaTag":
+
+                continue
+
+            name = element.attrib.get("name", "")
+
+            if name != "subtitle":
+
+                continue
+
+            if not element.text:
+
+                continue
+
+            value = element.text.strip()
+
+            if not value:
+
+                continue
+
+            self.score.subtitle = value
+
+            return
+
+
+    # -----------------------------------------------------
+
+    def read_lyricist(self):
+        """
+        BO-143 -- same pattern as read_composer() above, for the
+        "lyricist" metaTag. Confirmed directly against the
+        supplied BO-143 reference score.
+
+        Leaves Score.lyricist at its own default ("") when the
+        tag has no real value -- never invents one.
+        """
+
+        for element in self.root.iter():
+
+            tag = element.tag.split("}")[-1]
+
+            if tag != "metaTag":
+
+                continue
+
+            name = element.attrib.get("name", "")
+
+            if name != "lyricist":
+
+                continue
+
+            if not element.text:
+
+                continue
+
+            value = element.text.strip()
+
+            if not value:
+
+                continue
+
+            self.score.lyricist = value
+
+            return
 
 
     # -----------------------------------------------------

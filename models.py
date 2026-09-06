@@ -128,6 +128,13 @@ class Score:
 
     composer: str = ""
 
+    # BO-143 -- same pattern as composer above: read from the
+    # source score's own Project Properties metaTag, default to
+    # empty (never invented) when absent.
+    subtitle: str = ""
+
+    lyricist: str = ""
+
     key: str = "Unknown"
 
     key_confidence: float = 0.0

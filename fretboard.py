@@ -498,41 +498,18 @@ def best_position(positions):
 
         fret = position["fret"]
 
-        string = position["string"]
-
-
         value = _fret_band_value(fret)
 
-
-
-        # Favor middle melody strings
-
-        # BO-99 -- reduced from +6 to +4 (BO-98's own direct A/B
-        # confirmation: this is the smallest, narrowest correction
-        # to a real, confirmed contextless-decision tension where
-        # this string preference could outweigh a much larger
-        # fret-band difference, e.g. fret 12/string 1 (score 8)
-        # beating fret 5/string 3 (score 7) with no HP/phrase/
-        # chord evidence yet to arbitrate between them. Confirmed
-        # via exhaustive real-candidate-set testing across every
-        # tuning/pitch combination used by this project: this
-        # exact value changes only the 2 real cases motivating it
-        # -- G4 in C Standard and G4 in Open G -- with zero other
-        # effect anywhere else.
-        if string == 1:
-
-            value += 4
-
-
-        elif string == 2:
-
-            value += 4
-
-
-        elif string == 3:
-
-            value += 2
-
+        # BO-145.5 -- the string==1/2/3 "favor middle melody
+        # strings" bonus (BO-98/BO-99) has been removed: confirmed
+        # (BO-145.4's own investigation) it was a deliberate,
+        # documented "favor the middle two strings" heuristic, not
+        # a user-facing string-preference ranking at all, and not
+        # the intended general melody-position behavior. Removed
+        # without a replacement string-ranking heuristic (per
+        # explicit instruction) -- position["score"] is now purely
+        # _fret_band_value(fret), unchanged by which string the
+        # candidate is on.
 
 
         position["score"] = value

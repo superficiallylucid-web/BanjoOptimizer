@@ -242,6 +242,17 @@ HP_CONTINUITY_QUALITY_TOLERANCE = 0.5  # BO-54 -- see
 # chord shape winning merely because it happens to fit one
 # melody note.
 
+MAX_INCOMING_SHAPE_DISTANCE_BEATS = 4.0  # BO-144.2 -- see
+# transition_anchor_count()'s own docstring for exactly where
+# this is used. Confirmed directly against real data (BO-144.1's
+# own investigation), not chosen arbitrarily: every real BO-54
+# use case (The Christmas Song's own C -> Cmaj7 transitions)
+# occurs at exactly 1.0 beat elapsed; the real, problematic
+# Alizarin cases this exists to exclude occur at 5.0 and 6.5
+# beats. 4.0 (one full measure in 4/4) sits with genuine margin
+# on both sides of that real gap -- not a boundary chosen to
+# split the difference arbitrarily.
+
 
 def _capped_position_distance(
     notes, melody_pitches, preferred_melody_fret, melody_strings

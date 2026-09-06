@@ -96,7 +96,9 @@ from playing_model import _chord_working_fret
 # hp_notes_played() (chord_service.py) already uses for its own
 # reachability gate, rather than a new, separately-maintained
 # value.
-from chord_service import POSITION_DISTANCE_CAP
+from chord_service import (
+    POSITION_DISTANCE_CAP, MAX_INCOMING_SHAPE_DISTANCE_BEATS
+)
 
 from melody_box_analysis import realize_note
 
@@ -1211,9 +1213,60 @@ def _chord_candidate_has_melody_support(
     )
 
 
+def _beats_between(
+    earlier_measure, earlier_beat, later_measure, later_beat,
+    time_signature="4/4"
+):
+    """
+    BO-144.2 -- elapsed musical time, in quarter-note beats,
+    from (earlier_measure, earlier_beat) to (later_measure,
+    later_beat) -- both onset positions already available on
+    any Harmony object, no new timing representation
+    introduced.
+
+    Reuses the exact, existing "N/D" -> quarter-note-beats-per-
+    measure formula already established in parser.py's own
+    read_duration_beats() (int(numerator) * (4 / int(
+    denominator))) -- not a new, separate formula. Falls back
+    to 4/4 on any parse failure, matching that same existing
+    method's own honest-fallback behavior exactly.
+
+    Does not itself account for a time-signature CHANGE
+    somewhere between the two positions (a single
+    beats-per-measure value is used throughout) -- no real
+    fixture examined during BO-144.1's own investigation
+    exhibited this, and BO-144.2's own scope is limited to
+    fixing the real, confirmed Alizarin/Christmas-Song cases,
+    not a general mid-score meter-change system.
+    """
+
+    try:
+
+        numerator, denominator = time_signature.split("/")
+
+        beats_per_measure = int(numerator) * (
+            4 / int(denominator)
+        )
+
+    except (ValueError, AttributeError):
+
+        beats_per_measure = 4.0
+
+    earlier_total = (
+        (earlier_measure - 1) * beats_per_measure + earlier_beat
+    )
+
+    later_total = (
+        (later_measure - 1) * beats_per_measure + later_beat
+    )
+
+    return later_total - earlier_total
+
+
 def _select_chord_shape_for_harmony(
     harmony, tuning, chord_service, melody_notes=None,
-    next_harmony=None, incoming_shape=None
+    next_harmony=None, incoming_shape=None,
+    incoming_shape_elapsed_beats=None
 ):
     """
     The shape-selection portion of _apply_chord_shapes(),
@@ -1247,6 +1300,34 @@ def _select_chord_shape_for_harmony(
     """
 
     root_name = pitch_name(harmony.root_pc)
+
+    # BO-144.2 -- incoming_shape only means "the immediately
+    # preceding chord's already-selected shape" (confirmed real,
+    # BO-144.1's own investigation), with no temporal awareness
+    # of its own at all. effective_incoming_shape is what
+    # actually gets used below: the real incoming_shape when it's
+    # recent enough to still be musically authoritative, or None
+    # (identical to "no preceding chord at all") once it's too
+    # old to trust -- confirmed real gap, BO-144.1's own
+    # investigation: every genuine BO-54 use case sits at exactly
+    # 1.0 beat; the real, problematic Alizarin cases sit at 5.0
+    # and 6.5 beats. incoming_shape_elapsed_beats is None exactly
+    # when incoming_shape itself is None (the opening chord of a
+    # piece, or a caller that never threads elapsed time at all,
+    # e.g. an older, pre-BO-144.2 call site) -- treated the same
+    # as "always still authoritative", matching this function's
+    # own, existing pre-BO-144.2 behavior exactly when no timing
+    # information is supplied at all.
+    effective_incoming_shape = incoming_shape
+
+    if (
+        incoming_shape is not None
+        and incoming_shape_elapsed_beats is not None
+        and incoming_shape_elapsed_beats
+        > MAX_INCOMING_SHAPE_DISTANCE_BEATS
+    ):
+
+        effective_incoming_shape = None
 
     quality_display = quality_code_to_display_name(
         harmony.quality_code
@@ -1354,7 +1435,7 @@ def _select_chord_shape_for_harmony(
                     melody_pitches,
                     preferred_melody_fret=None,
                     following_box_notes=None,
-                    incoming_shape=incoming_shape
+                    incoming_shape=effective_incoming_shape
                 )
             )
 
@@ -1516,7 +1597,7 @@ def _select_chord_shape_for_harmony(
             melody_pitches,
             preferred_melody_fret=preferred_melody_fret,
             following_box_notes=following_box_notes,
-            incoming_shape=incoming_shape
+            incoming_shape=effective_incoming_shape
         )
 
     else:
@@ -1699,7 +1780,7 @@ def _select_chord_shape_for_harmony(
 
 def _apply_chord_shapes(
     staff_element, harmonies, tuning, chord_service,
-    melody_notes=None
+    melody_notes=None, time_signature="4/4"
 ):
     """
     For each chord symbol on staff_element, obtain a playable
@@ -1772,6 +1853,12 @@ def _apply_chord_shapes(
 
     incoming_shape = None
 
+    # BO-144.2 -- the (measure, beat) onset of whichever harmony
+    # most recently set incoming_shape, so elapsed beats can be
+    # computed at each subsequent harmony -- None exactly when
+    # incoming_shape itself is None.
+    incoming_shape_onset = None
+
     for harmony_index, (xml_harmony, harmony) in enumerate(
         zip(xml_harmony_elements, harmonies)
     ):
@@ -1781,17 +1868,34 @@ def _apply_chord_shapes(
             if harmony_index + 1 < len(harmonies) else None
         )
 
+        incoming_shape_elapsed_beats = None
+
+        if incoming_shape_onset is not None:
+
+            incoming_shape_elapsed_beats = _beats_between(
+                incoming_shape_onset[0], incoming_shape_onset[1],
+                harmony.measure, harmony.beat,
+                time_signature=time_signature
+            )
+
         chosen_shape, is_exception, exception_dict = (
             _select_chord_shape_for_harmony(
                 harmony, tuning, chord_service, melody_notes,
                 next_harmony=next_harmony,
-                incoming_shape=incoming_shape
+                incoming_shape=incoming_shape,
+                incoming_shape_elapsed_beats=(
+                    incoming_shape_elapsed_beats
+                )
             )
         )
 
         if chosen_shape is not None:
 
             incoming_shape = chosen_shape.shape
+
+            incoming_shape_onset = (
+                harmony.measure, harmony.beat
+            )
 
         if chosen_shape is None:
 
@@ -1974,7 +2078,8 @@ def generate_mscz(
         chord_shapes_applied, chord_shapes_skipped, _ = (
             _apply_chord_shapes(
                 staff_element, staff_harmonies, tuning,
-                chord_service
+                chord_service,
+                time_signature=score_file.time_signature
             )
         )
 
@@ -2078,7 +2183,8 @@ def _find_title_frame(staff_element):
 
 
 def _set_score_title_and_composer(
-    score_el, staff_element, title, composer
+    score_el, staff_element, title, composer,
+    subtitle="", lyricist=""
 ):
     """
     BO-26: carry over the source score's own Title and
@@ -2102,6 +2208,27 @@ def _set_score_title_and_composer(
     <Text> element is removed entirely, rather than left showing
     the template's own literal placeholder text ("Composer /
     arranger") as if it were a real value. Never invents one.
+
+    subtitle, lyricist -- BO-143. Unlike title/composer, the
+    template's own VBox has no existing <Text style="subtitle">
+    or <Text style="poet"> at all to modify -- confirmed
+    directly. So when the source has a real value, a NEW <Text>
+    is inserted (never invents one when empty, matching
+    composer's own established behavior). Confirmed real,
+    directly against the supplied BO-143 reference score's own
+    metaTag values (the source of truth here, matching
+    read_composer()'s own established pattern) -- NOT
+    necessarily identical to that score's own separate, directly
+    human-edited VBox text, which can genuinely differ from the
+    metaTag (confirmed real in the reference score itself: its
+    own composer metaTag differs from its own VBox composer
+    text). "subtitle" is placed directly after "title" (before
+    "composer"), matching the real, confirmed order MuseScore
+    itself uses; "poet" (lyricist) is appended at the very end,
+    after every existing/inserted <Text> -- both handled as a
+    separate pass after the existing title/composer loop below,
+    not interleaved with it, to avoid modifying the VBox's own
+    child list while iterating it.
     """
 
     work_title_tag = score_el.find(
@@ -2119,6 +2246,55 @@ def _set_score_title_and_composer(
     if composer_tag is not None:
 
         composer_tag.text = composer if composer else None
+
+    subtitle_tag = score_el.find(
+        './/{*}metaTag[@name="subtitle"]'
+    )
+
+    if subtitle_tag is None and subtitle:
+
+        # BO-143 -- confirmed real: the template has no
+        # "subtitle" metaTag at all (unlike composer/lyricist,
+        # which do exist, just empty by default) -- MuseScore
+        # itself keeps these alphabetically ordered by name
+        # (confirmed directly against the real reference score),
+        # so this is inserted at the matching position among the
+        # Score element's own existing metaTag children, not
+        # merely appended at the end.
+        score_element = score_el
+
+        if score_element is not None:
+
+            subtitle_tag = ET.Element("metaTag")
+
+            subtitle_tag.set("name", "subtitle")
+
+            insert_index = len(list(score_element))
+
+            for index, child in enumerate(score_element):
+
+                if (
+                    child.tag.split("}")[-1] == "metaTag"
+                    and child.get("name", "") > "subtitle"
+                ):
+
+                    insert_index = index
+
+                    break
+
+            score_element.insert(insert_index, subtitle_tag)
+
+    if subtitle_tag is not None:
+
+        subtitle_tag.text = subtitle if subtitle else None
+
+    lyricist_tag = score_el.find(
+        './/{*}metaTag[@name="lyricist"]'
+    )
+
+    if lyricist_tag is not None:
+
+        lyricist_tag.text = lyricist if lyricist else None
 
     vbox = _find_title_frame(staff_element)
 
@@ -2185,6 +2361,79 @@ def _set_score_title_and_composer(
             else:
 
                 vbox.remove(text_element)
+
+    # BO-143 -- subtitle: inserted as a new <Text> directly after
+    # the existing "title" one, matching MuseScore's own real,
+    # confirmed ordering. A separate pass (not interleaved with
+    # the loop above) to avoid modifying vbox's own child list
+    # while iterating it.
+    if subtitle:
+
+        title_index = None
+
+        for index, text_element in enumerate(
+            vbox.findall("{*}Text")
+        ):
+
+            style_element = text_element.find("{*}style")
+
+            if (
+                style_element is not None
+                and style_element.text == "title"
+            ):
+
+                title_index = index
+
+                break
+
+        subtitle_element = ET.Element("Text")
+
+        ET.SubElement(
+            subtitle_element, "eid"
+        ).text = _generate_eid()
+
+        ET.SubElement(
+            subtitle_element, "style"
+        ).text = "subtitle"
+
+        text_content = ET.SubElement(subtitle_element, "text")
+
+        text_content.text = subtitle
+
+        # Direct children of <VBox> are height/boxAutoSize/eid,
+        # then each <Text> in order -- title_index (found among
+        # only the <Text> children above) needs offsetting by
+        # however many non-Text children precede the first
+        # <Text> in vbox's own full child list.
+        vbox_children = list(vbox)
+
+        first_text_position = next(
+            i for i, c in enumerate(vbox_children)
+            if c.tag.split("}")[-1] == "Text"
+        )
+
+        insert_position = (
+            first_text_position + title_index + 1
+            if title_index is not None
+            else first_text_position
+        )
+
+        vbox.insert(insert_position, subtitle_element)
+
+    # BO-143 -- lyricist (MuseScore's own "poet" style):
+    # appended at the very end of vbox's own children, after
+    # every existing/inserted <Text>.
+    if lyricist:
+
+        poet_element = ET.SubElement(vbox, "Text")
+
+        ET.SubElement(poet_element, "eid").text = _generate_eid()
+
+        ET.SubElement(poet_element, "style").text = "poet"
+
+        text_content = ET.SubElement(poet_element, "text")
+
+        text_content.text = lyricist
 
 
 def _add_tuning_text(staff_element, tuning):
@@ -2382,7 +2631,8 @@ def generate_chord_diagrams_only(
     chord_shapes_applied, chord_shapes_skipped, exceptions = (
         _apply_chord_shapes(
             notation_staff_element, staff_harmonies, tuning,
-            chord_service, melody_notes=staff_melody_notes
+            chord_service, melody_notes=staff_melody_notes,
+            time_signature=score_file.time_signature
         )
     )
 
@@ -2428,7 +2678,8 @@ def generate_chord_diagrams_only(
 def _extract_staff_events(
     score_file, staff_number, volta_sink=None,
     rehearsal_mark_sink=None, tempo_sink=None,
-    repeat_sink=None, system_text_sink=None
+    repeat_sink=None, system_text_sink=None,
+    marker_jump_sink=None, fermata_sink=None
 ):
     """
     Walk one content staff's Measures/voice in document order,
@@ -2496,6 +2747,14 @@ def _extract_staff_events(
     # not at the start of its measure.
     measure_system_texts = []
 
+    # BO-143 -- raw <Fermata> XML element(s) per measure, same
+    # parallel-list shape and position-tracking approach as
+    # measure_system_texts above. Confirmed real, directly
+    # against the supplied reference score: a <Fermata> is a
+    # direct child of <voice> (sibling to <Chord>, not nested
+    # inside one).
+    measure_fermatas = []
+
     # BO-134 -- raw <startRepeat>/<endRepeat> XML element(s) per
     # measure. Structurally different from Volta/RehearsalMark/
     # Tempo above: confirmed directly against the real input,
@@ -2505,6 +2764,18 @@ def _extract_staff_events(
     # they always belong at a fixed spot (right after <eid>,
     # before <voice>).
     measure_repeats = []
+
+    # BO-143 -- raw <Marker>/<Jump> XML element(s) per measure.
+    # Same structural category as measure_repeats above: direct
+    # children of <Measure> itself (sibling to <voice>), not
+    # nested inside <voice> at all -- confirmed real, directly
+    # against the supplied BO-143 reference score. Marker
+    # represents a target point (Fine/Coda/Segno); Jump
+    # represents a directive referencing one (D.C./D.S. al
+    # Fine/Coda) -- both share the same fixed-position placement,
+    # so both are captured together in one list, in document
+    # order, rather than two separate ones.
+    measure_marker_jumps = []
 
     current_measure_events = None
 
@@ -2557,6 +2828,19 @@ def _extract_staff_events(
 
             measure_repeats.append(this_measure_repeats)
 
+            # BO-143 -- same pattern as this_measure_repeats
+            # above: direct children of THIS <Measure> element
+            # itself named Marker or Jump, in document order.
+            this_measure_marker_jumps = [
+                measure_child
+                for measure_child in element
+                if measure_child.tag.split("}")[-1] in (
+                    "Marker", "Jump"
+                )
+            ]
+
+            measure_marker_jumps.append(this_measure_marker_jumps)
+
             # BO-131 -- the full input tree is already parsed
             # before this .iter() loop runs, so `element` (this
             # <Measure>) already has its entire subtree attached
@@ -2593,6 +2877,8 @@ def _extract_staff_events(
             this_measure_tempos = []
 
             this_measure_system_texts = []
+
+            this_measure_fermatas = []
 
             if measure_voice_element is not None:
 
@@ -2635,6 +2921,19 @@ def _extract_staff_events(
                             (voice_event_index, voice_child)
                         )
 
+                    elif voice_child_tag == "Fermata":
+
+                        # BO-143 -- confirmed real, directly
+                        # against the supplied reference score: a
+                        # <Fermata> is a direct child of <voice>
+                        # (a sibling to <Chord>, NOT nested inside
+                        # one) -- same structural category as
+                        # SystemText above, not a per-note/Chord
+                        # element at all.
+                        this_measure_fermatas.append(
+                            (voice_event_index, voice_child)
+                        )
+
             measure_voltas.append(this_measure_voltas)
 
             measure_rehearsal_marks.append(
@@ -2646,6 +2945,8 @@ def _extract_staff_events(
             measure_system_texts.append(
                 this_measure_system_texts
             )
+
+            measure_fermatas.append(this_measure_fermatas)
 
         if tag == "Tuplet":
 
@@ -2946,6 +3247,14 @@ def _extract_staff_events(
     if repeat_sink is not None:
 
         repeat_sink.extend(measure_repeats)
+
+    if marker_jump_sink is not None:
+
+        marker_jump_sink.extend(measure_marker_jumps)
+
+    if fermata_sink is not None:
+
+        fermata_sink.extend(measure_fermatas)
 
     if system_text_sink is not None:
 
@@ -3935,11 +4244,42 @@ def _choose_melody_position(
 
             within_hp_offset = 0
 
+        # BO-145.5 -- explicit "prefer the lower fret" secondary
+        # tie-break. Confirmed real (BO-145.1/145.2's own
+        # investigation): fret_distance measures distance from a
+        # CHORD anchor (working_fret_anchor/following_working_
+        # fret_anchor) specifically, not a general absolute-fret
+        # preference -- it is unconditionally 0 whenever neither
+        # anchor is set, regardless of how far apart two
+        # candidates' own actual frets are. _fret_band_value()
+        # alone is also insufficient here on its own (confirmed
+        # directly, BO-145.2): its own tier boundaries collapse a
+        # wide range together (e.g. frets 13 and 17 both score 0),
+        # so two candidates several frets apart can still land in
+        # the very same band.
+        #
+        # Positioned as the LAST tie-break before the final -score
+        # fallback -- deliberately AFTER every other meaningful
+        # component above (chord-anchor distance, phrase coverage,
+        # HP membership/offset, same-string continuity), so none
+        # of those established, stronger playing considerations
+        # are overridden by this. Only ever distinguishes
+        # candidates that already tied on every one of those.
+        #
+        # The raw fret value itself (not a distance from some
+        # reference point) is deliberately used -- simplest
+        # possible, deterministic, and sufficient: sorting
+        # ascending on fret directly means a lower fret always
+        # sorts first among otherwise-tied candidates, with no
+        # extra reference point to get wrong.
+        lower_fret_preference = position["fret"]
+
         return (
             preceding_fd_violation, open_string_bonus,
             -phrase_notes_played, hp_tiebreak, within_hp_offset,
             pattern_continuity_bonus,
-            fret_distance, string_distance, -position["score"]
+            fret_distance, string_distance, lower_fret_preference,
+            -position["score"]
         )
 
     return sorted(positions, key=_sort_key)[0]
@@ -4041,12 +4381,18 @@ def generate_tab_from_template(
 
     measure_system_texts = []
 
+    measure_marker_jumps = []
+
+    measure_fermatas = []
+
     measures = _extract_staff_events(
         score_file, staff_number, volta_sink=measure_voltas,
         rehearsal_mark_sink=measure_rehearsal_marks,
         tempo_sink=measure_tempos,
         repeat_sink=measure_repeats,
-        system_text_sink=measure_system_texts
+        system_text_sink=measure_system_texts,
+        marker_jump_sink=measure_marker_jumps,
+        fermata_sink=measure_fermatas
     )
 
     # ---- BO-24: read harmonies and pre-select each chord's own
@@ -4073,6 +4419,10 @@ def generate_tab_from_template(
 
     incoming_shape = None
 
+    # BO-144.2 -- see the identical pattern in _apply_chord_
+    # shapes() for the full reasoning.
+    incoming_shape_onset = None
+
     for harmony_index, harmony in enumerate(staff_harmonies):
 
         next_harmony = (
@@ -4080,16 +4430,33 @@ def generate_tab_from_template(
             if harmony_index + 1 < len(staff_harmonies) else None
         )
 
+        incoming_shape_elapsed_beats = None
+
+        if incoming_shape_onset is not None:
+
+            incoming_shape_elapsed_beats = _beats_between(
+                incoming_shape_onset[0], incoming_shape_onset[1],
+                harmony.measure, harmony.beat,
+                time_signature=score_file.time_signature
+            )
+
         chosen_shape, _, _ = _select_chord_shape_for_harmony(
             harmony, tuning, chord_service,
             melody_notes=score_file.score.notes,
             next_harmony=next_harmony,
-            incoming_shape=incoming_shape
+            incoming_shape=incoming_shape,
+            incoming_shape_elapsed_beats=(
+                incoming_shape_elapsed_beats
+            )
         )
 
         if chosen_shape is not None:
 
             incoming_shape = chosen_shape.shape
+
+            incoming_shape_onset = (
+                harmony.measure, harmony.beat
+            )
 
             chord_shape_by_position[
                 (harmony.measure, harmony.beat)
@@ -4463,7 +4830,9 @@ def generate_tab_from_template(
 
     _set_score_title_and_composer(
         score_el, tab_staff, score_file.score.title,
-        score_file.score.composer
+        score_file.score.composer,
+        subtitle=score_file.score.subtitle,
+        lyricist=score_file.score.lyricist
     )
 
     _add_tuning_text(tab_staff, tuning)
@@ -4629,6 +4998,27 @@ def generate_tab_from_template(
 
             tab_measure.append(copy.deepcopy(repeat_element))
 
+        # BO-143 -- re-emit any Marker/Jump captured for this
+        # measure, same fixed position as startRepeat/endRepeat
+        # above -- confirmed real, directly against the supplied
+        # reference score. Unlike startRepeat/endRepeat, these DO
+        # have their own real <eid> (confirmed directly), so it's
+        # regenerated on the copy, matching the same pattern
+        # already established for Volta/RehearsalMark/SystemText.
+        for marker_jump_element in measure_marker_jumps[
+            measure_index
+        ]:
+
+            marker_jump_copy = copy.deepcopy(marker_jump_element)
+
+            eid_element = marker_jump_copy.find("{*}eid")
+
+            if eid_element is not None:
+
+                eid_element.text = _generate_eid()
+
+            tab_measure.append(marker_jump_copy)
+
         tab_voice = ET.SubElement(tab_measure, "voice")
 
         if is_first_measure:
@@ -4687,6 +5077,25 @@ def generate_tab_from_template(
                 treble_measure.append(
                     copy.deepcopy(repeat_element)
                 )
+
+            # BO-143 -- same Marker/Jump re-emission as the TAB
+            # staff's own Measure above, for this separate,
+            # independently-built notation-staff Measure.
+            for marker_jump_element in measure_marker_jumps[
+                measure_index
+            ]:
+
+                marker_jump_copy = copy.deepcopy(
+                    marker_jump_element
+                )
+
+                eid_element = marker_jump_copy.find("{*}eid")
+
+                if eid_element is not None:
+
+                    eid_element.text = _generate_eid()
+
+                treble_measure.append(marker_jump_copy)
 
             treble_voice = ET.SubElement(treble_measure, "voice")
 
@@ -4888,6 +5297,45 @@ def generate_tab_from_template(
 
                 treble_voice.append(treble_system_text_copy)
 
+        # BO-143 -- same start-of-measure emission for Fermata,
+        # position-tracked the same way.
+        for fermata_index, fermata_element in (
+            measure_fermatas[measure_index]
+        ):
+
+            if fermata_index != 0:
+
+                continue
+
+            fermata_copy = copy.deepcopy(fermata_element)
+
+            fermata_eid_el = fermata_copy.find("{*}eid")
+
+            if fermata_eid_el is not None:
+
+                fermata_eid_el.text = _generate_eid()
+
+            tab_voice.append(fermata_copy)
+
+            if include_notation:
+
+                treble_fermata_copy = copy.deepcopy(
+                    fermata_element
+                )
+
+                treble_fermata_eid_el = (
+                    treble_fermata_copy.find("{*}eid")
+                )
+
+                if treble_fermata_eid_el is not None:
+
+                    treble_fermata_eid_el.text = (
+                        _generate_eid()
+                    )
+
+                treble_voice.append(treble_fermata_copy)
+
+
         for event_position, event in enumerate(measure_events):
 
             # BO-131 -- emit any Volta spanner(s) that belong
@@ -5074,6 +5522,46 @@ def generate_tab_from_template(
                     treble_voice.append(
                         treble_system_text_copy
                     )
+
+            # BO-143 -- same within-loop emission for Fermata,
+            # position-tracked the same way.
+            for fermata_index, fermata_element in (
+                measure_fermatas[measure_index]
+            ):
+
+                if fermata_index != event_position or (
+                    fermata_index == 0
+                ):
+
+                    continue
+
+                fermata_copy = copy.deepcopy(fermata_element)
+
+                fermata_eid_el = fermata_copy.find("{*}eid")
+
+                if fermata_eid_el is not None:
+
+                    fermata_eid_el.text = _generate_eid()
+
+                tab_voice.append(fermata_copy)
+
+                if include_notation:
+
+                    treble_fermata_copy = copy.deepcopy(
+                        fermata_element
+                    )
+
+                    treble_fermata_eid_el = (
+                        treble_fermata_copy.find("{*}eid")
+                    )
+
+                    if treble_fermata_eid_el is not None:
+
+                        treble_fermata_eid_el.text = (
+                            _generate_eid()
+                        )
+
+                    treble_voice.append(treble_fermata_copy)
 
             if event["type"] == "harmony":
 
@@ -6290,6 +6778,46 @@ def generate_tab_from_template(
 
                 treble_voice.append(treble_system_text_copy)
 
+        # BO-143 -- same end-of-measure emission for Fermata,
+        # position-tracked the same way.
+        for fermata_index, fermata_element in (
+            measure_fermatas[measure_index]
+        ):
+
+            if fermata_index < len(measure_events) or (
+                fermata_index == 0
+            ):
+
+                continue
+
+            fermata_copy = copy.deepcopy(fermata_element)
+
+            fermata_eid_el = fermata_copy.find("{*}eid")
+
+            if fermata_eid_el is not None:
+
+                fermata_eid_el.text = _generate_eid()
+
+            tab_voice.append(fermata_copy)
+
+            if include_notation:
+
+                treble_fermata_copy = copy.deepcopy(
+                    fermata_element
+                )
+
+                treble_fermata_eid_el = (
+                    treble_fermata_copy.find("{*}eid")
+                )
+
+                if treble_fermata_eid_el is not None:
+
+                    treble_fermata_eid_el.text = (
+                        _generate_eid()
+                    )
+
+                treble_voice.append(treble_fermata_copy)
+
     # ---- FretDiagrams: reuse the existing, unmodified BO-18
     # through BO-22 chord-shape selection (staff_harmonies was
     # already read earlier in this function, before the melody-
@@ -6299,7 +6827,8 @@ def generate_tab_from_template(
     chord_shapes_applied, chord_shapes_skipped, chord_exceptions = (
         _apply_chord_shapes(
             tab_staff, staff_harmonies, tuning, chord_service,
-            melody_notes=score_file.score.notes
+            melody_notes=score_file.score.notes,
+            time_signature=score_file.time_signature
         )
     )
 

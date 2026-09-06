@@ -3,11 +3,14 @@ import sys
 import os
 import argparse
 
-from output import output, clear_output
+from output import output, clear_output, create_run_folder
 
 from parser import MuseScoreFile
 from optimizer import TuningAnalyzer
-from recommendations import apply_shared_features, apply_confidence
+from recommendations import (
+    apply_shared_features, apply_confidence,
+    select_additional_strong_alternatives
+)
 from score_generator import generate_tab_from_template
 from tunings import get_tunings
 from chord_service import ChordService
@@ -191,7 +194,25 @@ arg_parser.add_argument("--tuning", default=None)
 
 arg_parser.add_argument("--capo", type=int, default=None)
 
+# BO-140.4 -- replaces BO-140.1's own --recommendations (which
+# meant "N total recommendations", confirmed confusing since
+# rank 4+ is a genuinely different, secondary tier, not simply
+# "more of the same top-N list"). Removed cleanly rather than
+# aliased under the old name: the same flag name with a
+# genuinely different meaning (total vs. additional) would
+# itself actively mislead a user who learned the old semantics,
+# which is worse than a clean break.
+arg_parser.add_argument(
+    "--alternatives", type=int, default=0
+)
+
 cli_args, _unused_remaining_args = arg_parser.parse_known_args()
+
+if cli_args.alternatives < 0:
+
+    print("--alternatives must be 0 or greater.")
+
+    sys.exit(1)
 
 REQUESTED_TUNING = None
 
@@ -276,16 +297,20 @@ class Tee:
 
 SCORES_FOLDER = PROJECT_FOLDER / "scores"
 OUTPUT_FOLDER = PROJECT_FOLDER / "output"
-GENERATED_FOLDER = OUTPUT_FOLDER / "generated"
 TAB_TEMPLATE_PATH = (
     PROJECT_FOLDER / "templates" / "TAB_linked_Treble_Example.mscz"
 )
 
-OUTPUT_FOLDER.mkdir(exist_ok=True)
-GENERATED_FOLDER.mkdir(exist_ok=True)
+# BO-141 -- one timestamped run directory per BO execution,
+# generated once and reused for both the report and every
+# generated .mscz from this run -- no separate "generated"
+# subfolder at all (see create_run_folder()'s own docstring for
+# collision handling). RUN_FOLDER replaces the old, fixed
+# GENERATED_FOLDER at its own, single call site below.
+RUN_FOLDER = create_run_folder(OUTPUT_FOLDER)
 
 log_file = open(
-    OUTPUT_FOLDER / "BanjoOptimizer_report.txt",
+    RUN_FOLDER / "BanjoOptimizer_report.txt",
     "w",
     encoding="utf-8"
 )
@@ -357,6 +382,21 @@ else:
 
 
         score.read_title()
+
+        # BO-143 -- read_composer() previously existed but was
+        # never actually called anywhere in the real production
+        # pipeline (confirmed directly, a pre-existing gap this
+        # doesn't otherwise attempt to fix beyond making it
+        # actually run) -- Score.composer stayed at its own
+        # default ("") in every real run. Added here, alongside
+        # the two new BO-143 reads it shares an identical
+        # pattern with, since the task's own required composer
+        # behavior depends on this actually running.
+        score.read_composer()
+
+        score.read_subtitle()
+
+        score.read_lyricist()
 
 
 
@@ -555,6 +595,71 @@ else:
             rank += 1
 
 
+        # BO-140.4 -- additional alternatives, shown only when
+        # explicitly requested (--alternatives > 0) and only
+        # while candidates genuinely qualify as still-useful
+        # (combined_score > 0, an existing, already-computed
+        # field -- see select_additional_strong_alternatives()'s
+        # own docstring for the full reasoning; this is
+        # deliberately NOT the same 5% apply_confidence() test
+        # used for the primary set's own "(Very close
+        # alternative...)" text just above, which remains
+        # completely unchanged). Default behavior
+        # (--alternatives not given, or given as 0) is
+        # completely unaffected: this block does not run at all
+        # in that case.
+        if cli_args.alternatives > 0:
+
+            additional = select_additional_strong_alternatives(
+                results["modern"][3:],
+                cli_args.alternatives
+            )
+
+            if additional:
+
+                output(
+                    "\nAdditional Strong Alternatives:\n"
+                )
+
+                for item in additional:
+
+                    output(
+                        f"{rank}. {item.name} "
+                        f"({item.symbol})"
+                    )
+
+                    for advantage in item.advantages:
+
+                        output(
+                            "   -",
+                            advantage
+                        )
+
+                    if item.tradeoffs:
+
+                        output(
+                            "   Tradeoffs:"
+                        )
+
+                        for tradeoff in item.tradeoffs:
+
+                            output(
+                                "   -",
+                                tradeoff
+                            )
+
+                    print()
+
+                    rank += 1
+
+            else:
+
+                output(
+                    "\nNo additional strong alternatives "
+                    "found.\n"
+                )
+
+
         # ---------------------------------------------------------
         # Generate a playable .mscz for each recommended tuning
         # (see score_generator.py) -- uses the SAME top_results
@@ -601,7 +706,7 @@ else:
                     target_tuning,
                     staff_used,
                     TAB_TEMPLATE_PATH,
-                    GENERATED_FOLDER,
+                    RUN_FOLDER,
                     generation_chord_service
                 )
 

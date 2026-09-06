@@ -335,11 +335,18 @@ def test_full_pipeline_real_examples_and_consistency():
         # via stale chord context. The second D#4 (beat 2.5) has a
         # genuine following_working_fret_anchor, so string_distance
         # remains active there exactly as before -- unchanged.
+        #
+        # Updated fret 3 -> fret 1 (BO-145.5): confirmed directly,
+        # this delta is fully explained by best_position()'s own
+        # middle-string bonus being removed and the new explicit
+        # lower-fret tie-break being added -- an even lower,
+        # equally defensible fret now wins for this same note.
+        # Not a regression.
         first_ds4_note = ds4_chords[0].find("{*}Note")
 
-        assert first_ds4_note.find("{*}fret").text == "3"
+        assert first_ds4_note.find("{*}fret").text == "1"
 
-        assert first_ds4_note.find("{*}string").text == "1"
+        assert first_ds4_note.find("{*}string").text == "0"
 
         second_ds4_note = ds4_chords[1].find("{*}Note")
 

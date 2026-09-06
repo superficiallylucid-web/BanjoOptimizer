@@ -115,3 +115,61 @@ def apply_confidence(results):
         result.confidence = min(gaps)
 
     return results
+
+
+def select_additional_strong_alternatives(
+    remaining_results, max_additional
+):
+    """
+    BO-140.4 -- given the remaining, lower-ranked results after
+    the primary three, in the SAME existing rank order, return
+    however many (0 to max_additional) qualify as a genuinely
+    useful "additional alternative" -- distinct from, and a
+    deliberately different question than, "very close to the
+    primary set" (the existing apply_confidence()/5% mechanism,
+    still used unchanged for that separate purpose elsewhere).
+
+    Eligibility rule (BO-140.3's own investigation, across six
+    real songs): candidate.combined_score > 0. Empirical v1
+    rule, not a claim that zero is mathematically special --
+    chosen because it's an existing, already-computed field,
+    not a new score, and it cleanly separated genuinely-poor
+    lower ranks (Moon River: negative) from genuinely-useful
+    ones (every other case examined: positive) in that
+    investigation.
+
+    remaining_results must already be in the existing rank
+    order (highest score first) -- stops at the first result
+    with combined_score <= 0, does not skip over it to search
+    farther down the list, per this BO's own explicit
+    requirement (ranks are already sorted descending, so once
+    one candidate fails, this rule intentionally does not
+    assume anything about candidates further down).
+
+    Returns an empty list if max_additional is 0 or fewer, or
+    nothing in remaining_results qualifies -- callers should
+    treat an empty result as "no additional strong alternatives
+    found", not an error.
+    """
+
+    if max_additional <= 0:
+
+        return []
+
+    qualifying = []
+
+    for candidate in remaining_results:
+
+        if len(qualifying) >= max_additional:
+
+            break
+
+        if candidate.combined_score > 0:
+
+            qualifying.append(candidate)
+
+        else:
+
+            break
+
+    return qualifying

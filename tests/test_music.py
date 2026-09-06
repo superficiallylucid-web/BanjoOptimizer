@@ -235,26 +235,21 @@ def test_white_christmas_recommends_open_g():
 
 
 def test_cousin_sally_brown_recommends_double_d():
-
     score = load_score(
         "Cousin Sally Brown"
     )
-
-
     analyzer = TuningAnalyzer(
         score.notes,
         score.key
     )
-
-
     results = analyzer.analyze()
-
-
     best = results["modern"][0]
 
+    print("\nTop 5 modern tunings:")
+    for r in results["modern"][:5]:
+        print(f"  {r.name}: {r.score}")
 
     assert best.name == "Open C"
-
 
 
 def test_my_favorite_things_has_reasonable_recommendation():

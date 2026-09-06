@@ -20,8 +20,6 @@ import subprocess
 
 import sys
 
-import time
-
 import zipfile
 
 from pathlib import Path
@@ -98,52 +96,27 @@ def test_main_py_generates_mscz_files():
     was tested in isolation (see test_score_generator.py), but
     main.py never actually called it -- a normal `python
     main.py` run produced zero .mscz output. Runs main.py as a
-    real subprocess and confirms output/generated/ actually
-    contains at least one .mscz file afterward -- the only way
-    to catch "the code exists but nothing calls it," which no
-    amount of testing generate_mscz() directly can catch.
+    real subprocess and confirms a timestamped run folder
+    (BO-141) actually contains at least one .mscz file
+    afterward -- the only way to catch "the code exists but
+    nothing calls it," which no amount of testing generate_mscz()
+    directly can catch.
+
+    BO-141 -- updated from the old, fixed output/generated/
+    path: each run now creates its own output/<timestamp>/
+    folder directly containing the report and every generated
+    .mscz, with no "generated" subfolder at all. Finds the
+    newest run folder created by THIS subprocess call
+    specifically (by comparing directories present before and
+    after), rather than assuming a fixed path.
     """
 
-    generated_folder = PROJECT_ROOT / "output" / "generated"
+    output_folder = PROJECT_ROOT / "output"
 
-    # Deletes individual files rather than the whole directory
-    # tree (shutil.rmtree requires exclusive access to remove the
-    # directory itself, which any open handle within it can
-    # block -- confirmed real, recurring failure on Windows:
-    # Explorer's own thumbnail/preview generation, antivirus
-    # real-time scanning, or a lingering handle from a prior
-    # MuseScore/test run can all hold this open transiently even
-    # when nothing is actually using the files). This test's own
-    # real goal is only "no stale .mscz files linger from a prior
-    # run" -- the directory itself not existing was never actually
-    # required. A short retry handles genuinely transient locks
-    # without making the whole test flaky-by-design.
-    if generated_folder.exists():
-
-        for file_path in generated_folder.iterdir():
-
-            if not file_path.is_file():
-
-                continue
-
-            for attempt in range(5):
-
-                try:
-
-                    file_path.unlink()
-
-                    break
-
-                except PermissionError:
-
-                    if attempt == 4:
-
-                        raise
-
-                    time.sleep(0.5)
-
-    # main.py itself creates this folder (mkdir(exist_ok=True))
-    # if it doesn't already exist -- no need to create it here.
+    folders_before = (
+        set(output_folder.iterdir())
+        if output_folder.exists() else set()
+    )
 
     result = subprocess.run(
         [sys.executable, "main.py"],
@@ -157,16 +130,32 @@ def test_main_py_generates_mscz_files():
         f"main.py exited with an error:\n{result.stderr}"
     )
 
-    assert generated_folder.exists(), (
-        "output/generated/ was not created by a normal "
-        "main.py run"
+    folders_after = set(output_folder.iterdir())
+
+    new_folders = folders_after - folders_before
+
+    assert len(new_folders) == 1, (
+        f"Expected exactly one new, timestamped run folder to "
+        f"be created by this run, found {len(new_folders)}."
     )
 
-    generated_files = list(generated_folder.glob("*.mscz"))
+    run_folder = new_folders.pop()
+
+    assert not (run_folder / "generated").exists(), (
+        "Expected no 'generated' subfolder at all inside the "
+        "new run folder."
+    )
+
+    assert (run_folder / "BanjoOptimizer_report.txt").exists(), (
+        "Expected BanjoOptimizer_report.txt directly inside "
+        "the new run folder."
+    )
+
+    generated_files = list(run_folder.glob("*.mscz"))
 
     assert len(generated_files) > 0, (
-        "main.py ran but produced no .mscz files in "
-        "output/generated/"
+        "main.py ran but produced no .mscz files directly "
+        "inside the new run folder."
     )
 
     with zipfile.ZipFile(generated_files[0]) as archive:

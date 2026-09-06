@@ -20,8 +20,6 @@ import sys
 
 sys.path.insert(0, '.')
 
-from fretboard import find_positions, best_position
-
 from score_generator import generate_tab_from_template
 
 from tunings import get_tunings
@@ -46,28 +44,16 @@ DOUBLE_D = get_tunings()["Double D"]
 # 1 -- direct unit confirmation of the exact scoring change
 # ---------------------------------------------------------
 
-def test_string_1_bonus_reduced_to_4():
-
-    open_notes = C_STANDARD.notes[1:]
-
-    positions = find_positions(67, open_notes)  # G4
-
-    best_position(positions)
-
-    fret12 = next(p for p in positions if p["fret"] == 12)
-
-    fret5 = next(p for p in positions if p["fret"] == 5)
-
-    # fret5/string3 = 5 (band) + 2 (string) = 7 (unchanged)
-    assert fret5["score"] == 7
-
-    # fret12/string1 = 2 (band) + 4 (string, reduced from 6) = 6
-    assert fret12["score"] == 6
-
-    # fret5 now genuinely wins.
-    assert fret5["score"] > fret12["score"]
-
-
+# ---------------------------------------------------------
+# BO-145.5 -- test_string_1_bonus_reduced_to_4() removed: its
+# sole purpose was validating the exact string==1/2/3 "favor
+# middle melody strings" bonus values (BO-98/BO-99), which
+# BO-145.5 removes entirely (confirmed, BO-145.4's own
+# investigation: a deliberate "favor the middle two strings"
+# heuristic, not the intended general melody-position
+# behavior, and not a user-facing string-preference ranking).
+# The remaining tests below (2-5) are NOT about the bonus
+# value itself and remain valid/passing unchanged.
 # ---------------------------------------------------------
 # 2 -- real controlled score: 3-5 replaces 1-12
 # ---------------------------------------------------------

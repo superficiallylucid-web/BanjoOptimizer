@@ -97,17 +97,6 @@ class TuningAnalyzer:
     # score (range roughly -4 to +3) up to a comparable scale.
     MOVEMENT_SCORE_WEIGHT = 8
 
-    # fifth_string_transition_support() sums +3/+6 for every
-    # melody leap the 5th string can bridge, with no
-    # normalization by song length -- same shape of bug as
-    # movement_score, just smaller in practice so far. Capping
-    # it (rather than normalizing per-transition, which would
-    # shrink it to near-nothing on typical songs) keeps
-    # today's known-good scores unchanged while still stopping
-    # a long or leap-heavy song from letting this term take
-    # over the total.
-    FIFTH_TRANSITION_CAP = 20
-
     # Playing Model integration (see playing_model.py /
     # DESIGN.md). analyze_tuning_playing_model()'s total_score
     # sums one term per melody phrase, so like movement_score
@@ -467,9 +456,6 @@ class TuningAnalyzer:
         transition_count = 0
 
 
-        fifth_transition_score = 0
-
-
 
         previous_position = None
 
@@ -579,38 +565,6 @@ class TuningAnalyzer:
 
             previous_position = best_position
 
-
-
-        # ---------------------------------------------
-        # New 5th string transition analysis
-        # ---------------------------------------------
-
-
-        fifth_transition_score, fifth_count = (
-
-            self.fifth_string_transition_support(
-
-                positions,
-
-                tuning
-
-            )
-
-        )
-
-
-
-        if fifth_count:
-
-
-            reasons.append(
-
-                f"5th string bridges {fifth_count} melody transitions"
-
-            )
-
-
-
         # ---------------------------------------------
         # Base scoring
         # ---------------------------------------------
@@ -678,10 +632,6 @@ class TuningAnalyzer:
             +
 
             movement_score
-
-            +
-
-            fifth_transition_score
 
         )
 
@@ -791,109 +741,7 @@ class TuningAnalyzer:
 
 
     # -------------------------------------------------
-    # New feature:
-    #
-    # Can the 5th string cover the hand movement?
-    #
-    # -------------------------------------------------
 
-    def fifth_string_transition_support(
-        self,
-        positions,
-        tuning
-    ):
-
-
-        if len(tuning.notes) < 5:
-
-            return 0, 0
-
-
-
-        fifth = tuning.notes[4]
-
-
-
-        score = 0
-
-        count = 0
-
-
-
-        for index in range(
-            len(positions) - 1
-        ):
-
-
-            current = positions[index]
-
-            following = positions[index + 1]
-
-
-
-            if not current or not following:
-
-                continue
-
-
-
-            movement = abs(
-
-                current["fret"]
-
-                -
-
-                following["fret"]
-
-            )
-
-
-
-            # Only reward real position changes
-
-            if movement < 7:
-
-                continue
-
-
-
-            # Can the fifth string be played
-            # as a bridge note?
-
-            fifth_fret = (
-
-                following_note :=
-
-                self.get_note_midi(
-                    self.notes[index + 1]
-                )
-
-            ) - fifth
-
-
-
-            if 0 <= fifth_fret <= 22:
-
-
-                count += 1
-
-
-
-                # Stronger reward when
-                # the hand has farther to travel
-
-                if movement >= 10:
-
-                    score += 6
-
-
-                else:
-
-                    score += 3
-
-
-
-        return score, count
 
 
 
