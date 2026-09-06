@@ -217,6 +217,67 @@ def _is_simple_barre(values):
     return False
 
 
+def effective_finger_count(values):
+    """
+    BO-148.3 -- how many physical fingers this shape genuinely
+    needs, recognizing that adjacent strings sharing the same
+    fret can be played with a single barred finger rather than
+    counted as separate fingers per unique fret. Open (0) and
+    muted (None) strings cost nothing.
+
+    Groups consecutive ADJACENT strings sharing the same
+    nonzero fret into one finger each (reusing the same
+    adjacency requirement _is_simple_barre() already
+    establishes -- a real finger can't skip over a different
+    fret in between, so two non-adjacent strings happening to
+    share a fret still cost two separate fingers). Every other
+    individual fretted position costs one finger.
+
+    Confirmed directly (BO-148.3's own investigation) against
+    every shape the design discussion used: 0000->0, 0002->1,
+    0012->2, 0312->3, 777(10)->2 (one 3-string barre at fret 7
+    + one finger at fret 10), 977(10)->3 (fret 9 alone + a
+    2-string barre at fret 7 + fret 10 alone -- the barre does
+    NOT extend to fret 9, since 9 != 7).
+
+    An interrupted barre (the same fret on two NON-adjacent
+    strings with a muted string between them) is never actually
+    encountered here: _has_interior_string_omitted() already
+    rejects any shape with a muted interior string outright, so
+    every shape that reaches this function has, at most, muted
+    strings only at its own outer positions -- confirmed
+    directly, BO-148.3's own investigation.
+    """
+
+    fingers = 0
+
+    i = 0
+
+    n = len(values)
+
+    while i < n:
+
+        value = values[i]
+
+        if value is None or value == 0:
+
+            i += 1
+
+            continue
+
+        j = i
+
+        while j + 1 < n and values[j + 1] == value:
+
+            j += 1
+
+        fingers += 1
+
+        i = j + 1
+
+    return fingers
+
+
 def _score(values):
     """
     Rough 0-100 playability estimate. Deliberately simple --

@@ -56,6 +56,8 @@ from fretboard import (
 
 from playability import evaluate as evaluate_playability
 
+from playing_model import _chord_working_fret
+
 
 # How far up the neck to search for candidate frets. Banjo
 # chord shapes in the existing verified data top out low on
@@ -87,6 +89,21 @@ MAX_CANDIDATES = 10
 # without being an arbitrary large number: for a typical chord
 # in a typical tuning, the full candidate pool this project
 # actually generates rarely exceeds this.
+
+POSITION_BUCKET_WIDTH = 4  # frets -- BO-148, used only by
+# _voicing_signature()'s own dedup-equality check. Matches BO-
+# 59's own established HandPosition width (hand_position.py's
+# chord_hp_span(), unrelated mechanism, same underlying "how
+# many frets counts as one hand position" convention) -- not a
+# newly-invented scale. Confirmed directly against both the
+# real motivating case (Alizarin D7: working frets 7 and 10 --
+# 3 frets apart, genuinely different positions -- land in
+# different buckets) and the real regression this width was
+# specifically checked against (Moon River Cmaj: working frets
+# 4 and 5 -- 1 fret apart, the same practical position -- land
+# in the same bucket). A width this project has already
+# validated for the same underlying question, not a value
+# chosen to force either individual test to pass.
 
 
 def _score_candidate(values):
@@ -164,13 +181,54 @@ def _shape_contains_any_pitch(values, melody_strings, pitches):
 def _voicing_signature(values, melody_strings):
     """
     Identity used for duplicate removal: the set of distinct
-    chord-tone pitch classes actually sounding, plus the exact
-    top note. Two candidates with the same signature sound like
-    the same voicing, so only the better one should survive.
+    chord-tone pitch classes actually sounding, the exact top
+    note, and a coarse neck-position bucket (BO-148) the shape
+    itself occupies. Two candidates with the same signature
+    sound like the same voicing AND sit at the same place on
+    the neck, so only the better one should survive.
+
+    BO-148 -- the position bucket is playing_model.
+    _chord_working_fret() (BO-59's own already-established
+    "lowest fretted position" concept, reused UNMODIFIED, not a
+    new positional representation) divided into fixed-width
+    (POSITION_BUCKET_WIDTH-fret) groups via integer division.
+    Confirmed real motivating case, Alizarin/Open G's own D7
+    with melody C5: 777(10) (working_fret 7, bucket 1) was being
+    discarded in favor of 0(11)(10)(10) (working_fret 10, bucket
+    2) purely because they sound identical, even though 777(10)
+    sits at a genuinely different, more contextually useful
+    position for that passage's surrounding melody -- now kept
+    as a separate candidate.
+
+    A fixed grid, not hand_position.chord_hp_span()'s own
+    sliding, per-candidate-anchored (low, low+3) window, is
+    required here specifically because this is an EQUALITY
+    check: chord_hp_span() was tried first and confirmed wrong
+    by a real regression -- Moon River/C Standard's own 4555
+    (working_fret 4) and 0055 (working_fret 5) are adjacent,
+    near-identical positions that an established test
+    (test_bo138_3_melody_inclusion_in_chord_selection.py) relies
+    on still deduping together, but chord_hp_span() gives them
+    DIFFERENT windows ((4,7) vs (5,8)) purely because each one's
+    own window is anchored at its own working fret -- a sliding
+    window is the wrong tool for a symmetric equality test,
+    even though it is exactly right for chord_hp_span()'s own
+    actual purpose (BO-59's HP state machine, asking "does THIS
+    NEXT note still fit inside an already-established
+    position," not "are these two positions the same"). A fixed
+    grid resolves this: 4 and 5 both fall in bucket 1, while 7
+    and 10 fall in buckets 1 and 2 respectively -- confirmed
+    directly against both real cases, not merely reasoned about
+    (see POSITION_BUCKET_WIDTH's own comment for why 4 frets
+    specifically).
+
+    Does NOT use the raw fret tuple (that would defeat useful
+    dedup entirely) -- one coarse integer, not a new positional
+    representation.
 
     Deliberately ignores note *count*: a 3-note and 4-note
-    voicing with the same signature are considered the same
-    voicing.
+    voicing with the same pitch classes, top note, and position
+    bucket are still considered the same voicing.
     """
 
     sounding_pitches = [
@@ -185,7 +243,14 @@ def _voicing_signature(values, melody_strings):
 
     top_pitch = max(sounding_pitches)
 
-    return (pitch_classes, top_pitch)
+    working_fret = _chord_working_fret(values)
+
+    position_bucket = (
+        working_fret // POSITION_BUCKET_WIDTH
+        if working_fret is not None else None
+    )
+
+    return (pitch_classes, top_pitch, position_bucket)
 
 
 def attempt_rescue(full_values, melody_strings, tones):

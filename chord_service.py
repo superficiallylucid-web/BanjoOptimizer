@@ -54,6 +54,8 @@ from chord_generator import generate_candidates
 
 from playability import evaluate as evaluate_playability
 
+from playability import effective_finger_count
+
 from music import (
     note_name_to_pitch_class, chord_tones,
     ROOT_PRESENT, ROOTLESS_STRONG, ROOTLESS_WEAK
@@ -891,6 +893,32 @@ class ChordService:
                 if within_hp_tolerance else 0
             )
 
+            # BO-148.3/.4 -- how many physical fingers this
+            # specific voicing needs (barre-aware -- see
+            # effective_finger_count()'s own docstring). BO-148.3
+            # first placed this immediately after -notes_played
+            # (before -voicing_quality_score/position_distance) --
+            # reverted after a real, confirmed full-pipeline
+            # regression: test_bo36_chord_corridor's own real F4
+            # case changed fret, because BO-33's own established
+            # position_distance tiebreak (the LAST tuple element)
+            # never got a chance to run when finger count already
+            # decided the tie earlier. BO-148.4 -- placed LAST
+            # instead, strictly after position_distance, so it is
+            # a genuine last-resort discriminator: every existing
+            # mechanism (quality, melody containment, HP
+            # continuity, voicing quality, position continuity)
+            # keeps its full, unmodified priority, and finger
+            # count only ever activates once every one of them has
+            # already tied. Confirmed directly, BO-148.4's own
+            # regression run: the real BO-36 F4 case is restored,
+            # and the historical BO-22-FOLLOWUP Cmaj7 case
+            # (0(10)98) remains unaffected (its own tied competitor,
+            # 8(10)90, already ties on finger count too).
+            finger_count = effective_finger_count(
+                parse_shape(shape.shape)
+            )
+
             position_distance = _capped_position_distance(
                 notes, pitches, preferred_melody_fret,
                 melody_strings
@@ -901,7 +929,8 @@ class ChordService:
                 quality_tier, open_shape_preference,
                 -anchor_count, -notes_played,
                 -shape.voicing_quality_score,
-                position_distance
+                position_distance,
+                finger_count
             )
 
         return sorted(shapes, key=sort_key)
