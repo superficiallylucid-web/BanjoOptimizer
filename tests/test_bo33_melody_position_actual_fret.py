@@ -42,6 +42,10 @@ site changed. find_positions()/best_position()/sounding_notes()/
 defining_tones()/voicing_quality_score/chord generation/
 deduplication/playability rules are all untouched.
 """
+from conftest import fixture_path, new_output_dir
+
+OUTPUT_FOLDER = new_output_dir()
+
 
 import os
 
@@ -77,9 +81,9 @@ MELODY_STRINGS = A_MODAL_SAWMILL.notes[1:]
 
 TEMPLATE_PATH = "templates/TAB_linked_Treble_Example.mscz"
 
-FULL_SONG_PATH = "The Christmas Song (notation only).mscz"
-
-
+FULL_SONG_PATH = fixture_path(
+    "The Christmas Song (notation only).mscz"
+)
 def _get_chord_service():
 
     return ChordService(ChordLibrary())
@@ -379,7 +383,7 @@ def test_full_pipeline_real_song_unaffected_elsewhere():
     output_path, applied, skipped, exceptions = (
         generate_tab_from_template(
             p, A_MODAL_SAWMILL, staff_used, TEMPLATE_PATH,
-            "output", service,
+            OUTPUT_FOLDER, service,
             filename="test_bo33_pipeline.mscz"
         )
     )

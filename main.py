@@ -18,9 +18,6 @@ from chord_library import ChordLibrary
 from models import Tuning
 
 VERSION = "1.0"
-
-clear_output()
-
 # ---------------------------------------------------------
 # BO-130 -- command-line options for requesting a specific
 # OPEN tuning directly, bypassing the optimizer's own ranking,
@@ -186,654 +183,895 @@ def _notes_to_symbol(notes):
     return fifth_name + rest
 
 
-arg_parser = argparse.ArgumentParser(add_help=False)
+def run_optimizer(
+    score_filename=None, score_path=None, tuning_symbol=None,
+    capo=None, alternatives=0, num_tunings=3, project_folder=None
+):
+    """
+    BO-153 -- the application's real entry point, extracted from
+    what was previously module-level script code that ran
+    unconditionally on import (main.py had no run_optimizer()/
+    __main__ separation at all before this -- confirmed directly,
+    the entire pipeline from argument handling through file
+    generation executed the instant `import main` ran, which is
+    incompatible with anything -- a GUI included -- that wants to
+    import this module without immediately running a full
+    optimization pass against sys.argv).
 
-arg_parser.add_argument("--score", default=None)
+    This function contains the EXACT same logic previously at
+    module level, moved here with no behavior changes beyond two
+    deliberate ones:
 
-arg_parser.add_argument("--tuning", default=None)
+    1. Every prior `print(...); sys.exit(1)` validation failure
+       (bad --tuning symbol, --capo out of range, --capo without
+       --tuning, unknown --score filename) now raises ValueError
+       with the identical message text instead, so a caller (CLI
+       wrapper below, or a future GUI) decides how to surface the
+       failure rather than the process exiting out from under it.
+    2. A structured result is now returned (see below), built
+       alongside -- not instead of -- the existing output()/print
+       calls, which are all still present, unchanged, and still
+       produce the exact same console/report-file text as before
+       (confirmed via byte-for-byte diff against pre-refactor
+       output during this change's own verification).
 
-arg_parser.add_argument("--capo", type=int, default=None)
+    project_folder: injectable for tests/GUI; defaults to the
+    same sys.frozen/__file__-based resolution the CLI always
+    used.
 
-# BO-140.4 -- replaces BO-140.1's own --recommendations (which
-# meant "N total recommendations", confirmed confusing since
-# rank 4+ is a genuinely different, secondary tier, not simply
-# "more of the same top-N list"). Removed cleanly rather than
-# aliased under the old name: the same flag name with a
-# genuinely different meaning (total vs. additional) would
-# itself actively mislead a user who learned the old semantics,
-# which is worse than a clean break.
-arg_parser.add_argument(
-    "--alternatives", type=int, default=0
-)
+    BO-155 -- score_path (new): an absolute path to a .mscz file
+    anywhere on disk, bypassing the scores/-folder lookup
+    entirely. Added for the GUI's own real file picker (BO-155),
+    which needs to open a score wherever the user actually put
+    it, not only ones already copied into the application's own
+    scores/ folder. Purely additive: score_filename's existing
+    behavior (matching a file already inside scores/, by name --
+    what the CLI's own --score has always done) is completely
+    unchanged when score_path is not given, which is the only
+    way the CLI itself ever calls this function. If both are
+    given, score_path wins (score_filename is ignored) -- no
+    real caller does this today, but a defined precedence is
+    better than an ambiguous one.
 
-cli_args, _unused_remaining_args = arg_parser.parse_known_args()
+    BO-157 -- num_tunings (new): how many of the top-ranked
+    "modern" tunings to return/generate unconditionally --
+    previously a hardcoded 3, now parameterized so the GUI can
+    offer a single "Number of tunings" control (replacing its
+    former separate checkbox+count for a genuinely different
+    mechanism -- see below). Defaults to 3, preserving the exact
+    prior hardcoded behavior for the CLI, which never exposed a
+    way to change this and still doesn't. Deliberately distinct
+    from the alternatives parameter below: num_tunings always
+    returns exactly that many results, unconditionally, straight
+    off the ranked list -- it does not apply the stricter
+    still-qualifies-as-strong test (combined_score > 0) that
+    alternatives/select_additional_strong_alternatives() uses for
+    rank-4+ candidates. The GUI (BO-157) no longer calls
+    alternatives at all (its own checkbox+spinner for that was
+    removed in favor of num_tunings), but alternatives itself is
+    untouched here and still fully available to CLI callers via
+    --alternatives.
 
-if cli_args.alternatives < 0:
+    Returns a dict:
+        {
+            "run_folder": Path,
+            "report_path": Path,
+            "scores": [
+                {
+                    "filename": str,
+                    "title": str,
+                    "key": str,
+                    "time_signature": str,
+                    "total_notes": int,
+                    "staff_used": int,
+                    "requested_tuning": Tuning or None,
+                    "recommendations": [TuningResult, ...],
+                    "additional_alternatives": [TuningResult, ...],
+                    "generated_files": [
+                        {
+                            "tuning_name": str,
+                            "tab_path": Path or None,
+                            "tab_shapes_applied": int or None,
+                            "tab_shapes_skipped": int or None,
+                            "melody_exceptions": [...],
+                            "error": str or None,
+                        },
+                        ...
+                    ],
+                },
+                ...
+            ],
+        }
 
-    print("--alternatives must be 0 or greater.")
+    Raises ValueError on any of the same invalid-input cases the
+    CLI previously exited on directly (see above) -- the caller
+    is responsible for deciding what to do (the __main__ block
+    below preserves the exact prior CLI behavior: print the
+    message, exit 1).
 
-    sys.exit(1)
+    Known limitation, not addressed by this refactor: this
+    function still redirects sys.stdout (via Tee, below) to also
+    write the run's report file, same as the CLI always did. A
+    future GUI caller running this on a background thread, or
+    wanting to avoid a global sys.stdout mutation, would need
+    this addressed separately -- flagged here rather than solved,
+    since solving it isn't needed for the CLI to keep working
+    exactly as it always has, and doing so blind (without a real
+    GUI caller to verify against) risks guessing wrong about what
+    that caller actually needs.
+    """
 
-REQUESTED_TUNING = None
+    clear_output()
 
-if cli_args.tuning is not None:
+    all_scores_results = []
 
-    _open_notes = _parse_tuning_symbol(cli_args.tuning)
+    REQUESTED_TUNING = None
 
-    if _open_notes is None:
+    if tuning_symbol is not None:
 
-        print(
-            f"Could not parse --tuning {cli_args.tuning!r} -- "
-            f"expected a 5-character-ish symbol like 'gDGBD' "
-            f"(5th string, then strings 1-4, each optionally "
-            f"followed by '#' or 'b')."
+        _open_notes = _parse_tuning_symbol(tuning_symbol)
+
+        if _open_notes is None:
+
+            raise ValueError(
+                f"Could not parse --tuning {tuning_symbol!r} -- "
+                f"expected a 5-character-ish symbol like 'gDGBD' "
+                f"(5th string, then strings 1-4, each optionally "
+                f"followed by '#' or 'b')."
+            )
+
+        if capo is not None and not (1 <= capo <= 5):
+
+            raise ValueError("--capo must be between 1 and 5.")
+
+        _capo_value = capo if capo is not None else 0
+
+        # Capo shifts strings 1-4 ONLY (indices 1-4 of notes) --
+        # never the 5th string (index 0), confirmed directly as a
+        # real-world, physical fact earlier in this project.
+        _sounded_notes = [_open_notes[0]] + [
+            note + _capo_value for note in _open_notes[1:]
+        ]
+
+        _sounded_symbol = _notes_to_symbol(_sounded_notes)
+
+        # name includes the capo value (when given) so the generated
+        # filename (built elsewhere from tuning.name and tuning.
+        # symbol) is genuinely unique per capo value -- confirmed
+        # real, not merely cosmetic: without this, different --capo
+        # values for the same --tuning silently overwrote each
+        # other's output file.
+        REQUESTED_TUNING = Tuning(
+            name=(
+                tuning_symbol
+                + (f" capo {_capo_value}" if _capo_value else "")
+            ),
+            symbol=_sounded_symbol,
+            notes=_sounded_notes,
+            category="modern",
+            popularity=0,
+            key_strengths={},
+            base_tuning=tuning_symbol,
+            capo=_capo_value,
+            fifth_string_note=None
         )
 
-        sys.exit(1)
+    elif capo is not None:
 
-    if cli_args.capo is not None and not (1 <= cli_args.capo <= 5):
+        raise ValueError("--capo requires --tuning to also be given.")
 
-        print("--capo must be between 1 and 5.")
+    if project_folder is not None:
+        PROJECT_FOLDER = Path(project_folder)
+    elif getattr(sys, "frozen", False):
+        PROJECT_FOLDER = Path(sys.executable).parent
+    else:
+        PROJECT_FOLDER = Path(__file__).parent
 
-        sys.exit(1)
 
-    _capo_value = cli_args.capo if cli_args.capo is not None else 0
+    class Tee:
+        def __init__(self, *files):
+            # BO-159 -- filter out None here, not just accept
+            # whatever's passed. Confirmed directly: in a
+            # PyInstaller windowed build (console=False, which
+            # this application's own main.spec uses -- BO-158),
+            # sys.stdout is genuinely None (no console attached
+            # to write to at all), not merely absent/closed. The
+            # call site below passes sys.stdout unconditionally,
+            # so without this filter, Tee(None, log_file) would
+            # silently capture that None, and the very first
+            # print()/output() call afterward -- which is
+            # everything this function does -- would crash with
+            # AttributeError: 'NoneType' object has no attribute
+            # 'write', reproduced directly this way before this
+            # fix. write()/flush() below need no changes: they
+            # already just iterate self.files, which now never
+            # contains None.
+            self.files = [f for f in files if f is not None]
 
-    # Capo shifts strings 1-4 ONLY (indices 1-4 of notes) --
-    # never the 5th string (index 0), confirmed directly as a
-    # real-world, physical fact earlier in this project.
-    _sounded_notes = [_open_notes[0]] + [
-        note + _capo_value for note in _open_notes[1:]
-    ]
+        def write(self, text):
+            for f in self.files:
+                f.write(text)
+                f.flush()
 
-    _sounded_symbol = _notes_to_symbol(_sounded_notes)
+        def flush(self):
+            for f in self.files:
+                f.flush()
 
-    # name includes the capo value (when given) so the generated
-    # filename (built elsewhere from tuning.name and tuning.
-    # symbol) is genuinely unique per capo value -- confirmed
-    # real, not merely cosmetic: without this, different --capo
-    # values for the same --tuning silently overwrote each
-    # other's output file.
-    REQUESTED_TUNING = Tuning(
-        name=(
-            cli_args.tuning
-            + (f" capo {_capo_value}" if _capo_value else "")
-        ),
-        symbol=_sounded_symbol,
-        notes=_sounded_notes,
-        category="modern",
-        popularity=0,
-        key_strengths={},
-        base_tuning=cli_args.tuning,
-        capo=_capo_value,
-        fifth_string_note=None
+
+    SCORES_FOLDER = PROJECT_FOLDER / "scores"
+    OUTPUT_FOLDER = PROJECT_FOLDER / "output"
+    TAB_TEMPLATE_PATH = (
+        PROJECT_FOLDER / "templates" / "TAB_linked_Treble_Example.mscz"
     )
 
-elif cli_args.capo is not None:
+    # BO-141 -- one timestamped run directory per BO execution,
+    # generated once and reused for both the report and every
+    # generated .mscz from this run -- no separate "generated"
+    # subfolder at all (see create_run_folder()'s own docstring for
+    # collision handling). RUN_FOLDER replaces the old, fixed
+    # GENERATED_FOLDER at its own, single call site below.
+    RUN_FOLDER = create_run_folder(OUTPUT_FOLDER)
 
-    print("--capo requires --tuning to also be given.")
+    log_file = open(
+        RUN_FOLDER / "BanjoOptimizer_report.txt",
+        "w",
+        encoding="utf-8"
+    )
 
-    sys.exit(1)
+    sys.stdout = Tee(sys.stdout, log_file)
 
-if getattr(sys, "frozen", False):
-    PROJECT_FOLDER = Path(sys.executable).parent
-else:
-    PROJECT_FOLDER = Path(__file__).parent
+    output(f"Banjo Optimizer v{VERSION}\n")
 
+    # ---------------------------------------------------------
+    # Development diagnostics (chord library, generator, melody
+    # matching, etc.) have moved to dev_demos.py -- they no longer
+    # run by default, so a normal use of this tool isn't buried
+    # under ~9 diagnostic sections before the actual tuning report.
+    # Run with --demos to see them, same output as before, just
+    # opt-in now instead of automatic.
+    # ---------------------------------------------------------
 
-class Tee:
-    def __init__(self, *files):
-        self.files = files
+    if "--demos" in sys.argv:
 
-    def write(self, text):
-        for f in self.files:
-            f.write(text)
-            f.flush()
+        from dev_demos import run_all_demos
 
-    def flush(self):
-        for f in self.files:
-            f.flush()
+        run_all_demos()
 
+    # ---------------------------------------------------------
 
-SCORES_FOLDER = PROJECT_FOLDER / "scores"
-OUTPUT_FOLDER = PROJECT_FOLDER / "output"
-TAB_TEMPLATE_PATH = (
-    PROJECT_FOLDER / "templates" / "TAB_linked_Treble_Example.mscz"
-)
+    # BO-155 -- an explicit score_path bypasses the scores/-folder
+    # lookup entirely (see this function's own docstring for why).
+    # The existing score_filename branch below is untouched --
+    # this only runs when score_path is actually given, which the
+    # CLI itself never does.
+    if score_path is not None:
 
-# BO-141 -- one timestamped run directory per BO execution,
-# generated once and reused for both the report and every
-# generated .mscz from this run -- no separate "generated"
-# subfolder at all (see create_run_folder()'s own docstring for
-# collision handling). RUN_FOLDER replaces the old, fixed
-# GENERATED_FOLDER at its own, single call site below.
-RUN_FOLDER = create_run_folder(OUTPUT_FOLDER)
+        score_path = Path(score_path)
 
-log_file = open(
-    RUN_FOLDER / "BanjoOptimizer_report.txt",
-    "w",
-    encoding="utf-8"
-)
+        if not score_path.exists() or score_path.suffix != ".mscz":
 
-sys.stdout = Tee(sys.stdout, log_file)
+            raise ValueError(
+                f"{score_path} is not a valid .mscz file."
+            )
 
-output(f"Banjo Optimizer v{VERSION}\n")
+        score_files = [score_path]
 
-# ---------------------------------------------------------
-# Development diagnostics (chord library, generator, melody
-# matching, etc.) have moved to dev_demos.py -- they no longer
-# run by default, so a normal use of this tool isn't buried
-# under ~9 diagnostic sections before the actual tuning report.
-# Run with --demos to see them, same output as before, just
-# opt-in now instead of automatic.
-# ---------------------------------------------------------
+    else:
 
-if "--demos" in sys.argv:
+        score_files = sorted(
+            SCORES_FOLDER.glob("*.mscz")
+        )
 
-    from dev_demos import run_all_demos
+        if score_filename is not None:
 
-    run_all_demos()
+            score_files = [
+                f for f in score_files if f.name == score_filename
+            ]
 
-# ---------------------------------------------------------
+            if not score_files:
 
-score_files = sorted(
-    SCORES_FOLDER.glob("*.mscz")
-)
-
-if cli_args.score is not None:
-
-    score_files = [
-        f for f in score_files if f.name == cli_args.score
-    ]
+                raise ValueError(
+                    f"No file named {score_filename!r} found in "
+                    f"{SCORES_FOLDER}."
+                )
 
     if not score_files:
 
         print(
-            f"No file named {cli_args.score!r} found in "
-            f"{SCORES_FOLDER}."
+            "No MuseScore files found."
         )
 
-        sys.exit(1)
 
-if not score_files:
+    else:
 
-    print(
-        "No MuseScore files found."
-    )
-
-
-else:
-
-    print(
-        f"Analyzing {len(score_files)} MuseScore file(s):"
-    )
-
-
-
-    for filename in score_files:
-
-
-        score = MuseScoreFile(filename)
-
-
-
-        score.open()
-
-
-
-        score.read_title()
-
-        # BO-143 -- read_composer() previously existed but was
-        # never actually called anywhere in the real production
-        # pipeline (confirmed directly, a pre-existing gap this
-        # doesn't otherwise attempt to fix beyond making it
-        # actually run) -- Score.composer stayed at its own
-        # default ("") in every real run. Added here, alongside
-        # the two new BO-143 reads it shares an identical
-        # pattern with, since the task's own required composer
-        # behavior depends on this actually running.
-        score.read_composer()
-
-        score.read_subtitle()
-
-        score.read_lyricist()
-
-
-
-        score.read_time_signature()
-
-
-
-        staff_used = score.read_melody_notes()
-        output(f"Using Staff {staff_used}")
-        score.estimate_key()
-
-        # Read harmonies from the same staff melody was read
-        # from -- matches this project's established convention
-        # (the banjo TAB staff carries both). Stored on
-        # TuningAnalyzer for a future integration step (the
-        # Playing Model); score_tuning() doesn't read it yet, so
-        # this has no effect on the current score/recommendations.
-        score.read_harmonies(staff_used)
-
-
-        output(
-            "================================"
+        print(
+            f"Analyzing {len(score_files)} MuseScore file(s):"
         )
 
-        output(
-            "       Banjo Optimizer Report"
-        )
 
-        output(
-            "================================"
-        )
 
-        output(
-            ""
-        )
+        for filename in score_files:
 
-        output(
-            "Score Information"
-        )
 
-        output(
-            "----------------"
-        )
+            score = MuseScoreFile(filename)
 
-        output(
-            "Title:",
-            score.title
-        )
 
-        output(
-            "Key:",
-            score.key
-        )
 
-        output(
-            "Time Signature:",
-            score.time_signature
-        )
+            score.open()
 
-        output(
-            "Total Notes:",
-            len(score.notes)
-        )
 
-        output(
-            ""
-        )
 
-        output(
-            "Optimization Results"
-        )
+            score.read_title()
 
-        output(
-            "-------------------"
-        )
+            # BO-143 -- read_composer() previously existed but was
+            # never actually called anywhere in the real production
+            # pipeline (confirmed directly, a pre-existing gap this
+            # doesn't otherwise attempt to fix beyond making it
+            # actually run) -- Score.composer stayed at its own
+            # default ("") in every real run. Added here, alongside
+            # the two new BO-143 reads it shares an identical
+            # pattern with, since the task's own required composer
+            # behavior depends on this actually running.
+            score.read_composer()
+
+            score.read_subtitle()
+
+            score.read_lyricist()
+
+
+
+            score.read_time_signature()
+
+
+
+            staff_used = score.read_melody_notes()
+            output(f"Using Staff {staff_used}")
+            score.estimate_key()
+
+            # Read harmonies from the same staff melody was read
+            # from -- matches this project's established convention
+            # (the banjo TAB staff carries both). Stored on
+            # TuningAnalyzer for a future integration step (the
+            # Playing Model); score_tuning() doesn't read it yet, so
+            # this has no effect on the current score/recommendations.
+            score.read_harmonies(staff_used)
+
+
+            output(
+                "================================"
+            )
+
+            output(
+                "       Banjo Optimizer Report"
+            )
+
+            output(
+                "================================"
+            )
+
+            output(
+                ""
+            )
+
+            output(
+                "Score Information"
+            )
+
+            output(
+                "----------------"
+            )
+
+            output(
+                "Title:",
+                score.title
+            )
+
+            output(
+                "Key:",
+                score.key
+            )
+
+            output(
+                "Time Signature:",
+                score.time_signature
+            )
+
+            output(
+                "Total Notes:",
+                len(score.notes)
+            )
+
+            output(
+                ""
+            )
+
+            output(
+                "Optimization Results"
+            )
+
+            output(
+                "-------------------"
+            )
        
-        if REQUESTED_TUNING is not None:
-
-            output(
-                f"Using requested tuning: "
-                f"{REQUESTED_TUNING.symbol}"
-                + (
-                    f" (open: {REQUESTED_TUNING.base_tuning}, "
-                    f"capo {REQUESTED_TUNING.capo})"
-                    if REQUESTED_TUNING.capo else ""
-                )
-                + "\n"
-            )
-
-            from models import TuningResult
-
-            rank = 1
-
-            top_results = [
-                TuningResult(
-                    name=REQUESTED_TUNING.name,
-                    symbol=REQUESTED_TUNING.symbol,
-                    category=REQUESTED_TUNING.category
-                )
-            ]
-
-        else:
-
-            analyzer = TuningAnalyzer(
-                score.notes,
-                score.key,
-                score.harmonies,
-                score.score.notes
-            )
-
-
-
-            results = analyzer.analyze()
-
-
-
-            output(
-                "\nRecommended Setups:\n"
-            )
-
-
-
-            rank = 1
-
-
-            top_results = apply_shared_features(
-                results["modern"][:3]
-            )
-
-            top_results = apply_confidence(top_results)
-
-
-        if top_results and top_results[0].shared_features:
-
-            output(
-                "All of these:"
-            )
-
-            for feature in top_results[0].shared_features:
+            if REQUESTED_TUNING is not None:
 
                 output(
-                    "   -",
-                    feature
-                )
-
-            print()
-
-
-        for item in top_results:
-
-
-            output(
-                f"{rank}. {item.name} "
-                f"({item.symbol})"
-            )
-
-            for advantage in item.advantages:
-
-                output(
-                    "   -",
-                    advantage
-                )
-
-            if item.tradeoffs:
-
-                output(
-                    "   Tradeoffs:"
-                )
-
-                for tradeoff in item.tradeoffs:
-
-                    output(
-                        "   -",
-                        tradeoff
+                    f"Using requested tuning: "
+                    f"{REQUESTED_TUNING.symbol}"
+                    + (
+                        f" (open: {REQUESTED_TUNING.base_tuning}, "
+                        f"capo {REQUESTED_TUNING.capo})"
+                        if REQUESTED_TUNING.capo else ""
                     )
-
-            # A small gap to the nearest other option shown
-            # here is a genuine near-tie worth flagging -- an
-            # arbitrary but simple, self-relative threshold
-            # (5% of this result's own score), not a change to
-            # scoring/ranking itself.
-            if (
-                item.confidence is not None
-                and item.confidence < 0.05 * item.score
-            ):
-
-                output(
-                    "   (Very close alternative to another "
-                    "option above)"
+                    + "\n"
                 )
 
+                from models import TuningResult
 
-            print()
+                rank = 1
 
-
-            rank += 1
-
-
-        # BO-140.4 -- additional alternatives, shown only when
-        # explicitly requested (--alternatives > 0) and only
-        # while candidates genuinely qualify as still-useful
-        # (combined_score > 0, an existing, already-computed
-        # field -- see select_additional_strong_alternatives()'s
-        # own docstring for the full reasoning; this is
-        # deliberately NOT the same 5% apply_confidence() test
-        # used for the primary set's own "(Very close
-        # alternative...)" text just above, which remains
-        # completely unchanged). Default behavior
-        # (--alternatives not given, or given as 0) is
-        # completely unaffected: this block does not run at all
-        # in that case.
-        if cli_args.alternatives > 0:
-
-            additional = select_additional_strong_alternatives(
-                results["modern"][3:],
-                cli_args.alternatives
-            )
-
-            if additional:
-
-                output(
-                    "\nAdditional Strong Alternatives:\n"
-                )
-
-                for item in additional:
-
-                    output(
-                        f"{rank}. {item.name} "
-                        f"({item.symbol})"
+                top_results = [
+                    TuningResult(
+                        name=REQUESTED_TUNING.name,
+                        symbol=REQUESTED_TUNING.symbol,
+                        category=REQUESTED_TUNING.category
                     )
-
-                    for advantage in item.advantages:
-
-                        output(
-                            "   -",
-                            advantage
-                        )
-
-                    if item.tradeoffs:
-
-                        output(
-                            "   Tradeoffs:"
-                        )
-
-                        for tradeoff in item.tradeoffs:
-
-                            output(
-                                "   -",
-                                tradeoff
-                            )
-
-                    print()
-
-                    rank += 1
+                ]
 
             else:
 
-                output(
-                    "\nNo additional strong alternatives "
-                    "found.\n"
+                analyzer = TuningAnalyzer(
+                    score.notes,
+                    score.key,
+                    score.harmonies,
+                    score.score.notes
                 )
 
 
-        # ---------------------------------------------------------
-        # Generate a playable .mscz for each recommended tuning
-        # (see score_generator.py) -- uses the SAME top_results
-        # already computed above, not a second recommendation
-        # process.
-        #
-        # BO-27: TAB-only output. generate_chord_diagrams_only()
-        # ("Plan B" -- see score_generator.py's own module notes
-        # for its history) previously ran here too, producing a
-        # second, separate file per tuning (chord diagrams on the
-        # source's own notation staff, no TAB staff at all). That
-        # function remains defined and intact in score_generator.py
-        # (still covered by its own dedicated tests) -- this is a
-        # narrower change to main.py's own generation loop, not a
-        # removal of the function itself, matching this project's
-        # own established pattern of keeping a superseded
-        # generation path defined rather than deleted (see BO-19's
-        # own treatment of generate_mscz()).
-        # ---------------------------------------------------------
 
-        output(
-            "Generating playable scores...\n"
-        )
+                results = analyzer.analyze()
 
-        generation_chord_service = ChordService(ChordLibrary())
 
-        all_melody_exceptions = []
-
-        for item in top_results:
-
-            try:
-
-                target_tuning = (
-                    REQUESTED_TUNING
-                    if REQUESTED_TUNING is not None
-                    else get_tunings()[item.name]
-                )
-
-                (
-                    tab_path, tab_shapes_applied, tab_shapes_skipped,
-                    melody_exceptions
-                ) = generate_tab_from_template(
-                    score,
-                    target_tuning,
-                    staff_used,
-                    TAB_TEMPLATE_PATH,
-                    RUN_FOLDER,
-                    generation_chord_service
-                )
 
                 output(
-                    f"   Generated: {tab_path.name} "
-                    f"({tab_shapes_applied} chord shapes"
-                    + (
-                        f", {tab_shapes_skipped} chord symbols "
-                        "skipped"
-                        if tab_shapes_skipped else ""
+                    "\nRecommended Setups:\n"
+                )
+
+
+
+                rank = 1
+
+
+                top_results = apply_shared_features(
+                    results["modern"][:num_tunings]
+                )
+
+                top_results = apply_confidence(top_results)
+
+
+            if top_results and top_results[0].shared_features:
+
+                output(
+                    "All of these:"
+                )
+
+                for feature in top_results[0].shared_features:
+
+                    output(
+                        "   -",
+                        feature
                     )
-                    + (
-                        f", {len(melody_exceptions)} melody/chord "
-                        "exceptions"
-                        if melody_exceptions else ""
-                    )
-                    + ")"
-                )
 
-                all_melody_exceptions.extend(melody_exceptions)
+                print()
 
-            except Exception as error:
+
+            for item in top_results:
+
 
                 output(
-                    f"   Could not generate a score for "
-                    f"{item.name}: {error}"
+                    f"{rank}. {item.name} "
+                    f"({item.symbol})"
                 )
 
-        print()
+                for advantage in item.advantages:
 
-        # -----------------------------------------------------
-        # Melody/Chord Exceptions -- BO-21. A chord had a melody
-        # note at its own onset, but no practical chord shape
-        # containing that exact pitch existed, so the normal
-        # best fallback shape was used and marked red in the
-        # generated FretDiagram (see score_generator.py's own
-        # _apply_chord_shapes()/_set_fret_diagram_content() for
-        # the detection/marking itself -- this is purely
-        # reporting what those already found). Only printed when
-        # at least one exists, matching this project's own
-        # existing convention of not printing empty sections.
-        # -----------------------------------------------------
+                    output(
+                        "   -",
+                        advantage
+                    )
 
-        if all_melody_exceptions:
+                if item.tradeoffs:
+
+                    output(
+                        "   Tradeoffs:"
+                    )
+
+                    for tradeoff in item.tradeoffs:
+
+                        output(
+                            "   -",
+                            tradeoff
+                        )
+
+                # A small gap to the nearest other option shown
+                # here is a genuine near-tie worth flagging -- an
+                # arbitrary but simple, self-relative threshold
+                # (5% of this result's own score), not a change to
+                # scoring/ranking itself.
+                if (
+                    item.confidence is not None
+                    and item.confidence < 0.05 * item.score
+                ):
+
+                    output(
+                        "   (Very close alternative to another "
+                        "option above)"
+                    )
+
+
+                print()
+
+
+                rank += 1
+
+
+            # BO-140.4 -- additional alternatives, shown only when
+            # explicitly requested (--alternatives > 0) and only
+            # while candidates genuinely qualify as still-useful
+            # (combined_score > 0, an existing, already-computed
+            # field -- see select_additional_strong_alternatives()'s
+            # own docstring for the full reasoning; this is
+            # deliberately NOT the same 5% apply_confidence() test
+            # used for the primary set's own "(Very close
+            # alternative...)" text just above, which remains
+            # completely unchanged). Default behavior
+            # (--alternatives not given, or given as 0) is
+            # completely unaffected: this block does not run at all
+            # in that case.
+            #
+            # BO-151 -- initialized here (not just inside the if
+            # below) so the .mscz-generation loop further down can
+            # unconditionally build on it -- previously undefined
+            # when --alternatives was 0/omitted, which is exactly
+            # why generation never included these regardless of N:
+            # generation used top_results alone, never this name at
+            # all.
+            additional = []
+
+            if alternatives > 0:
+
+                additional = select_additional_strong_alternatives(
+                    results["modern"][num_tunings:],
+                    alternatives
+                )
+
+                if additional:
+
+                    output(
+                        "\nAdditional Strong Alternatives:\n"
+                    )
+
+                    for item in additional:
+
+                        output(
+                            f"{rank}. {item.name} "
+                            f"({item.symbol})"
+                        )
+
+                        for advantage in item.advantages:
+
+                            output(
+                                "   -",
+                                advantage
+                            )
+
+                        if item.tradeoffs:
+
+                            output(
+                                "   Tradeoffs:"
+                            )
+
+                            for tradeoff in item.tradeoffs:
+
+                                output(
+                                    "   -",
+                                    tradeoff
+                                )
+
+                        print()
+
+                        rank += 1
+
+                else:
+
+                    output(
+                        "\nNo additional strong alternatives "
+                        "found.\n"
+                    )
+
+
+            # ---------------------------------------------------------
+            # Generate a playable .mscz for each recommended tuning
+            # (see score_generator.py) -- uses the SAME top_results
+            # already computed above, not a second recommendation
+            # process.
+            #
+            # BO-27: TAB-only output. generate_chord_diagrams_only()
+            # ("Plan B" -- see score_generator.py's own module notes
+            # for its history) previously ran here too, producing a
+            # second, separate file per tuning (chord diagrams on the
+            # source's own notation staff, no TAB staff at all). That
+            # function remains defined and intact in score_generator.py
+            # (still covered by its own dedicated tests) -- this is a
+            # narrower change to main.py's own generation loop, not a
+            # removal of the function itself, matching this project's
+            # own established pattern of keeping a superseded
+            # generation path defined rather than deleted (see BO-19's
+            # own treatment of generate_mscz()).
+            # ---------------------------------------------------------
 
             output(
-                "Melody/Chord Exceptions\n"
-                "-----------------------\n"
+                "Generating playable scores...\n"
             )
 
-            for index, exception in enumerate(
-                all_melody_exceptions, start=1
-            ):
+            generation_chord_service = ChordService(ChordLibrary())
 
-                output(
-                    f"{index}. Measure {exception['measure']}, "
-                    f"beat {exception['beat']}"
-                )
+            all_melody_exceptions = []
 
-                if "reason" in exception:
+            # BO-153 -- structured, per-tuning generation results,
+            # accumulated alongside (not instead of) the existing
+            # output() calls below -- returned to the caller at
+            # the end of this function, does not change any
+            # existing text output.
+            generated_files = []
 
-                    # An unreachable-pitch exception (this
-                    # note's own melody pitch has no possible
-                    # fret/string in this tuning at all -- a
-                    # genuinely different situation from BO-21's
-                    # own "no practical shape contains this
-                    # pitch" chord exceptions below, so it's
-                    # reported with its own, differently-shaped
-                    # fields rather than forcing it into the
-                    # chord-specific format).
+            # BO-151 -- generate a playable .mscz for every requested
+            # additional alternative too, not just the primary top 3.
+            # Previously this loop iterated top_results alone, so
+            # --alternatives N had no effect on generated files at
+            # any N -- confirmed directly (BO-150 investigation)
+            # that the text report already correctly reflected N,
+            # only file generation did not. additional is always a
+            # list here (empty when --alternatives is 0/omitted, via
+            # its own initialization above), so default behavior
+            # (no --alternatives given) is completely unchanged: the
+            # loop still iterates exactly top_results in that case.
+            generation_targets = top_results + additional
 
-                    output(
-                        f"   Melody pitch: {exception['melody_pitch']}"
+            for item in generation_targets:
+
+                try:
+
+                    target_tuning = (
+                        REQUESTED_TUNING
+                        if REQUESTED_TUNING is not None
+                        else get_tunings()[item.name]
+                    )
+
+                    (
+                        tab_path, tab_shapes_applied, tab_shapes_skipped,
+                        melody_exceptions
+                    ) = generate_tab_from_template(
+                        score,
+                        target_tuning,
+                        staff_used,
+                        TAB_TEMPLATE_PATH,
+                        RUN_FOLDER,
+                        generation_chord_service
                     )
 
                     output(
-                        f"   Tuning: {exception['tuning_symbol']}"
+                        f"   Generated: {tab_path.name} "
+                        f"({tab_shapes_applied} chord shapes"
+                        + (
+                            f", {tab_shapes_skipped} chord symbols "
+                            "skipped"
+                            if tab_shapes_skipped else ""
+                        )
+                        + (
+                            f", {len(melody_exceptions)} melody/chord "
+                            "exceptions"
+                            if melody_exceptions else ""
+                        )
+                        + ")"
                     )
 
-                    output(f"   {exception['reason']}.\n")
+                    all_melody_exceptions.extend(melody_exceptions)
 
-                    continue
+                    generated_files.append({
+                        "tuning_name": item.name,
+                        "tab_path": tab_path,
+                        "tab_shapes_applied": tab_shapes_applied,
+                        "tab_shapes_skipped": tab_shapes_skipped,
+                        "melody_exceptions": melody_exceptions,
+                        "error": None,
+                    })
 
-                output(f"   Chord: {exception['chord_symbol']}")
+                except Exception as error:
 
-                output(f"   Melody: {exception['melody_pitch']}")
+                    output(
+                        f"   Could not generate a score for "
+                        f"{item.name}: {error}"
+                    )
+
+                    generated_files.append({
+                        "tuning_name": item.name,
+                        "tab_path": None,
+                        "tab_shapes_applied": None,
+                        "tab_shapes_skipped": None,
+                        "melody_exceptions": [],
+                        "error": str(error),
+                    })
+
+            print()
+
+            # -----------------------------------------------------
+            # Melody/Chord Exceptions -- BO-21. A chord had a melody
+            # note at its own onset, but no practical chord shape
+            # containing that exact pitch existed, so the normal
+            # best fallback shape was used and marked red in the
+            # generated FretDiagram (see score_generator.py's own
+            # _apply_chord_shapes()/_set_fret_diagram_content() for
+            # the detection/marking itself -- this is purely
+            # reporting what those already found). Only printed when
+            # at least one exists, matching this project's own
+            # existing convention of not printing empty sections.
+            # -----------------------------------------------------
+
+            if all_melody_exceptions:
 
                 output(
-                    f"   Selected shape: "
-                    f"{exception['selected_shape']}"
+                    "Melody/Chord Exceptions\n"
+                    "-----------------------\n"
                 )
 
-                output(f"   Tuning: {exception['tuning_symbol']}")
+                for index, exception in enumerate(
+                    all_melody_exceptions, start=1
+                ):
 
-                output(
-                    "   No practical chord shape containing "
-                    "the melody pitch was found.\n"
-                )
+                    output(
+                        f"{index}. Measure {exception['measure']}, "
+                        f"beat {exception['beat']}"
+                    )
+
+                    if "reason" in exception:
+
+                        # An unreachable-pitch exception (this
+                        # note's own melody pitch has no possible
+                        # fret/string in this tuning at all -- a
+                        # genuinely different situation from BO-21's
+                        # own "no practical shape contains this
+                        # pitch" chord exceptions below, so it's
+                        # reported with its own, differently-shaped
+                        # fields rather than forcing it into the
+                        # chord-specific format).
+
+                        output(
+                            f"   Melody pitch: {exception['melody_pitch']}"
+                        )
+
+                        output(
+                            f"   Tuning: {exception['tuning_symbol']}"
+                        )
+
+                        output(f"   {exception['reason']}.\n")
+
+                        continue
+
+                    output(f"   Chord: {exception['chord_symbol']}")
+
+                    output(f"   Melody: {exception['melody_pitch']}")
+
+                    output(
+                        f"   Selected shape: "
+                        f"{exception['selected_shape']}"
+                    )
+
+                    output(f"   Tuning: {exception['tuning_symbol']}")
+
+                    output(
+                        "   No practical chord shape containing "
+                        "the melody pitch was found.\n"
+                    )
+
+            # BO-153 -- structured per-score result, accumulated
+            # for the caller. Built from data already computed
+            # above in this same loop iteration -- does not
+            # change any existing text output.
+            all_scores_results.append({
+                "filename": filename.name,
+                "title": score.title,
+                "key": score.key,
+                "time_signature": score.time_signature,
+                "total_notes": len(score.notes),
+                "staff_used": staff_used,
+                "requested_tuning": REQUESTED_TUNING,
+                "recommendations": top_results,
+                "additional_alternatives": additional,
+                "generated_files": generated_files,
+            })
 
 
 
-        # print(
-            # "\nHistorical Alternatives:\n"
-        # )
-
-
-
-        # rank = 1
-
-
-        # for item in results["historical"][:1]:
-
-            # output(
-               # f"{rank}. {item['name']} "
-               # f"({item['symbol']})"
+            # print(
+                # "\nHistorical Alternatives:\n"
             # )
 
-            # for reason in item["reasons"]:
+
+
+            # rank = 1
+
+
+            # for item in results["historical"][:1]:
 
                 # output(
-                   # "   -",
-                   # reason
+                   # f"{rank}. {item['name']} "
+                   # f"({item['symbol']})"
                 # )
 
+                # for reason in item["reasons"]:
 
-            # print()
+                    # output(
+                       # "   -",
+                       # reason
+                    # )
 
 
-            # rank += 1
- 
+                # print()
+
+
+                # rank += 1
+
+    return {
+        "run_folder": RUN_FOLDER,
+        "report_path": RUN_FOLDER / "BanjoOptimizer_report.txt",
+        "scores": all_scores_results,
+    }
+
+
+if __name__ == "__main__":
+
+    arg_parser = argparse.ArgumentParser(add_help=False)
+
+    arg_parser.add_argument("--score", default=None)
+
+    arg_parser.add_argument("--tuning", default=None)
+
+    arg_parser.add_argument("--capo", type=int, default=None)
+
+    # BO-140.4 -- replaces BO-140.1's own --recommendations (which
+    # meant "N total recommendations", confirmed confusing since
+    # rank 4+ is a genuinely different, secondary tier, not simply
+    # "more of the same top-N list"). Removed cleanly rather than
+    # aliased under the old name: the same flag name with a
+    # genuinely different meaning (total vs. additional) would
+    # itself actively mislead a user who learned the old semantics,
+    # which is worse than a clean break.
+    arg_parser.add_argument(
+        "--alternatives", type=int, default=0
+    )
+
+    cli_args, _unused_remaining_args = (
+        arg_parser.parse_known_args()
+    )
+
+    if cli_args.alternatives < 0:
+
+        print("--alternatives must be 0 or greater.")
+
+        sys.exit(1)
+
+    try:
+
+        run_optimizer(
+            score_filename=cli_args.score,
+            tuning_symbol=cli_args.tuning,
+            capo=cli_args.capo,
+            alternatives=cli_args.alternatives,
+        )
+
+    except ValueError as error:
+
+        print(str(error))
+
+        sys.exit(1)

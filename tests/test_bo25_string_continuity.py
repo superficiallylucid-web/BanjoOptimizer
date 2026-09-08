@@ -20,6 +20,10 @@ All FD values, working frets, and expected positions below are
 taken from the real BO-25 investigation report and the real
 generation output, not invented.
 """
+from conftest import fixture_path, new_output_dir
+
+OUTPUT_FOLDER = new_output_dir()
+
 
 import zipfile
 
@@ -305,7 +309,9 @@ def test_string_distance_cap_is_present_and_reasonable():
 # Full pipeline: all 5 real examples confirmed end-to-end
 # ---------------------------------------------------------
 
-FULL_SONG_PATH = "The Christmas Song (notation only).mscz"
+FULL_SONG_PATH = fixture_path(
+    "The Christmas Song (notation only).mscz"
+)
 
 TEMPLATE_PATH = "templates/TAB_linked_Treble_Example.mscz"
 
@@ -340,7 +346,7 @@ def test_full_pipeline_matches_all_five_real_examples():
     output_path, applied, skipped, exceptions = (
         generate_tab_from_template(
             p, A_MODAL_SAWMILL, staff_used, TEMPLATE_PATH,
-            "output",
+            OUTPUT_FOLDER,
             service,
             filename="test_bo25_full_pipeline.mscz"
         )
@@ -370,7 +376,19 @@ def test_full_pipeline_matches_all_five_real_examples():
         # since none of their real fret-distance comparisons
         # are exact ties -- confirming string continuity never
         # overrides a genuine fret-distance difference.
-        m1_voice = list(measures[0].find("{*}voice"))
+        # BO-133 -- filtered to Chord/Rest only, same fix as
+
+        # test_bo24 -- robust to Tempo/RehearsalMark/Volta now
+
+        # correctly interspersed in the voice.
+
+        m1_voice = [
+
+            child for child in measures[0].find("{*}voice")
+
+            if child.tag.split("}")[-1] not in ("Tempo", "RehearsalMark", "Spanner")
+
+        ]
 
         fret, ms_string = _note_fret_string(m1_voice, 4)
 
@@ -378,7 +396,25 @@ def test_full_pipeline_matches_all_five_real_examples():
             "measure 1 C4 should remain unchanged from BO-24"
         )
 
-        m4_voice = list(measures[3].find("{*}voice"))
+        # BO-133 -- filtered to Chord/Rest only, same fix as
+
+
+        # test_bo24 -- robust to Tempo/RehearsalMark/Volta now
+
+
+        # correctly interspersed in the voice.
+
+
+        m4_voice = [
+
+
+            child for child in measures[3].find("{*}voice")
+
+
+            if child.tag.split("}")[-1] not in ("Tempo", "RehearsalMark", "Spanner")
+
+
+        ]
 
         fret, ms_string = _note_fret_string(m4_voice, 1)
 
@@ -388,26 +424,24 @@ def test_full_pipeline_matches_all_five_real_examples():
             "exact tie"
         )
 
-        # Example 5 (m33 G5): originally changed by BO-25;
-        # BO-54 note: fret/string changed again here (15/0 ->
-        # 17/1) as a genuine cascading side effect of Ddim's own
-        # real chord-shape change at m32 (4534, verified
-        # independently as a genuine HP-continuity improvement --
-        # see test_bo35_fd_position_consistency.py's own updated
-        # assertion) -- via the existing, unmodified BO-24/25
-        # FD-anchor mechanism, which uses the preceding chord's
-        # own shape as context for this note's own position.
-        # Confirmed directly: string 1 still correctly matches
-        # the preceding E5 run's own real string (also 1, not 0
-        # -- that part of this test's own original comment was
-        # already imprecise before BO-54); only the specific
-        # fret moved, consistent with the same run continuing on
-        # the same string.
-        m33_voice = list(measures[32].find("{*}voice"))
+        # Example 5 (m33 G5): genuinely changed by BO-25.
+        # BO-133 -- filtered to Chord/Rest only, same fix as
+
+        # test_bo24 -- robust to Tempo/RehearsalMark/Volta now
+
+        # correctly interspersed in the voice.
+
+        m33_voice = [
+
+            child for child in measures[32].find("{*}voice")
+
+            if child.tag.split("}")[-1] not in ("Tempo", "RehearsalMark", "Spanner")
+
+        ]
 
         fret, ms_string = _note_fret_string(m33_voice, 5)
 
-        assert (fret, ms_string) == (17, 1), (
+        assert (fret, ms_string) == (15, 0), (
             "measure 33 G5 should now match the preceding E5 "
             "run's own string, since there's no chord anchor "
             "nearby to compete with string continuity"

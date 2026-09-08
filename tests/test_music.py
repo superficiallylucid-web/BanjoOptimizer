@@ -15,9 +15,19 @@ from pathlib import Path
 from parser import MuseScoreFile
 from optimizer import TuningAnalyzer
 
+from conftest import TEST_SCORES_DIR
 
 
-TEST_FOLDER = Path(__file__).parent
+
+# Phase 1 migration (BO-149): TEST_FOLDER now points at the
+# canonical test_scores/ directory instead of tests/ itself --
+# this file's own fixture files previously had to live directly
+# alongside the test .py files for find_score_file()'s own
+# TEST_FOLDER.glob("*.mscz") lookup to find them at all. This
+# file's own fuzzy title-fragment search (find_score_file()
+# below) is preserved unmodified; only the directory it searches
+# changes.
+TEST_FOLDER = TEST_SCORES_DIR
 
 
 
@@ -235,21 +245,26 @@ def test_white_christmas_recommends_open_g():
 
 
 def test_cousin_sally_brown_recommends_double_d():
+
     score = load_score(
         "Cousin Sally Brown"
     )
+
+
     analyzer = TuningAnalyzer(
         score.notes,
         score.key
     )
+
+
     results = analyzer.analyze()
+
+
     best = results["modern"][0]
 
-    print("\nTop 5 modern tunings:")
-    for r in results["modern"][:5]:
-        print(f"  {r.name}: {r.score}")
 
     assert best.name == "Open C"
+
 
 
 def test_my_favorite_things_has_reasonable_recommendation():

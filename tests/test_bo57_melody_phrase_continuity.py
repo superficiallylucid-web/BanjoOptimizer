@@ -40,6 +40,10 @@ import zipfile
 
 import xml.etree.ElementTree as ET
 
+from conftest import fixture_path, new_output_dir
+
+OUTPUT_FOLDER = new_output_dir()
+
 from parser import MuseScoreFile
 
 from tunings import get_tunings
@@ -64,7 +68,7 @@ OPEN_NOTES = C_STANDARD.notes[1:]
 
 def _generate_csb():
 
-    p = MuseScoreFile("scores/Cousin Sally Brown.mscz")
+    p = MuseScoreFile(str(fixture_path("Cousin Sally Brown.mscz")))
 
     p.open()
 
@@ -81,7 +85,7 @@ def _generate_csb():
     output_path, applied, skipped, exceptions = (
         generate_tab_from_template(
             p, C_STANDARD, staff_used,
-            "templates/TAB_linked_Treble_Example.mscz", "output",
+            "templates/TAB_linked_Treble_Example.mscz", OUTPUT_FOLDER,
             service, filename="test_bo57_csb.mscz"
         )
     )
@@ -275,7 +279,10 @@ def test_phrase_lookahead_overrides_same_string_preference():
 
 def test_chord_anchored_song_unaffected():
 
-    p = MuseScoreFile("scores/The Christmas Song.mscz")
+    # Phase 1 migration (BO-149): canonical fixture_path()
+    # (test_scores/) instead of the hardcoded "scores/..."
+    # literal.
+    p = MuseScoreFile(fixture_path("The Christmas Song.mscz"))
 
     p.open()
 
@@ -294,7 +301,7 @@ def test_chord_anchored_song_unaffected():
     output_path, applied, skipped, exceptions = (
         generate_tab_from_template(
             p, double_d, staff_used,
-            "templates/TAB_linked_Treble_Example.mscz", "output",
+            "templates/TAB_linked_Treble_Example.mscz", OUTPUT_FOLDER,
             service, filename="test_bo57_chord_anchored.mscz"
         )
     )

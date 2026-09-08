@@ -14,6 +14,10 @@ scope (no_chord_anchor_at_all) BO-60's own mechanism already
 requires.
 """
 
+from conftest import fixture_path, new_output_dir
+
+OUTPUT_FOLDER = new_output_dir()
+
 import sys
 
 sys.path.insert(0, '.')
@@ -63,7 +67,7 @@ def _generate_with_trace(path, tuning, filename):
     output_path, applied, skipped, exceptions = (
         generate_tab_from_template(
             p, tuning, staff_used,
-            "templates/TAB_linked_Treble_Example.mscz", "output",
+            "templates/TAB_linked_Treble_Example.mscz", OUTPUT_FOLDER,
             service, filename=filename, hp_trace_sink=trace
         )
     )
@@ -195,7 +199,7 @@ def test_real_csb_gCGCD_e4_regression():
     import os
 
     output_path, trace = _generate_with_trace(
-        "scores/Cousin Sally Brown.mscz", DOUBLE_C,
+        str(fixture_path("Cousin Sally Brown.mscz")), DOUBLE_C,
         "test_bo62_e4_regression.mscz"
     )
 
@@ -237,7 +241,7 @@ def test_real_csb_gCGCD_g4_still_protected():
     import os
 
     output_path, trace = _generate_with_trace(
-        "scores/Cousin Sally Brown.mscz", DOUBLE_C,
+        str(fixture_path("Cousin Sally Brown.mscz")), DOUBLE_C,
         "test_bo62_g4_protected.mscz"
     )
 
@@ -272,7 +276,7 @@ def test_real_tcs_a4_chord_anchored_regression():
     import os
 
     output_path, trace = _generate_with_trace(
-        "scores/The Christmas Song.mscz", DOUBLE_D,
+        str(fixture_path("The Christmas Song.mscz")), DOUBLE_D,
         "test_bo62_a4_protected.mscz"
     )
 

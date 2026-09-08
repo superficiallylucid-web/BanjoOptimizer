@@ -18,6 +18,7 @@ entirely and reintroduced a legacy string-preference regression
 (CSB/Double C's own E4).
 
 hp_is_earned becomes True only once current_hp genuinely differs
+
 from (1, 4) for the first time -- not merely "any note has been
 decided" (confirmed real: the primary CSB/Open C target case is
 measure 7, many notes in, with every preceding note legitimately
@@ -25,6 +26,10 @@ staying inside (1, 4) the whole time).
 """
 
 import sys
+
+from conftest import fixture_path, new_output_dir
+
+OUTPUT_FOLDER = new_output_dir()
 
 sys.path.insert(0, '.')
 
@@ -67,7 +72,7 @@ def test_real_csb_open_c_g4_selects_1_3():
 
     import os
 
-    p = MuseScoreFile("scores/Cousin Sally Brown.mscz")
+    p = MuseScoreFile(str(fixture_path("Cousin Sally Brown.mscz")))
 
     p.open()
 
@@ -86,7 +91,7 @@ def test_real_csb_open_c_g4_selects_1_3():
     output_path, applied, skipped, exceptions = (
         generate_tab_from_template(
             p, OPEN_C, staff_used,
-            "templates/TAB_linked_Treble_Example.mscz", "output",
+            "templates/TAB_linked_Treble_Example.mscz", OUTPUT_FOLDER,
             service, filename="test_bo111_csb_openc.mscz",
             hp_trace_sink=trace
         )
@@ -115,7 +120,7 @@ def test_real_csb_c_standard_unaffected():
 
     import os
 
-    p = MuseScoreFile("scores/Cousin Sally Brown.mscz")
+    p = MuseScoreFile(str(fixture_path("Cousin Sally Brown.mscz")))
 
     p.open()
 
@@ -134,7 +139,7 @@ def test_real_csb_c_standard_unaffected():
     output_path, applied, skipped, exceptions = (
         generate_tab_from_template(
             p, C_STANDARD, staff_used,
-            "templates/TAB_linked_Treble_Example.mscz", "output",
+            "templates/TAB_linked_Treble_Example.mscz", OUTPUT_FOLDER,
             service, filename="test_bo111_csb_cstd.mscz",
             hp_trace_sink=trace
         )
@@ -159,7 +164,7 @@ def test_real_csb_double_c_unaffected():
 
     import os
 
-    p = MuseScoreFile("scores/Cousin Sally Brown.mscz")
+    p = MuseScoreFile(str(fixture_path("Cousin Sally Brown.mscz")))
 
     p.open()
 
@@ -178,7 +183,7 @@ def test_real_csb_double_c_unaffected():
     output_path, applied, skipped, exceptions = (
         generate_tab_from_template(
             p, DOUBLE_C, staff_used,
-            "templates/TAB_linked_Treble_Example.mscz", "output",
+            "templates/TAB_linked_Treble_Example.mscz", OUTPUT_FOLDER,
             service, filename="test_bo111_csb_dc.mscz",
             hp_trace_sink=trace
         )
@@ -220,7 +225,7 @@ def test_real_controlled_score_c_standard():
 
     import os
 
-    p = MuseScoreFile("Rhythmic_Clawhammer_Stroke_Cycle.mscz")
+    p = MuseScoreFile(str(fixture_path("Rhythmic_Clawhammer_Stroke_Cycle.mscz")))
 
     p.open()
 
@@ -239,7 +244,7 @@ def test_real_controlled_score_c_standard():
     output_path, applied, skipped, exceptions = (
         generate_tab_from_template(
             p, C_STANDARD, staff_used,
-            "templates/TAB_linked_Treble_Example.mscz", "output",
+            "templates/TAB_linked_Treble_Example.mscz", OUTPUT_FOLDER,
             service, filename="test_bo111_rcsc_cstd.mscz",
             hp_trace_sink=trace
         )
@@ -264,7 +269,7 @@ def test_real_controlled_score_double_c():
 
     import os
 
-    p = MuseScoreFile("Rhythmic_Clawhammer_Stroke_Cycle.mscz")
+    p = MuseScoreFile(str(fixture_path("Rhythmic_Clawhammer_Stroke_Cycle.mscz")))
 
     p.open()
 
@@ -283,7 +288,7 @@ def test_real_controlled_score_double_c():
     output_path, applied, skipped, exceptions = (
         generate_tab_from_template(
             p, DOUBLE_C, staff_used,
-            "templates/TAB_linked_Treble_Example.mscz", "output",
+            "templates/TAB_linked_Treble_Example.mscz", OUTPUT_FOLDER,
             service, filename="test_bo111_rcsc_dc.mscz",
             hp_trace_sink=trace
         )
@@ -308,7 +313,7 @@ def test_real_controlled_score_open_c():
 
     import os
 
-    p = MuseScoreFile("Rhythmic_Clawhammer_Stroke_Cycle.mscz")
+    p = MuseScoreFile(str(fixture_path("Rhythmic_Clawhammer_Stroke_Cycle.mscz")))
 
     p.open()
 
@@ -327,7 +332,7 @@ def test_real_controlled_score_open_c():
     output_path, applied, skipped, exceptions = (
         generate_tab_from_template(
             p, OPEN_C, staff_used,
-            "templates/TAB_linked_Treble_Example.mscz", "output",
+            "templates/TAB_linked_Treble_Example.mscz", OUTPUT_FOLDER,
             service, filename="test_bo111_rcsc_openc.mscz",
             hp_trace_sink=trace
         )
@@ -357,7 +362,7 @@ def test_real_white_christmas_earned_hp_phrase_coverage_unaffected():
 
     import os
 
-    p = MuseScoreFile("scores/White Christmas.mscz")
+    p = MuseScoreFile(str(fixture_path("White Christmas.mscz")))
 
     p.open()
 
@@ -376,7 +381,7 @@ def test_real_white_christmas_earned_hp_phrase_coverage_unaffected():
     output_path, applied, skipped, exceptions = (
         generate_tab_from_template(
             p, OPEN_G, staff_used,
-            "templates/TAB_linked_Treble_Example.mscz", "output",
+            "templates/TAB_linked_Treble_Example.mscz", OUTPUT_FOLDER,
             service, filename="test_bo111_wc.mscz",
             hp_trace_sink=trace
         )
@@ -403,7 +408,7 @@ def test_real_tcs_a4_cmaj7_unaffected():
 
     import os
 
-    p = MuseScoreFile("scores/The Christmas Song.mscz")
+    p = MuseScoreFile(str(fixture_path("The Christmas Song.mscz")))
 
     p.open()
 
@@ -422,7 +427,7 @@ def test_real_tcs_a4_cmaj7_unaffected():
     output_path, applied, skipped, exceptions = (
         generate_tab_from_template(
             p, DOUBLE_D, staff_used,
-            "templates/TAB_linked_Treble_Example.mscz", "output",
+            "templates/TAB_linked_Treble_Example.mscz", OUTPUT_FOLDER,
             service, filename="test_bo111_a4.mscz",
             hp_trace_sink=trace
         )

@@ -9,6 +9,10 @@ functions (already covered by test_bo59_hand_position.py's own
 during real score generation.
 """
 
+from conftest import fixture_path, new_output_dir
+
+OUTPUT_FOLDER = new_output_dir()
+
 import sys
 
 sys.path.insert(0, '.')
@@ -54,7 +58,7 @@ def _generate_with_trace(path, tuning, filename):
     output_path, applied, skipped, exceptions = (
         generate_tab_from_template(
             p, tuning, staff_used,
-            "templates/TAB_linked_Treble_Example.mscz", "output",
+            "templates/TAB_linked_Treble_Example.mscz", OUTPUT_FOLDER,
             service, filename=filename, hp_trace_sink=trace
         )
     )
@@ -70,7 +74,7 @@ def test_default_call_unaffected_by_hp_trace_sink():
 
     import os
 
-    p = MuseScoreFile("scores/Cousin Sally Brown.mscz")
+    p = MuseScoreFile(str(fixture_path("Cousin Sally Brown.mscz")))
 
     p.open()
 
@@ -88,7 +92,7 @@ def test_default_call_unaffected_by_hp_trace_sink():
     # hp_trace_sink at all. Must still return exactly 4 values.
     result = generate_tab_from_template(
         p, C_STANDARD, staff_used,
-        "templates/TAB_linked_Treble_Example.mscz", "output",
+        "templates/TAB_linked_Treble_Example.mscz", OUTPUT_FOLDER,
         service, filename="test_bo59_no_trace.mscz"
     )
 
@@ -111,7 +115,7 @@ def test_real_csb_gCGBD_open_first_note_no_hp():
     import os
 
     output_path, trace = _generate_with_trace(
-        "scores/Cousin Sally Brown.mscz", C_STANDARD,
+        str(fixture_path("Cousin Sally Brown.mscz")), C_STANDARD,
         "test_bo59_trace_gCGBD.mscz"
     )
 
@@ -147,7 +151,7 @@ def test_real_csb_gCGBD_first_fretted_note_establishes_hp():
     import os
 
     output_path, trace = _generate_with_trace(
-        "scores/Cousin Sally Brown.mscz", C_STANDARD,
+        str(fixture_path("Cousin Sally Brown.mscz")), C_STANDARD,
         "test_bo59_trace_gCGBD2.mscz"
     )
 
@@ -186,7 +190,7 @@ def test_real_csb_gCGBD_fretted_note_inside_hp_unchanged():
     import os
 
     output_path, trace = _generate_with_trace(
-        "scores/Cousin Sally Brown.mscz", C_STANDARD,
+        str(fixture_path("Cousin Sally Brown.mscz")), C_STANDARD,
         "test_bo59_trace_gCGBD3.mscz"
     )
 
@@ -233,7 +237,7 @@ def test_real_csb_gCGBD_open_strings_leave_established_hp_unchanged():
     import os
 
     output_path, trace = _generate_with_trace(
-        "scores/Cousin Sally Brown.mscz", C_STANDARD,
+        str(fixture_path("Cousin Sally Brown.mscz")), C_STANDARD,
         "test_bo59_trace_gCGBD4.mscz"
     )
 
@@ -268,7 +272,7 @@ def test_real_tcs_every_chord_resets_hp():
 
     import os
 
-    p = MuseScoreFile("scores/The Christmas Song.mscz")
+    p = MuseScoreFile(str(fixture_path("The Christmas Song.mscz")))
 
     p.open()
 
@@ -289,7 +293,7 @@ def test_real_tcs_every_chord_resets_hp():
     output_path, applied, skipped, exceptions = (
         generate_tab_from_template(
             p, double_d, staff_used,
-            "templates/TAB_linked_Treble_Example.mscz", "output",
+            "templates/TAB_linked_Treble_Example.mscz", OUTPUT_FOLDER,
             service, filename="test_bo59_trace_tcs.mscz",
             hp_trace_sink=trace
         )
@@ -340,7 +344,7 @@ def test_real_tcs_five_fret_exception_preserved():
 
     import os
 
-    p = MuseScoreFile("scores/The Christmas Song.mscz")
+    p = MuseScoreFile(str(fixture_path("The Christmas Song.mscz")))
 
     p.open()
 
@@ -361,7 +365,7 @@ def test_real_tcs_five_fret_exception_preserved():
     output_path, applied, skipped, exceptions = (
         generate_tab_from_template(
             p, a_modal_sawmill, staff_used,
-            "templates/TAB_linked_Treble_Example.mscz", "output",
+            "templates/TAB_linked_Treble_Example.mscz", OUTPUT_FOLDER,
             service, filename="test_bo59_trace_5fret.mscz",
             hp_trace_sink=trace
         )
@@ -403,7 +407,7 @@ def test_real_csb_gCGCD_established_hp_before_g4_is_2_5():
     import os
 
     output_path, trace = _generate_with_trace(
-        "scores/Cousin Sally Brown.mscz", DOUBLE_C,
+        str(fixture_path("Cousin Sally Brown.mscz")), DOUBLE_C,
         "test_bo59_trace_gCGCD.mscz"
     )
 
@@ -436,7 +440,7 @@ def test_real_csb_gCGCD_g4_stays_inside_established_hp():
     import os
 
     output_path, trace = _generate_with_trace(
-        "scores/Cousin Sally Brown.mscz", DOUBLE_C,
+        str(fixture_path("Cousin Sally Brown.mscz")), DOUBLE_C,
         "test_bo59_trace_gCGCD2.mscz"
     )
 

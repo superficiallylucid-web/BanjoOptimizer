@@ -9,6 +9,8 @@ integration, since none exists yet.
 
 from pathlib import Path
 
+from conftest import fixture_path
+
 from parser import MuseScoreFile
 
 from optimizer import TuningAnalyzer
@@ -16,11 +18,8 @@ from optimizer import TuningAnalyzer
 from models import Harmony
 
 
-TEST_FOLDER = Path(__file__).parent.parent
-
-WHITE_CHRISTMAS_PATH = (
-    TEST_FOLDER / "scores"
-    / "White Christmas (G (gCGBD)).mscz"
+WHITE_CHRISTMAS_PATH = fixture_path(
+    "White Christmas (G (gCGBD)).mscz"
 )
 
 

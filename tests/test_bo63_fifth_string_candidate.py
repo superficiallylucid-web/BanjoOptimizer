@@ -15,6 +15,10 @@ future work, not BO-63's own scope. These tests only confirm the
 mechanical correctness of making it visible/writable at all.
 """
 
+from conftest import fixture_path, new_output_dir
+
+OUTPUT_FOLDER = new_output_dir()
+
 import sys
 
 sys.path.insert(0, '.')
@@ -143,7 +147,7 @@ def test_real_csb_gCGCD_fifth_string_writes_valid_xml():
 
     import os
 
-    p = MuseScoreFile("scores/Cousin Sally Brown.mscz")
+    p = MuseScoreFile(str(fixture_path("Cousin Sally Brown.mscz")))
 
     p.open()
 
@@ -160,7 +164,7 @@ def test_real_csb_gCGCD_fifth_string_writes_valid_xml():
     output_path, applied, skipped, exceptions = (
         generate_tab_from_template(
             p, DOUBLE_C, staff_used,
-            "templates/TAB_linked_Treble_Example.mscz", "output",
+            "templates/TAB_linked_Treble_Example.mscz", OUTPUT_FOLDER,
             service, filename="test_bo63_xml_check.mscz"
         )
     )
@@ -236,7 +240,7 @@ def test_chord_shapes_never_use_fifth_string():
 
     import os
 
-    p = MuseScoreFile("scores/The Christmas Song.mscz")
+    p = MuseScoreFile(str(fixture_path("The Christmas Song.mscz")))
 
     p.open()
 
@@ -255,7 +259,7 @@ def test_chord_shapes_never_use_fifth_string():
     output_path, applied, skipped, exceptions = (
         generate_tab_from_template(
             p, double_d, staff_used,
-            "templates/TAB_linked_Treble_Example.mscz", "output",
+            "templates/TAB_linked_Treble_Example.mscz", OUTPUT_FOLDER,
             service, filename="test_bo63_chord_check.mscz"
         )
     )

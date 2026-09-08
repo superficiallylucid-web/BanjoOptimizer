@@ -36,6 +36,12 @@ symbol COUNT and content are unchanged, only the offset values
 differ.
 """
 
+from conftest import fixture_path, new_output_dir
+
+import pytest
+
+OUTPUT_FOLDER = new_output_dir()
+
 import os
 
 import zipfile
@@ -83,7 +89,7 @@ def _generate(filename):
     output_path, applied, skipped, exceptions = (
         generate_tab_from_template(
             p, A_MODAL_SAWMILL, staff_used, TEMPLATE_PATH,
-            "output", service, filename=filename
+            OUTPUT_FOLDER, service, filename=filename
         )
     )
 
@@ -106,6 +112,12 @@ def _generate(filename):
 # 1 -- chord symbol offset is exactly x=-5, y=0
 # ---------------------------------------------------------
 
+@pytest.mark.skip(
+    reason="Fixture 'The Christmas Song (with TAB and composer)"
+    ".mscz' is not available in test_scores/ or anywhere in the "
+    "project; confirmed absent, not merely uncopied. See BO-149 "
+    "fixture-availability audit."
+)
 def test_chord_symbol_offset_is_correct():
 
     output_path, applied, skipped, exceptions, root = _generate(
@@ -141,6 +153,12 @@ def test_chord_symbol_offset_is_correct():
 # 2 -- "Banjo tuning:" text offset is exactly x=0, y=0
 # ---------------------------------------------------------
 
+@pytest.mark.skip(
+    reason="Fixture 'The Christmas Song (with TAB and composer)"
+    ".mscz' is not available in test_scores/ or anywhere in the "
+    "project; confirmed absent, not merely uncopied. See BO-149 "
+    "fixture-availability audit."
+)
 def test_tuning_text_offset_is_correct():
 
     output_path, applied, skipped, exceptions, root = _generate(
@@ -204,6 +222,12 @@ def test_tuning_text_offset_is_correct():
 # 2b -- title text offset is exactly x=0, y=-5
 # ---------------------------------------------------------
 
+@pytest.mark.skip(
+    reason="Fixture 'The Christmas Song (with TAB and composer)"
+    ".mscz' is not available in test_scores/ or anywhere in the "
+    "project; confirmed absent, not merely uncopied. See BO-149 "
+    "fixture-availability audit."
+)
 def test_title_text_offset_is_correct():
 
     output_path, applied, skipped, exceptions, root = _generate(
@@ -270,9 +294,9 @@ def test_title_text_offset_is_correct():
 def test_chord_symbol_offset_consistent_across_real_songs():
 
     real_songs = [
-        "scores/The Christmas Song.mscz",
-        "scores/My Favorite Things.mscz",
-        "scores/White Christmas.mscz",
+        str(fixture_path("The Christmas Song.mscz")),
+        str(fixture_path("My Favorite Things.mscz")),
+        str(fixture_path("White Christmas.mscz")),
     ]
 
     seen_offsets = set()
@@ -298,7 +322,7 @@ def test_chord_symbol_offset_consistent_across_real_songs():
         output_path, applied, skipped, exceptions = (
             generate_tab_from_template(
                 p, A_MODAL_SAWMILL, staff_used, TEMPLATE_PATH,
-                "output", service,
+                OUTPUT_FOLDER, service,
                 filename=f"test_bo53_consistency_{p.score.title}.mscz"
             )
         )
@@ -342,6 +366,12 @@ def test_chord_symbol_offset_consistent_across_real_songs():
 # changed, not which chords are written or their text)
 # ---------------------------------------------------------
 
+@pytest.mark.skip(
+    reason="Fixture 'The Christmas Song (with TAB and composer)"
+    ".mscz' is not available in test_scores/ or anywhere in the "
+    "project; confirmed absent, not merely uncopied. See BO-149 "
+    "fixture-availability audit."
+)
 def test_chord_symbol_count_and_content_unchanged():
 
     output_path, applied, skipped, exceptions, root = _generate(

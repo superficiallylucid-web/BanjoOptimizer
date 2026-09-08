@@ -32,6 +32,10 @@ Playing Model, HP logic, or tuning selection is touched anywhere
 in this file or in the implementation it tests.
 """
 
+from conftest import fixture_path, new_output_dir
+
+OUTPUT_FOLDER = new_output_dir()
+
 import sys
 
 sys.path.insert(0, '.')
@@ -183,13 +187,13 @@ def test_tab_only_template_generates_successfully():
 
     _make_tab_only_template(tab_only_path)
 
-    p, staff_used = _load_source("scores/Cousin Sally Brown.mscz")
+    p, staff_used = _load_source(str(fixture_path("Cousin Sally Brown.mscz")))
 
     service = ChordService(ChordLibrary())
 
     output_path, applied, skipped, exceptions = (
         generate_tab_from_template(
-            p, OPEN_C, staff_used, tab_only_path, "output",
+            p, OPEN_C, staff_used, tab_only_path, OUTPUT_FOLDER,
             service, filename="bo56_test_tab_only.mscz"
         )
     )
@@ -236,13 +240,13 @@ def test_tab_only_template_generates_successfully():
 
 def test_two_staff_template_still_generates_tab_only_by_default():
 
-    p, staff_used = _load_source("scores/Cousin Sally Brown.mscz")
+    p, staff_used = _load_source(str(fixture_path("Cousin Sally Brown.mscz")))
 
     service = ChordService(ChordLibrary())
 
     output_path, applied, skipped, exceptions = (
         generate_tab_from_template(
-            p, OPEN_C, staff_used, TEMPLATE_PATH, "output",
+            p, OPEN_C, staff_used, TEMPLATE_PATH, OUTPUT_FOLDER,
             service, filename="bo56_test_two_staff.mscz"
         )
     )
@@ -294,7 +298,7 @@ def test_invalid_template_raises_clear_error_not_indexerror():
 
     _make_no_staff_template(invalid_path)
 
-    p, staff_used = _load_source("scores/Cousin Sally Brown.mscz")
+    p, staff_used = _load_source(str(fixture_path("Cousin Sally Brown.mscz")))
 
     service = ChordService(ChordLibrary())
 
@@ -303,7 +307,7 @@ def test_invalid_template_raises_clear_error_not_indexerror():
         try:
 
             generate_tab_from_template(
-                p, OPEN_C, staff_used, invalid_path, "output",
+                p, OPEN_C, staff_used, invalid_path, OUTPUT_FOLDER,
                 service, filename="bo56_test_invalid.mscz"
             )
 
@@ -340,13 +344,13 @@ def test_invalid_template_raises_clear_error_not_indexerror():
 
 def test_notation_pitch_tpc_match_tab_exactly():
 
-    p, staff_used = _load_source("scores/Cousin Sally Brown.mscz")
+    p, staff_used = _load_source(str(fixture_path("Cousin Sally Brown.mscz")))
 
     service = ChordService(ChordLibrary())
 
     output_path, applied, skipped, exceptions = (
         generate_tab_from_template(
-            p, OPEN_C, staff_used, TEMPLATE_PATH, "output",
+            p, OPEN_C, staff_used, TEMPLATE_PATH, OUTPUT_FOLDER,
             service, filename="bo56_test_notation.mscz",
             include_notation=True
         )
@@ -432,13 +436,13 @@ def test_notation_pitch_tpc_match_tab_exactly():
 
 def test_notation_rhythm_matches_tab_exactly():
 
-    p, staff_used = _load_source("scores/The Christmas Song.mscz")
+    p, staff_used = _load_source(str(fixture_path("The Christmas Song.mscz")))
 
     service = ChordService(ChordLibrary())
 
     output_path, applied, skipped, exceptions = (
         generate_tab_from_template(
-            p, DOUBLE_D, staff_used, TEMPLATE_PATH, "output",
+            p, DOUBLE_D, staff_used, TEMPLATE_PATH, OUTPUT_FOLDER,
             service, filename="bo56_test_rhythm.mscz",
             include_notation=True
         )
@@ -514,7 +518,7 @@ def test_notation_rhythm_matches_tab_exactly():
 
 def test_include_notation_false_by_default_unaffected():
 
-    p, staff_used = _load_source("scores/Cousin Sally Brown.mscz")
+    p, staff_used = _load_source(str(fixture_path("Cousin Sally Brown.mscz")))
 
     service = ChordService(ChordLibrary())
 
@@ -523,7 +527,7 @@ def test_include_notation_false_by_default_unaffected():
     # prior signature-compatible behavior.
     output_path, applied, skipped, exceptions = (
         generate_tab_from_template(
-            p, OPEN_C, staff_used, TEMPLATE_PATH, "output",
+            p, OPEN_C, staff_used, TEMPLATE_PATH, OUTPUT_FOLDER,
             service, filename="bo56_test_default.mscz"
         )
     )
@@ -565,7 +569,7 @@ def test_include_notation_true_requires_treble_staff_in_template():
 
     _make_tab_only_template(tab_only_path)
 
-    p, staff_used = _load_source("scores/Cousin Sally Brown.mscz")
+    p, staff_used = _load_source(str(fixture_path("Cousin Sally Brown.mscz")))
 
     service = ChordService(ChordLibrary())
 
@@ -574,7 +578,7 @@ def test_include_notation_true_requires_treble_staff_in_template():
         try:
 
             generate_tab_from_template(
-                p, OPEN_C, staff_used, tab_only_path, "output",
+                p, OPEN_C, staff_used, tab_only_path, OUTPUT_FOLDER,
                 service, filename="bo56_test_notation_error.mscz",
                 include_notation=True
             )
@@ -603,22 +607,22 @@ def test_include_notation_true_requires_treble_staff_in_template():
 def test_chord_shapes_identical_with_and_without_notation():
 
     p1, staff_used1 = _load_source(
-        "scores/The Christmas Song.mscz"
+        str(fixture_path("The Christmas Song.mscz"))
     )
 
     p2, staff_used2 = _load_source(
-        "scores/The Christmas Song.mscz"
+        str(fixture_path("The Christmas Song.mscz"))
     )
 
     service = ChordService(ChordLibrary())
 
     output_tab_only, _, _, _ = generate_tab_from_template(
-        p1, DOUBLE_D, staff_used1, TEMPLATE_PATH, "output",
+        p1, DOUBLE_D, staff_used1, TEMPLATE_PATH, OUTPUT_FOLDER,
         service, filename="bo56_test_shapes_tabonly.mscz"
     )
 
     output_with_notation, _, _, _ = generate_tab_from_template(
-        p2, DOUBLE_D, staff_used2, TEMPLATE_PATH, "output",
+        p2, DOUBLE_D, staff_used2, TEMPLATE_PATH, OUTPUT_FOLDER,
         service, filename="bo56_test_shapes_notation.mscz",
         include_notation=True
     )

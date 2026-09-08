@@ -12,6 +12,10 @@ by and outside this mechanism's own scope -- that remains ordinary,
 pre-existing legacy candidate scoring, unmodified by BO-88.
 """
 
+from conftest import fixture_path, new_output_dir
+
+OUTPUT_FOLDER = new_output_dir()
+
 import sys
 
 sys.path.insert(0, '.')
@@ -228,7 +232,7 @@ def test_real_csb_g4_measure_7_rest_pattern():
 
     import os
 
-    p = MuseScoreFile("scores/Cousin Sally Brown.mscz")
+    p = MuseScoreFile(str(fixture_path("Cousin Sally Brown.mscz")))
 
     p.open()
 
@@ -247,7 +251,7 @@ def test_real_csb_g4_measure_7_rest_pattern():
     output_path, applied, skipped, exceptions = (
         generate_tab_from_template(
             p, C_STANDARD, staff_used,
-            "templates/TAB_linked_Treble_Example.mscz", "output",
+            "templates/TAB_linked_Treble_Example.mscz", OUTPUT_FOLDER,
             service, filename="test_bo88_csb_m7.mscz",
             hp_trace_sink=trace
         )
@@ -282,7 +286,7 @@ def test_real_csb_g4_measure_9_no_rest_pattern():
 
     import os
 
-    p = MuseScoreFile("scores/Cousin Sally Brown.mscz")
+    p = MuseScoreFile(str(fixture_path("Cousin Sally Brown.mscz")))
 
     p.open()
 
@@ -301,7 +305,7 @@ def test_real_csb_g4_measure_9_no_rest_pattern():
     output_path, applied, skipped, exceptions = (
         generate_tab_from_template(
             p, C_STANDARD, staff_used,
-            "templates/TAB_linked_Treble_Example.mscz", "output",
+            "templates/TAB_linked_Treble_Example.mscz", OUTPUT_FOLDER,
             service, filename="test_bo88_csb_m9.mscz",
             hp_trace_sink=trace
         )
@@ -338,7 +342,7 @@ def test_real_tcs_a4_cmaj7_still_fret_7():
 
     import os
 
-    p = MuseScoreFile("scores/The Christmas Song.mscz")
+    p = MuseScoreFile(str(fixture_path("The Christmas Song.mscz")))
 
     p.open()
 
@@ -357,7 +361,7 @@ def test_real_tcs_a4_cmaj7_still_fret_7():
     output_path, applied, skipped, exceptions = (
         generate_tab_from_template(
             p, DOUBLE_D, staff_used,
-            "templates/TAB_linked_Treble_Example.mscz", "output",
+            "templates/TAB_linked_Treble_Example.mscz", OUTPUT_FOLDER,
             service, filename="test_bo88_tcs_a4.mscz",
             hp_trace_sink=trace
         )
@@ -393,7 +397,7 @@ def test_real_controlled_score_role_classification():
 
     import os
 
-    p = MuseScoreFile("Rhythmic_Clawhammer_Stroke_Cycle.mscz")
+    p = MuseScoreFile(str(fixture_path("Rhythmic_Clawhammer_Stroke_Cycle.mscz")))
 
     p.open()
 
@@ -412,7 +416,7 @@ def test_real_controlled_score_role_classification():
     output_path, applied, skipped, exceptions = (
         generate_tab_from_template(
             p, C_STANDARD, staff_used,
-            "templates/TAB_linked_Treble_Example.mscz", "output",
+            "templates/TAB_linked_Treble_Example.mscz", OUTPUT_FOLDER,
             service, filename="test_bo88_fixture.mscz",
             hp_trace_sink=trace
         )

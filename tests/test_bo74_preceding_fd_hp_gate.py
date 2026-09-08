@@ -31,6 +31,11 @@ from chord_library import ChordLibrary
 
 from score_generator import generate_tab_from_template
 
+from conftest import fixture_path, new_output_dir
+
+OUTPUT_FOLDER = new_output_dir()
+
+
 
 DOUBLE_D = get_tunings()["Double D"]
 
@@ -157,8 +162,10 @@ def test_real_christmas_song_a4_g4_am_case():
     import os
 
     p = MuseScoreFile(
-        "The_Christmas_Song_-_Double_D__aDADE__measures_14-16"
-        ".mscz"
+        str(fixture_path(
+            "The_Christmas_Song_-_Double_D__aDADE__measures_14-16"
+            ".mscz"
+        ))
     )
 
     p.open()
@@ -178,7 +185,7 @@ def test_real_christmas_song_a4_g4_am_case():
     output_path, applied, skipped, exceptions = (
         generate_tab_from_template(
             p, DOUBLE_D, staff_used,
-            "templates/TAB_linked_Treble_Example.mscz", "output",
+            "templates/TAB_linked_Treble_Example.mscz", OUTPUT_FOLDER,
             service, filename="test_bo74_real_case.mscz",
             hp_trace_sink=trace
         )

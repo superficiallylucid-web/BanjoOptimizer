@@ -32,6 +32,8 @@ import xml.etree.ElementTree as ET
 
 from pathlib import Path
 
+from conftest import fixture_path, new_output_dir
+
 from parser import MuseScoreFile
 
 from tunings import get_tunings
@@ -39,18 +41,15 @@ from tunings import get_tunings
 from score_generator import generate_chord_diagrams_only
 
 
-TEST_FOLDER = Path(__file__).parent.parent
-
-WHITE_CHRISTMAS_PATH = (
-    TEST_FOLDER / "scores"
-    / "White Christmas (G (gCGBD)).mscz"
+WHITE_CHRISTMAS_PATH = fixture_path(
+    "White Christmas (G (gCGBD)).mscz"
 )
 
-CHRISTMAS_SONG_NOTATION_ONLY_PATH = (
-    TEST_FOLDER / "The Christmas Song (notation only).mscz"
+CHRISTMAS_SONG_NOTATION_ONLY_PATH = fixture_path(
+    "The Christmas Song (notation only).mscz"
 )
 
-OUTPUT_FOLDER = TEST_FOLDER / "output"
+OUTPUT_FOLDER = new_output_dir()
 
 
 def _get_chord_service():
@@ -586,25 +585,14 @@ def test_chord_diagram_shape_matches_chord_service_directly():
             # updated, since this test was silently skipped by a
             # pre-existing path bug (fixed separately) for an
             # unknown period and never actually ran until now.
-            # BO-54 -- the real writer also now passes next_
-            # harmony (HP continuity); matched here too, or this
-            # comparison would be checking against a stale,
-            # next_harmony-less selection that no longer matches
-            # what's actually written.
             from score_generator import (
                 _select_chord_shape_for_harmony
-            )
-
-            next_harmony = (
-                p.harmonies[harmony_index + 1]
-                if harmony_index + 1 < len(p.harmonies) else None
             )
 
             selected_shape, _, _ = (
                 _select_chord_shape_for_harmony(
                     matching_harmony, target_tuning, service,
-                    melody_notes=p.score.notes,
-                    next_harmony=next_harmony
+                    melody_notes=p.score.notes
                 )
             )
 

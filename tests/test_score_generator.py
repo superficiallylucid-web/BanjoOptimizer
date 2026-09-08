@@ -28,17 +28,16 @@ from optimizer import TuningAnalyzer
 
 from tunings import get_tunings, identify_tuning
 
+from conftest import fixture_path, new_output_dir, TEST_SCORES_DIR
+
 from score_generator import generate_mscz
 
 
-TEST_FOLDER = Path(__file__).parent.parent
-
-WHITE_CHRISTMAS_PATH = (
-    TEST_FOLDER / "scores"
-    / "White Christmas (G (gCGBD)).mscz"
+WHITE_CHRISTMAS_PATH = fixture_path(
+    "White Christmas (G (gCGBD)).mscz"
 )
 
-OUTPUT_FOLDER = TEST_FOLDER / "output"
+OUTPUT_FOLDER = new_output_dir()
 
 
 def _load():
@@ -588,8 +587,8 @@ def test_chord_service_none_skips_chord_shapes():
 # notation-only to begin with; this is the documented, honest
 # way that gap was closed for testing.
 
-CHRISTMAS_SONG_NOTATION_ONLY_PATH = (
-    TEST_FOLDER / "The Christmas Song (notation only).mscz"
+CHRISTMAS_SONG_NOTATION_ONLY_PATH = fixture_path(
+    "The Christmas Song (notation only).mscz"
 )
 
 
@@ -1276,7 +1275,7 @@ def test_new_tab_staff_matches_reference_structure_exactly():
     """
 
     reference_path = (
-        TEST_FOLDER
+        TEST_SCORES_DIR
         / "The_Christmas_Song__notation_and_TAB_.mscz"
     )
 

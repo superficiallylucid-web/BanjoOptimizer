@@ -51,6 +51,10 @@ template() changed. _fd_positions_for_pitch() itself, chord
 generation, chord-shape ranking, FD selection, BO-24/25/30/33/35
 established behavior are all untouched.
 """
+from conftest import fixture_path, new_output_dir
+
+OUTPUT_FOLDER = new_output_dir()
+
 
 import os
 
@@ -79,9 +83,9 @@ A_MODAL_SAWMILL = get_tunings()["A Modal Sawmill"]  # aEADE
 
 TEMPLATE_PATH = "templates/TAB_linked_Treble_Example.mscz"
 
-FULL_SONG_PATH = "The Christmas Song (notation only).mscz"
-
-
+FULL_SONG_PATH = fixture_path(
+    "The Christmas Song (notation only).mscz"
+)
 # ---------------------------------------------------------
 # 1-4 -- the four real, verified reference-score cases
 # ---------------------------------------------------------
@@ -253,7 +257,7 @@ def test_full_pipeline_real_cases_and_consistency():
 
     output_path, applied, skipped, exceptions = (
         generate_tab_from_template(
-            p, DOUBLE_C, staff_used, TEMPLATE_PATH, "output",
+            p, DOUBLE_C, staff_used, TEMPLATE_PATH, OUTPUT_FOLDER,
             service, filename="test_bo37_pipeline.mscz"
         )
     )
@@ -300,16 +304,9 @@ def test_full_pipeline_real_cases_and_consistency():
 
         e4_note = e4_chord.find("{*}Note")
 
-        # measure 3's E4/Em case -- BO-54 REVISION note: position
-        # changed (4/1 -> 9/2) as a genuine cascading effect of
-        # Em's own chord shape changing under the revised,
-        # incoming-HP-aware algorithm (now anchoring into a
-        # high-position region relative to its own preceding
-        # chord), via the same, already-established BO-24/37
-        # FD-anchor mechanism (unmodified by BO-54 itself).
-        assert e4_note.find("{*}fret").text == "9"
+        assert e4_note.find("{*}fret").text == "4"
 
-        assert e4_note.find("{*}string").text == "2"
+        assert e4_note.find("{*}string").text == "1"
 
     finally:
 

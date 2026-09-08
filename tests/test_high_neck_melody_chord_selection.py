@@ -48,6 +48,10 @@ open + fret 12 exactly. BO-20 now selects "0(10)(10)(12)"
 (E3-G4-C5-E5, a complete C major triad, hand_span=2) instead of
 the prior top choice "0350", which doesn't contain E5 at all.
 """
+from conftest import fixture_path, new_output_dir
+
+OUTPUT_FOLDER = new_output_dir()
+
 
 import zipfile
 
@@ -82,7 +86,9 @@ A_MODAL_SAWMILL = get_tunings()["A Modal Sawmill"]  # aEADE
 
 DOUBLE_D = get_tunings()["Double D"]  # aDADE -- BO-20's own case
 
-CHRISTMAS_SONG_PATH = "The Christmas Song (notation only).mscz"
+CHRISTMAS_SONG_PATH = fixture_path(
+    "The Christmas Song (notation only).mscz"
+)
 
 
 def _get_chord_service():
@@ -343,7 +349,7 @@ def test_final_chord_diagram_not_marked_red():
 
     output_path, applied, skipped, exceptions = (
         generate_chord_diagrams_only(
-            p, A_MODAL_SAWMILL, staff_used, "output", service,
+            p, A_MODAL_SAWMILL, staff_used, OUTPUT_FOLDER, service,
             filename="test_bo21followup_not_red.mscz"
         )
     )

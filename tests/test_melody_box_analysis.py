@@ -17,6 +17,8 @@ locally, matching the pattern used elsewhere in this project.
 
 from pathlib import Path
 
+from conftest import fixture_path
+
 from tunings import get_tunings
 
 from models import Note, Harmony, Score
@@ -34,9 +36,7 @@ from melody_box_analysis import (
 
 OPEN_G = get_tunings()["Open G"]
 
-AUREOLIN_EADE_PATH = (
-    Path(__file__).parent / "Aureolin__Bm__aEADE__.mscz"
-)
+AUREOLIN_EADE_PATH = fixture_path("Aureolin__Bm__aEADE__.mscz")
 
 
 # ---------------------------------------------------------

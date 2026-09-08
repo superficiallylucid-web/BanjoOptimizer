@@ -12,6 +12,8 @@ existing scoring.
 
 from pathlib import Path
 
+from conftest import fixture_path
+
 from tunings import get_tunings
 
 from models import Note, Harmony, Score, ChordShape
@@ -34,10 +36,7 @@ OPEN_G = get_tunings()["Open G"]
 
 A_MODAL_SAWMILL = get_tunings()["A Modal Sawmill"]  # aEADE
 
-MFT_PATH = (
-    Path(__file__).parent
-    / "My_Favorite_Things__Em__aEADE__.mscz"
-)
+MFT_PATH = fixture_path("My_Favorite_Things__Em__aEADE__.mscz")
 
 
 def _shape(shape_text, source="generated"):

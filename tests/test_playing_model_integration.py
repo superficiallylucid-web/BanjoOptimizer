@@ -12,6 +12,8 @@ not to tune the model's weights in this step.
 
 from pathlib import Path
 
+from conftest import fixture_path
+
 from parser import MuseScoreFile
 
 from optimizer import TuningAnalyzer
@@ -19,20 +21,13 @@ from optimizer import TuningAnalyzer
 from tunings import get_tunings
 
 
-TEST_FOLDER = Path(__file__).parent.parent
-
-WHITE_CHRISTMAS_PATH = (
-    TEST_FOLDER / "scores"
-    / "White Christmas (G (gCGBD)).mscz"
+WHITE_CHRISTMAS_PATH = fixture_path(
+    "White Christmas (G (gCGBD)).mscz"
 )
 
-MFT_PATH = (
-    TEST_FOLDER / "My_Favorite_Things__Em__aEADE__.mscz"
-)
+MFT_PATH = fixture_path("My_Favorite_Things__Em__aEADE__.mscz")
 
-AUREOLIN_PATH = (
-    TEST_FOLDER / "Aureolin__Bm__aEADE__.mscz"
-)
+AUREOLIN_PATH = fixture_path("Aureolin__Bm__aEADE__.mscz")
 
 
 def _load(path, staff=None):

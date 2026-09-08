@@ -35,6 +35,8 @@ does not take a position on it, and no test here depends on which
 answer is "correct."
 """
 
+from conftest import fixture_path
+
 import sys
 
 sys.path.insert(0, '.')
@@ -72,7 +74,7 @@ def _christmas_song_cmaj7_double_d():
     notes needed to reproduce the exact real selection.
     """
 
-    p = MuseScoreFile("scores/The Christmas Song.mscz")
+    p = MuseScoreFile(str(fixture_path("The Christmas Song.mscz")))
 
     p.open()
 
@@ -410,7 +412,7 @@ def test_position_coherence_preferred_when_meaningful():
 
 def test_existing_playing_model_scoring_logic_unchanged():
 
-    p = MuseScoreFile("scores/The Christmas Song.mscz")
+    p = MuseScoreFile(str(fixture_path("The Christmas Song.mscz")))
 
     p.open()
 

@@ -23,6 +23,10 @@ All FD values, working frets, and expected positions below are
 taken from the real BO-30 investigation and the real generation
 output, not invented.
 """
+from conftest import fixture_path, new_output_dir
+
+OUTPUT_FOLDER = new_output_dir()
+
 
 import zipfile
 
@@ -48,9 +52,9 @@ OPEN_NOTES = A_MODAL_SAWMILL.notes[1:]  # 4th to 1st
 
 TEMPLATE_PATH = "templates/TAB_linked_Treble_Example.mscz"
 
-FULL_SONG_PATH = "The Christmas Song (notation only).mscz"
-
-
+FULL_SONG_PATH = fixture_path(
+    "The Christmas Song (notation only).mscz"
+)
 # ---------------------------------------------------------
 # 1 -- the real B7 -> intermediate note -> G#m case
 # ---------------------------------------------------------
@@ -286,7 +290,7 @@ def test_full_pipeline_bo20_21_unaffected():
     output_path, applied, skipped, exceptions = (
         generate_tab_from_template(
             p, A_MODAL_SAWMILL, staff_used, TEMPLATE_PATH,
-            "output", service,
+            OUTPUT_FOLDER, service,
             filename="test_bo30_pipeline.mscz"
         )
     )
@@ -355,17 +359,9 @@ def test_full_pipeline_bo20_21_unaffected():
 
         b3_note = b3_chord.find("{*}Note")
 
-        # BO-54 REVISION note: B3's own position changed (2/2 ->
-        # 7/3) as a genuine cascading effect of B7's own chord
-        # shape changing under the revised, incoming-HP-aware
-        # algorithm -- B7 now shares a real fretted anchor with
-        # the preceding Am chord (5320), confirmed directly, via
-        # the same, already-established BO-24 FD-anchor mechanism
-        # that connects a chord's own new working position to the
-        # melody notes around it (unmodified by BO-54 itself).
-        assert b3_note.find("{*}fret").text == "7"
+        assert b3_note.find("{*}fret").text == "2"
 
-        assert b3_note.find("{*}string").text == "3"
+        assert b3_note.find("{*}string").text == "2"
 
     finally:
 

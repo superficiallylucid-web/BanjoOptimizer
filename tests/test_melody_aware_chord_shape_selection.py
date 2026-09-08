@@ -66,6 +66,10 @@ melody top choice. A different shape than the task's own
 NOT hardcode 8775 as the required answer if another equally
 good melody-containing voicing legitimately ranks higher."
 """
+from conftest import fixture_path, new_output_dir
+
+OUTPUT_FOLDER = new_output_dir()
+
 
 from tunings import get_tunings
 
@@ -98,7 +102,9 @@ DOUBLE_D = get_tunings()["Double D"]  # aDADE -- the task's own example
 
 A_MODAL_SAWMILL = get_tunings()["A Modal Sawmill"]  # aEADE
 
-CHRISTMAS_SONG_PATH = "The Christmas Song (notation only).mscz"
+CHRISTMAS_SONG_PATH = fixture_path(
+    "The Christmas Song (notation only).mscz"
+)
 
 
 def _service():
@@ -397,7 +403,7 @@ def test_full_pipeline_notation_only_uses_treble_clef_melody():
 
     output_path, applied, skipped, exceptions = (
         generate_chord_diagrams_only(
-            p, DOUBLE_D, staff_used, "output", service,
+            p, DOUBLE_D, staff_used, OUTPUT_FOLDER, service,
             filename="test_bo20_notation_only.mscz"
         )
     )

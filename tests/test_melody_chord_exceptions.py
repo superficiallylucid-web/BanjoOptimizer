@@ -31,6 +31,10 @@ internals. This runs strictly AFTER BO-20's own selection
 completes; the exception mechanism never changes which shape
 gets chosen, only how it's displayed and reported.
 """
+from conftest import fixture_path, new_output_dir
+
+OUTPUT_FOLDER = new_output_dir()
+
 
 import xml.etree.ElementTree as ET
 
@@ -61,7 +65,9 @@ DOUBLE_D = get_tunings()["Double D"]  # aDADE
 
 A_MODAL_SAWMILL = get_tunings()["A Modal Sawmill"]  # aEADE
 
-CHRISTMAS_SONG_PATH = "The Christmas Song (notation only).mscz"
+CHRISTMAS_SONG_PATH = fixture_path(
+    "The Christmas Song (notation only).mscz"
+)
 
 
 def _get_chord_service():
@@ -483,7 +489,7 @@ def test_full_pipeline_notation_only_produces_correct_exceptions():
 
     output_path, applied, skipped, exceptions = (
         generate_chord_diagrams_only(
-            p, c_standard, staff_used, "output", service,
+            p, c_standard, staff_used, OUTPUT_FOLDER, service,
             filename="test_bo21_notation_only.mscz"
         )
     )
@@ -565,7 +571,7 @@ def test_original_source_score_not_modified():
 
     output_path, applied, skipped, exceptions = (
         generate_chord_diagrams_only(
-            p, c_standard, staff_used, "output", service,
+            p, c_standard, staff_used, OUTPUT_FOLDER, service,
             filename="test_bo21_source_unmodified.mscz"
         )
     )

@@ -57,6 +57,10 @@ own new second_previous_position parameter, plus the corresponding
 pre-computation/tracking in generate_tab_from_template(), changed.
 BO-24/25/30/33/35/37 established behavior is untouched.
 """
+from conftest import fixture_path, new_output_dir
+
+OUTPUT_FOLDER = new_output_dir()
+
 
 import os
 
@@ -83,9 +87,9 @@ A_MODAL_SAWMILL = get_tunings()["A Modal Sawmill"]  # aEADE
 
 TEMPLATE_PATH = "templates/TAB_linked_Treble_Example.mscz"
 
-FULL_SONG_PATH = "The Christmas Song (notation only).mscz"
-
-
+FULL_SONG_PATH = fixture_path(
+    "The Christmas Song (notation only).mscz"
+)
 # ---------------------------------------------------------
 # Group A -- 1: the real measure 1 case (no preceding anchor
 # at all)
@@ -250,7 +254,7 @@ def test_full_pipeline_real_examples_and_consistency():
 
     output_path, applied, skipped, exceptions = (
         generate_tab_from_template(
-            p, DOUBLE_C, staff_used, TEMPLATE_PATH, "output",
+            p, DOUBLE_C, staff_used, TEMPLATE_PATH, OUTPUT_FOLDER,
             service, filename="test_bo38_pipeline.mscz"
         )
     )

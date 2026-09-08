@@ -19,6 +19,8 @@ files.
 
 from pathlib import Path
 
+from conftest import fixture_path
+
 import xml.etree.ElementTree as ET
 
 from parser import normalize_quality_code, MuseScoreFile
@@ -26,13 +28,9 @@ from parser import normalize_quality_code, MuseScoreFile
 from music import chord_tones
 
 
-AUREOLIN_DADE_PATH = (
-    Path(__file__).parent / "Aureolin__Bm__aDADE__.mscz"
-)
+AUREOLIN_DADE_PATH = fixture_path("Aureolin__Bm__aDADE__.mscz")
 
-AUREOLIN_EADE_PATH = (
-    Path(__file__).parent / "Aureolin__Bm__aEADE__.mscz"
-)
+AUREOLIN_EADE_PATH = fixture_path("Aureolin__Bm__aEADE__.mscz")
 
 
 # ---------------------------------------------------------

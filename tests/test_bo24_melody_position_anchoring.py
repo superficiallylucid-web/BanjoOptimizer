@@ -32,6 +32,10 @@ from the real supplied sample score and the real generation
 output, not invented -- see the BO-24 investigation notes for
 how each was traced and confirmed.
 """
+from conftest import fixture_path, new_output_dir
+
+OUTPUT_FOLDER = new_output_dir()
+
 
 import zipfile
 
@@ -236,7 +240,9 @@ def test_no_fd_match_and_no_anchor_falls_back_unchanged():
 # output, not just the isolated decision function
 # ---------------------------------------------------------
 
-FULL_SONG_PATH = "The Christmas Song (notation only).mscz"
+FULL_SONG_PATH = fixture_path(
+    "The Christmas Song (notation only).mscz"
+)
 
 TEMPLATE_PATH = "templates/TAB_linked_Treble_Example.mscz"
 
@@ -271,7 +277,7 @@ def test_full_pipeline_matches_all_three_real_examples():
     output_path, applied, skipped, exceptions = (
         generate_tab_from_template(
             p, A_MODAL_SAWMILL, staff_used, TEMPLATE_PATH,
-            "output",
+            OUTPUT_FOLDER,
             service,
             filename="test_bo24_full_pipeline.mscz"
         )
@@ -299,7 +305,15 @@ def test_full_pipeline_matches_all_three_real_examples():
         # Measure 1's only note: C4, expected fret=8 string=3
         # (player-facing "4-8"). Voice children:
         # KeySig, TimeSig, Rest, Rest, Chord.
-        m1_voice = list(measures[0].find("{*}voice"))
+        # BO-133 -- filtered to Chord/Rest only: this real score
+        # genuinely has a Tempo marking, now correctly preserved
+        # as a direct child of <voice> too (previously silently
+        # discarded) -- an unfiltered list() here would shift
+        # every index-based lookup below by one.
+        m1_voice = [
+            child for child in measures[0].find("{*}voice")
+            if child.tag.split("}")[-1] not in ("Tempo", "RehearsalMark", "Spanner")
+        ]
 
         fret, ms_string = _note_fret_string(m1_voice, 4)
 
@@ -307,7 +321,10 @@ def test_full_pipeline_matches_all_three_real_examples():
 
         # Measure 2's Cmaj7 onset note (B4): expected fret=9
         # string=1 (player-facing "2-9").
-        m2_voice = list(measures[1].find("{*}voice"))
+        m2_voice = [
+            child for child in measures[1].find("{*}voice")
+            if child.tag.split("}")[-1] not in ("Tempo", "RehearsalMark", "Spanner")
+        ]
 
         # Harmony, FretDiagram, Chord(C5), Harmony, FretDiagram,
         # Chord(B4) -- index 5 is the Cmaj7 onset Chord.

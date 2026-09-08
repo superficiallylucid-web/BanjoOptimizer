@@ -39,6 +39,8 @@ import zipfile
 
 import xml.etree.ElementTree as ET
 
+from conftest import fixture_path, new_output_dir
+
 from parser import MuseScoreFile
 
 from tunings import get_tunings
@@ -63,7 +65,12 @@ A_MODAL_SAWMILL = get_tunings()["A Modal Sawmill"]  # aEADE
 
 TEMPLATE_PATH = "templates/TAB_linked_Treble_Example.mscz"
 
-FULL_SONG_PATH = "The Christmas Song (notation only).mscz"
+# Phase 1 migration (BO-149): canonical fixture_path() instead
+# of a bare filename that previously had to live in the project
+# ROOT itself, not scores/, for this convention to resolve.
+FULL_SONG_PATH = fixture_path(
+    "The Christmas Song (notation only).mscz"
+)
 
 
 # ---------------------------------------------------------
@@ -218,9 +225,12 @@ def test_full_pipeline_double_c_no_regressions():
 
     service = ChordService(ChordLibrary())
 
+    # Phase 1 migration (BO-149): writes to test_output/,
+    # never the real application output/ directory.
     output_path, applied, skipped, exceptions = (
         generate_tab_from_template(
-            p, double_c, staff_used, TEMPLATE_PATH, "output",
+            p, double_c, staff_used, TEMPLATE_PATH,
+            str(new_output_dir()),
             service, filename="test_bo30f_double_c.mscz"
         )
     )

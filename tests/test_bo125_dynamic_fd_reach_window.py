@@ -3,6 +3,7 @@ tests/test_bo125_dynamic_fd_reach_window.py
 
 Regression tests for BO-125: replaces BO-123's fixed 2-note cap on
 following_box_notes with a dynamically determined window, derived
+
 from the actual fretboard reach of the chord's own intrinsically
 preferable ("preliminary") candidate -- not a hard-coded count.
 
@@ -25,6 +26,10 @@ than a fixed number.
 """
 
 import sys
+
+from conftest import fixture_path, new_output_dir
+
+OUTPUT_FOLDER = new_output_dir()
 
 sys.path.insert(0, '.')
 
@@ -131,7 +136,7 @@ def test_real_csb_chords_deleted_c_chord_selects_0012():
     output_path, applied, skipped, exceptions = (
         generate_tab_from_template(
             p, C_STANDARD, staff_used,
-            "templates/TAB_linked_Treble_Example.mscz", "output",
+            "templates/TAB_linked_Treble_Example.mscz", OUTPUT_FOLDER,
             service, filename="test_bo125_csb_deleted.mscz",
             hp_trace_sink=trace
         )
@@ -219,7 +224,7 @@ def test_real_white_christmas_g_chord_unchanged():
 
     import os
 
-    p = MuseScoreFile("scores/White Christmas.mscz")
+    p = MuseScoreFile(str(fixture_path("White Christmas.mscz")))
 
     p.open()
 
@@ -238,7 +243,7 @@ def test_real_white_christmas_g_chord_unchanged():
     output_path, applied, skipped, exceptions = (
         generate_tab_from_template(
             p, OPEN_G, staff_used,
-            "templates/TAB_linked_Treble_Example.mscz", "output",
+            "templates/TAB_linked_Treble_Example.mscz", OUTPUT_FOLDER,
             service, filename="test_bo125_wc.mscz",
             hp_trace_sink=trace
         )
@@ -284,7 +289,7 @@ def test_real_diminished_chord_control_unchanged():
     output_path, applied, skipped, exceptions = (
         generate_tab_from_template(
             p, C_STANDARD, staff_used,
-            "templates/TAB_linked_Treble_Example.mscz", "output",
+            "templates/TAB_linked_Treble_Example.mscz", OUTPUT_FOLDER,
             service, filename="test_bo125_dim.mscz",
             hp_trace_sink=trace
         )
@@ -335,7 +340,7 @@ def test_real_tcs_cmaj7_a4_unchanged():
 
     import os
 
-    p = MuseScoreFile("scores/The Christmas Song.mscz")
+    p = MuseScoreFile(str(fixture_path("The Christmas Song.mscz")))
 
     p.open()
 
@@ -354,7 +359,7 @@ def test_real_tcs_cmaj7_a4_unchanged():
     output_path, applied, skipped, exceptions = (
         generate_tab_from_template(
             p, DOUBLE_D, staff_used,
-            "templates/TAB_linked_Treble_Example.mscz", "output",
+            "templates/TAB_linked_Treble_Example.mscz", OUTPUT_FOLDER,
             service, filename="test_bo125_tcs.mscz",
             hp_trace_sink=trace
         )

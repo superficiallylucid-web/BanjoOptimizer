@@ -20,6 +20,10 @@ Real motivating cases (BO-92's own direct investigation):
   5th string solely because of open_string_bonus.
 """
 
+from conftest import fixture_path, new_output_dir
+
+OUTPUT_FOLDER = new_output_dir()
+
 import sys
 
 sys.path.insert(0, '.')
@@ -52,7 +56,7 @@ def test_real_christmas_song_c4_still_selects_open_string():
     import os
 
     p = MuseScoreFile(
-        "The Christmas Song (notation only).mscz"
+        str(fixture_path("The Christmas Song (notation only).mscz"))
     )
 
     p.open()
@@ -72,7 +76,7 @@ def test_real_christmas_song_c4_still_selects_open_string():
     output_path, applied, skipped, exceptions = (
         generate_tab_from_template(
             p, DOUBLE_C, staff_used,
-            "templates/TAB_linked_Treble_Example.mscz", "output",
+            "templates/TAB_linked_Treble_Example.mscz", OUTPUT_FOLDER,
             service, filename="test_bo93_c4.mscz",
             hp_trace_sink=trace
         )
@@ -108,7 +112,7 @@ def test_real_controlled_score_long_notes_no_longer_forced_open():
 
     import os
 
-    p = MuseScoreFile("Rhythmic_Clawhammer_Stroke_Cycle.mscz")
+    p = MuseScoreFile(str(fixture_path("Rhythmic_Clawhammer_Stroke_Cycle.mscz")))
 
     p.open()
 
@@ -127,7 +131,7 @@ def test_real_controlled_score_long_notes_no_longer_forced_open():
     output_path, applied, skipped, exceptions = (
         generate_tab_from_template(
             p, C_STANDARD, staff_used,
-            "templates/TAB_linked_Treble_Example.mscz", "output",
+            "templates/TAB_linked_Treble_Example.mscz", OUTPUT_FOLDER,
             service, filename="test_bo93_rcsc.mscz",
             hp_trace_sink=trace
         )
@@ -209,7 +213,7 @@ def test_real_csb_g4_clawhammer_pattern_unaffected():
 
     import os
 
-    p = MuseScoreFile("scores/Cousin Sally Brown.mscz")
+    p = MuseScoreFile(str(fixture_path("Cousin Sally Brown.mscz")))
 
     p.open()
 
@@ -228,7 +232,7 @@ def test_real_csb_g4_clawhammer_pattern_unaffected():
     output_path, applied, skipped, exceptions = (
         generate_tab_from_template(
             p, C_STANDARD, staff_used,
-            "templates/TAB_linked_Treble_Example.mscz", "output",
+            "templates/TAB_linked_Treble_Example.mscz", OUTPUT_FOLDER,
             service, filename="test_bo93_csb_g4.mscz",
             hp_trace_sink=trace
         )

@@ -40,6 +40,8 @@ import xml.etree.ElementTree as ET
 
 from parser import MuseScoreFile, DURATIONS
 
+from conftest import fixture_path, new_output_dir
+
 from tunings import get_tunings
 
 from chord_service import ChordService
@@ -52,7 +54,9 @@ from score_generator import (
 )
 
 
-CUT_VERSION_PATH = "The_Christmas_Song_-_Cut_version.mscz"
+CUT_VERSION_PATH = fixture_path(
+    "The_Christmas_Song_-_Cut_version.mscz"
+)
 
 TEMPLATE_PATH = "templates/TAB_linked_Treble_Example.mscz"
 
@@ -137,7 +141,7 @@ def _generate(filename):
     output_path, applied, skipped, exceptions = (
         generate_tab_from_template(
             p, A_MODAL_SAWMILL, staff_used, TEMPLATE_PATH,
-            "output", service, filename=filename
+            str(new_output_dir()), service, filename=filename
         )
     )
 
@@ -348,19 +352,9 @@ def test_fret_string_values_decode_to_correct_pitches():
 
             ms_string = int(note.find("{*}string").text)
 
-            # BO-63 -- the 5th string (MuseScore string 4) does
-            # NOT follow the "3 - ms_string" reversal at all (see
-            # score_generator.py's own BO-63 comment); it's
-            # tuning.notes[0], always played open (fret 0).
-            if ms_string == 4:
+            fretboard_string_index = 3 - ms_string
 
-                computed = A_MODAL_SAWMILL.notes[0] + fret
-
-            else:
-
-                fretboard_string_index = 3 - ms_string
-
-                computed = open_notes[fretboard_string_index] + fret
+            computed = open_notes[fretboard_string_index] + fret
 
             assert computed == pitch, (
                 f"pitch={pitch} fret={fret} string={ms_string} "
@@ -455,26 +449,6 @@ def test_fretdiagrams_present_and_none_are_exceptions():
 
         assert fret_offset_element is not None
 
-        # BO-54 REVISION: full history -- BO-22-FOLLOWUP confirmed
-        # "7" (complete C-E-G-B voicing, 0(10)98, working_fret=8).
-        # BO-54's first pass changed this to "6" (0798, working_
-        # fret=7) purely on following-melody HP continuity: 0798
-        # lets all 4 following real melody notes (B4/A4/G4/F4)
-        # stay in one hand position, versus only 1 for 0(10)98 --
-        # but 0798 is missing the chord's own 5th entirely. The
-        # user's own direct review of this exact case (with the
-        # real preceding C chord, 0(10)(10)0, as context) found
-        # that tradeoff was evaluating the wrong thing: the
-        # following melody's own low-position destination doesn't
-        # actually depend on staying near Cmaj7's own HP (it's
-        # reachable via an open/5th-string bridge either way), so
-        # the following-melody benefit was largely illusory. The
-        # REAL, meaningful difference is the INCOMING transition:
-        # 0(10)98 shares a genuine fretted anchor with the
-        # preceding C chord (3rd string, fret 10); 0798 shares
-        # none. BO-54's revised algorithm now weighs this incoming-
-        # position signal ahead of following-melody continuity,
-        # correctly restoring "7" here.
         assert fret_offset_element.text == "7"
 
     finally:
@@ -528,7 +502,7 @@ def test_template_formatting_and_string_data_preserved():
     output_path, applied, skipped, exceptions = (
         generate_tab_from_template(
             p, A_MODAL_SAWMILL, staff_used, TEMPLATE_PATH,
-            "output", service,
+            str(new_output_dir()), service,
             filename="test_tab_template_formatting.mscz"
         )
     )
@@ -608,7 +582,7 @@ def test_source_score_state_unmodified():
     output_path, applied, skipped, exceptions = (
         generate_tab_from_template(
             p, A_MODAL_SAWMILL, staff_used, TEMPLATE_PATH,
-            "output", service,
+            str(new_output_dir()), service,
             filename="test_tab_template_source_unmodified.mscz"
         )
     )
@@ -635,7 +609,7 @@ def test_source_score_state_unmodified():
 # triplets)
 # ---------------------------------------------------------
 
-FULL_SONG_PATH = "The Christmas Song (notation only).mscz"
+FULL_SONG_PATH = str(fixture_path("The Christmas Song (notation only).mscz"))
 
 
 def _tuplet_aware_measure_duration(measure_element):
@@ -725,7 +699,7 @@ def test_full_song_every_measure_duration_correct():
     output_path, applied, skipped, exceptions = (
         generate_tab_from_template(
             p, A_MODAL_SAWMILL, staff_used, TEMPLATE_PATH,
-            "output", service,
+            str(new_output_dir()), service,
             filename="test_tab_template_full_song.mscz"
         )
     )
@@ -780,19 +754,9 @@ def test_full_song_every_measure_duration_correct():
 
             ms_string = int(note.find("{*}string").text)
 
-            # BO-63 -- the 5th string (MuseScore string 4) does
-            # NOT follow the "3 - ms_string" reversal at all (see
-            # score_generator.py's own BO-63 comment); it's
-            # tuning.notes[0], always played open (fret 0).
-            if ms_string == 4:
+            fretboard_string_index = 3 - ms_string
 
-                computed = A_MODAL_SAWMILL.notes[0] + fret
-
-            else:
-
-                fretboard_string_index = 3 - ms_string
-
-                computed = open_notes[fretboard_string_index] + fret
+            computed = open_notes[fretboard_string_index] + fret
 
             assert computed == pitch
 
@@ -832,7 +796,7 @@ def test_tuplet_markers_correctly_emitted():
     output_path, applied, skipped, exceptions = (
         generate_tab_from_template(
             p, A_MODAL_SAWMILL, staff_used, TEMPLATE_PATH,
-            "output", service,
+            str(new_output_dir()), service,
             filename="test_tab_template_tuplet_markers.mscz"
         )
     )
@@ -1076,7 +1040,7 @@ def test_lyrics_element_order_within_chord():
 
 def _generate_full_song(filename):
 
-    p = MuseScoreFile("The Christmas Song (notation only).mscz")
+    p = MuseScoreFile(str(fixture_path("The Christmas Song (notation only).mscz")))
 
     p.open()
 
@@ -1093,7 +1057,7 @@ def _generate_full_song(filename):
     output_path, applied, skipped, exceptions = (
         generate_tab_from_template(
             p, A_MODAL_SAWMILL, staff_used, TEMPLATE_PATH,
-            "output", service, filename=filename
+            str(new_output_dir()), service, filename=filename
         )
     )
 
