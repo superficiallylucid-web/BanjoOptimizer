@@ -519,6 +519,16 @@ CHORD_QUALITIES = {
     "7#5": {
         "intervals": [0, 4, 8, 10],
         "display": "7#5"
+    },
+
+    # BO-167 -- major 6th: root, major 3rd, perfect 5th, major
+    # 6th (9 semitones above the root). Confirmed real via direct
+    # C6 investigation (BO-167): prior to this entry, chord_tones()
+    # returned None for it, so no FD was ever generated at all --
+    # same gap shape as "o7"/"7#5" above (BO-121), same fix.
+    "6": {
+        "intervals": [0, 4, 7, 9],
+        "display": "6"
     }
 
 }
@@ -877,6 +887,14 @@ QUALITY_CODE_TO_DISPLAY_NAME = {
     # checked first and independently.
     "o7": "dim7",
     "7#5": "7#5",
+    # BO-167 -- matches CHORD_QUALITIES' own new "6" entry above,
+    # same reasoning as the "o7"/"7#5" pair BO-121 added: this
+    # second, separate lookup table gates
+    # _select_chord_shape_for_harmony()'s own earliest return
+    # independently of CHORD_QUALITIES, so it needs its own entry
+    # too -- confirmed necessary via direct real-pipeline tracing
+    # during BO-167's own C6 investigation.
+    "6": "6",
 }
 
 

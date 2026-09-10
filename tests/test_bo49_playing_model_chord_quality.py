@@ -293,7 +293,27 @@ def test_playing_model_distinguishes_what_awkwardness_alone_cannot():
     # chord_fd_quality distinguishes these two tunings by more
     # than avg_awkwardness alone does, which the two assertions
     # below still directly demonstrate.
-    assert old_g.avg_awkwardness == 0.2
+    #
+    # Updated 0.1951219512195122 (from a stale 0.2) -- BO-167
+    # (added the previously-unsupported "6" chord quality)
+    # genuinely changed this value, confirmed directly: this song
+    # contains a real D6 chord (measure 72) that, before BO-167,
+    # got no shape at all (quality_code "6" was unrecognized) and
+    # was silently skipped by this exact loop's own `if shape is
+    # None: continue` (optimizer.py) -- never counted in
+    # total_chord_onsets at all. BO-167 correctly gives it a real
+    # shape now ("0445", working_fret 4, confirmed directly), which
+    # is counted going forward. Confirmed via direct instrumentation
+    # of this exact computation: awkwardness_sum is unchanged at
+    # 8.0 (D6's own shape contributes 0 awkwardness -- its
+    # working_fret doesn't exceed WORKING_FRET_COMFORT_CEILING);
+    # only the denominator shifts, from 40 (D6 excluded) to 41 (D6
+    # included) -- 8.0/40 = 0.2 (the old, stale value) and
+    # 8.0/41 = 0.1951219512195122 (the new, correct one). This is
+    # the intended, correct consequence of BO-167's own fix, not a
+    # regression -- no other chord's own shape or contribution
+    # changed.
+    assert old_g.avg_awkwardness == 0.1951219512195122
 
     # Updated 0.0 (from a stale 0.08571428571428572) -- BO-131.11
     # (Rule A/B joint chord/melody selection) genuinely improved
@@ -304,7 +324,27 @@ def test_playing_model_distinguishes_what_awkwardness_alone_cannot():
     # consequence of that change, not a regression -- the old
     # value predates BO-131.11 and is no longer what this
     # codebase actually produces.
-    assert open_c.avg_awkwardness == 0.0
+    #
+    # Updated again to 0.10810810810810811 (from that same 0.0)
+    # -- BO-167 (added the previously-unsupported "6" chord
+    # quality). Same root cause and same confirmation method as
+    # the old_g update above: this song's real D6 chord (measure
+    # 72) previously got no shape in Open C either (same "6"
+    # quality gap, tuning-independent), so it was excluded from
+    # this average entirely; BO-167 gives it a real shape now, and
+    # that shape's own working_fret genuinely exceeds
+    # WORKING_FRET_COMFORT_CEILING in this tuning specifically
+    # (unlike in Old G, where D6's shape happens to contribute 0
+    # awkwardness) -- confirmed directly: toggling "6" in/out of
+    # music.CHORD_QUALITIES / QUALITY_CODE_TO_DISPLAY_NAME at
+    # runtime, with no other change, reproduces exactly 0.0 (old)
+    # and 0.10810810810810811 (new) via this exact TuningAnalyzer
+    # path. Intended, correct consequence of BO-167's own fix, not
+    # a regression -- BO-131.11's own finding above (every OTHER
+    # chord in Open C already at working_fret <= 7) still holds;
+    # D6 is a new, additional chord this average didn't include
+    # before.
+    assert open_c.avg_awkwardness == 0.10810810810810811
 
     assert old_g.avg_awkwardness != open_c.avg_awkwardness
 

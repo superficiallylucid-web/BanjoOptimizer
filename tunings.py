@@ -81,7 +81,7 @@ def get_tunings():
                 "D major": 30,
                 "E minor": 5
             },
-            base_tuning="Double C (gCGCD)",
+            base_tuning="gCGCD",
             capo=2,
             fifth_string_note="A"
         ),
@@ -95,7 +95,10 @@ def get_tunings():
             key_strengths={
                 "E minor": 14,
                 "A minor": 12
-            }
+            },
+            base_tuning="gDGCD",
+            capo=2,
+            fifth_string_note="A"
         ),
 
         "G Modal Sawmill": Tuning(
@@ -153,7 +156,10 @@ def get_tunings():
             popularity=3,
             key_strengths={
                 "A major": 15
-            }
+            },
+            base_tuning="gDGBD",
+            capo=2,
+            fifth_string_note="A"
         ),
 
         "A Minor": Tuning(
@@ -164,21 +170,15 @@ def get_tunings():
             popularity=3,
             key_strengths={
                 "A minor": 15
-            }
+            },
+            base_tuning="gDGBbD",
+            capo=2,
+            fifth_string_note="A"
         ),
 
         # =====================================================
         # Historical tunings
         # =====================================================
-
-        "Triple D Darling Cora": Tuning(
-            name="Triple D Darling Cora",
-            symbol="f#DADD",
-            notes=[66, 50, 57, 62, 62],
-            category="historical",
-            popularity=1,
-            key_strengths={}
-        ),
 
         "Minstrel": Tuning(
             name="Minstrel",

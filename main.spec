@@ -96,6 +96,13 @@ exe = EXE(
     codesign_identity=None,
     entitlements_file=None,
     contents_directory='.',
+    # BO-162 -- icon shown on the .exe itself and any shortcut to
+    # it. Confirmed directly: the uploaded file is a genuinely
+    # well-formed .ico (verified via PIL and by manually parsing
+    # its own internal directory -- 10 real size variants, 256px
+    # down to 16px, exactly the standard Windows icon set), so no
+    # conversion was needed.
+    icon='BanjoOptimizer.ico',
 )
 
 coll = COLLECT(

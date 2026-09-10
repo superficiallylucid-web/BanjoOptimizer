@@ -2,6 +2,7 @@ from pathlib import Path
 import sys
 import os
 import argparse
+import json
 
 from output import output, clear_output, create_run_folder
 
@@ -183,9 +184,156 @@ def _notes_to_symbol(notes):
     return fifth_name + rest
 
 
+def resolve_project_folder():
+    """
+    BO-160 -- factored out of run_optimizer() (where this exact
+    sys.frozen logic previously lived inline, added back in
+    BO-153) so it can also be called before any optimization run
+    happens at all. Specifically needed by the GUI's own Settings
+    dialog (BO-160), which has to resolve this same path to
+    find/write the settings file -- independent of, and prior to,
+    ever calling run_optimizer() itself. run_optimizer()'s own
+    project_folder parameter is unchanged; when not given
+    explicitly, it now simply calls this instead of repeating the
+    same three lines inline.
+    """
+
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).parent
+
+    return Path(__file__).parent
+
+
+def _settings_path(project_folder):
+    return project_folder / "banjo_optimizer_settings.json"
+
+
+def load_settings(project_folder=None):
+    """
+    BO-160 -- returns the saved settings dict (currently just
+    "scores_folder" / "output_folder", each an optional string
+    path), or an empty dict if no settings file exists yet, or if
+    it exists but is genuinely unreadable/corrupted. Deliberately
+    never raises: a missing or bad settings file should never be
+    able to prevent the app from starting or running -- it should
+    just behave as though nothing was ever configured, falling
+    back to this application's existing, ordinary defaults.
+    """
+
+    if project_folder is None:
+        project_folder = resolve_project_folder()
+
+    path = _settings_path(project_folder)
+
+    if not path.exists():
+        return {}
+
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError, UnicodeDecodeError):
+        return {}
+
+
+def save_settings(settings, project_folder=None):
+    """
+    BO-160 -- writes the given dict as the saved settings file,
+    replacing it outright (not merged with whatever was there
+    before -- the caller, the GUI's own Settings dialog, is
+    responsible for including every key it wants kept, same as
+    every other file-writing convention already used throughout
+    this codebase: no silent partial updates).
+    """
+
+    if project_folder is None:
+        project_folder = resolve_project_folder()
+
+    path = _settings_path(project_folder)
+
+    path.write_text(json.dumps(settings, indent=2), encoding="utf-8")
+
+
+def compute_sounded_tuning(tuning_symbol, capo=None, fifth_string=None):
+    """
+    BO-165 -- extracted from run_optimizer()'s own REQUESTED_TUNING
+    construction (BO-163), where this exact logic previously lived
+    inline. Factored out, with zero behavior change (confirmed via
+    byte-identical CLI verification during this change), so it can
+    be called independently of run_optimizer() itself -- which
+    requires a real score file and runs the full analysis/scoring
+    pipeline, making it unusable for a lightweight GUI live-preview
+    (BO-165's own "sounded tuning" display) that needs to update on
+    every capo/5th-string change with no score involved at all.
+
+    Returns (sounded_notes, sounded_symbol, capo_value) -- the same
+    three pieces run_optimizer() itself needs to build its
+    REQUESTED_TUNING (below); capo_value is capo if given, else 0
+    (same default run_optimizer() always used).
+
+    Raises ValueError on an unparseable tuning_symbol or
+    fifth_string, or a capo outside 1-5 -- identical error
+    conditions/messages run_optimizer() itself always raised
+    for these, since this function now IS that logic.
+    """
+
+    _open_notes = _parse_tuning_symbol(tuning_symbol)
+
+    if _open_notes is None:
+
+        raise ValueError(
+            f"Could not parse --tuning {tuning_symbol!r} -- "
+            f"expected a 5-character-ish symbol like 'gDGBD' "
+            f"(5th string, then strings 1-4, each optionally "
+            f"followed by '#' or 'b')."
+        )
+
+    if capo is not None and not (1 <= capo <= 5):
+
+        raise ValueError("--capo must be between 1 and 5.")
+
+    _capo_value = capo if capo is not None else 0
+
+    # Capo shifts strings 1-4 ONLY (indices 1-4 of notes) --
+    # never the 5th string (index 0), confirmed directly as a
+    # real-world, physical fact earlier in this project.
+    _sounded_notes = [_open_notes[0]] + [
+        note + _capo_value for note in _open_notes[1:]
+    ]
+
+    # BO-163 -- fifth_string: an independent 5th-string
+    # override, applied on top of the capo-only shift above.
+    # Reuses _parse_tuning_symbol() itself for the letter-to-
+    # pitch parsing (not a duplicate parser): a 5-character
+    # symbol is built where only the first character (the
+    # 5th-string token the caller actually gave) matters --
+    # the trailing "CGCD" is arbitrary, known-valid padding
+    # (Double C's own real strings 1-4) purely because
+    # _parse_tuning_symbol() always parses all 5 tokens
+    # together; only its result's index 0 is ever used here.
+    if fifth_string is not None:
+
+        _fifth_string_notes = _parse_tuning_symbol(
+            fifth_string + "CGCD"
+        )
+
+        if _fifth_string_notes is None:
+
+            raise ValueError(
+                f"Could not parse 5th string "
+                f"{fifth_string!r} -- expected a single note "
+                f"letter like 'A' or 'F#'."
+            )
+
+        _sounded_notes[0] = _fifth_string_notes[0]
+
+    _sounded_symbol = _notes_to_symbol(_sounded_notes)
+
+    return _sounded_notes, _sounded_symbol, _capo_value
+
+
 def run_optimizer(
     score_filename=None, score_path=None, tuning_symbol=None,
-    capo=None, alternatives=0, num_tunings=3, project_folder=None
+    capo=None, alternatives=0, num_tunings=3, project_folder=None,
+    scores_folder=None, output_folder=None, fifth_string=None
 ):
     """
     BO-153 -- the application's real entry point, extracted from
@@ -252,6 +400,48 @@ def run_optimizer(
     untouched here and still fully available to CLI callers via
     --alternatives.
 
+    BO-160 -- scores_folder / output_folder (new): explicit,
+    per-call overrides for where input scores are looked up and
+    where generated output is written, taking precedence over any
+    saved default (see load_settings() above) when given, which
+    in turn takes precedence over the plain
+    project_folder/scores and project_folder/output this
+    application always fell back to before BO-160. This
+    resolution order (explicit call > saved setting > original
+    hardcoded default) is deliberately the same shape
+    project_folder itself already used. The CLI's own new
+    --scores-folder/--output-folder flags (BO-160) are one-off
+    overrides only, same as --score always was -- they do not
+    themselves save anything; saving a new default only happens
+    via the GUI's own Settings dialog calling save_settings()
+    directly.
+
+    BO-163 -- fifth_string (new): an independent, explicit
+    override for the 5th string's sounded pitch when tuning_symbol
+    is also given, only meaningful alongside a specific tuning
+    (same requirement shape as capo -- ignored/irrelevant without
+    tuning_symbol, since there is no "requested tuning" for it to
+    apply to). None (the default) means genuinely unchanged: the
+    5th string keeps the base tuning's own open pitch regardless
+    of capo, matching this function's prior, only behavior.
+    Deliberately NOT derived from capo by any formula (e.g. NOT
+    "base 5th + capo") -- confirmed directly, during this
+    feature's own investigation, against three real reference
+    tunings that a capo-based formula cannot reproduce:
+        Double C + capo 2 + 5th "A"  -> aDADE (matches the real,
+            named "Double D" built-in tuning exactly)
+        C Standard + capo 5 + 5th "A" -> aFCEG (naively shifting
+            C Standard's own open 5th, g, by capo 5 would give
+            "C", not "A" -- proving no formula linking the two)
+        Open G + capo 3 + 5th "F" -> fFBbDF (the 5th string here
+            is LOWERED from the base's own open g to f -- a
+            capo can only ever raise a pitch, so this result is
+            only reachable by treating the 5th string as fully
+            independent)
+    Reuses _parse_tuning_symbol() itself for the actual letter-to-
+    pitch parsing (not a duplicate parser) -- see the inline
+    comment where it's used, below, for exactly how.
+
     Returns a dict:
         {
             "run_folder": Path,
@@ -309,31 +499,14 @@ def run_optimizer(
 
     if tuning_symbol is not None:
 
-        _open_notes = _parse_tuning_symbol(tuning_symbol)
-
-        if _open_notes is None:
-
-            raise ValueError(
-                f"Could not parse --tuning {tuning_symbol!r} -- "
-                f"expected a 5-character-ish symbol like 'gDGBD' "
-                f"(5th string, then strings 1-4, each optionally "
-                f"followed by '#' or 'b')."
-            )
-
-        if capo is not None and not (1 <= capo <= 5):
-
-            raise ValueError("--capo must be between 1 and 5.")
-
-        _capo_value = capo if capo is not None else 0
-
-        # Capo shifts strings 1-4 ONLY (indices 1-4 of notes) --
-        # never the 5th string (index 0), confirmed directly as a
-        # real-world, physical fact earlier in this project.
-        _sounded_notes = [_open_notes[0]] + [
-            note + _capo_value for note in _open_notes[1:]
-        ]
-
-        _sounded_symbol = _notes_to_symbol(_sounded_notes)
+        # BO-165 -- this entire block's own computation now lives
+        # in compute_sounded_tuning() (above), called here instead
+        # of duplicated inline. Zero behavior change (confirmed via
+        # byte-identical CLI verification) -- this is a pure
+        # extraction, not a new code path.
+        _sounded_notes, _sounded_symbol, _capo_value = (
+            compute_sounded_tuning(tuning_symbol, capo, fifth_string)
+        )
 
         # name includes the capo value (when given) so the generated
         # filename (built elsewhere from tuning.name and tuning.
@@ -353,7 +526,7 @@ def run_optimizer(
             key_strengths={},
             base_tuning=tuning_symbol,
             capo=_capo_value,
-            fifth_string_note=None
+            fifth_string_note=fifth_string
         )
 
     elif capo is not None:
@@ -362,10 +535,8 @@ def run_optimizer(
 
     if project_folder is not None:
         PROJECT_FOLDER = Path(project_folder)
-    elif getattr(sys, "frozen", False):
-        PROJECT_FOLDER = Path(sys.executable).parent
     else:
-        PROJECT_FOLDER = Path(__file__).parent
+        PROJECT_FOLDER = resolve_project_folder()
 
 
     class Tee:
@@ -398,8 +569,33 @@ def run_optimizer(
                 f.flush()
 
 
-    SCORES_FOLDER = PROJECT_FOLDER / "scores"
-    OUTPUT_FOLDER = PROJECT_FOLDER / "output"
+    # BO-160 -- resolution order: explicit per-call parameter >
+    # saved setting > original hardcoded default. Confirmed
+    # unaffected for every existing caller: the CLI never passes
+    # scores_folder/output_folder explicitly (its own new
+    # --scores-folder/--output-folder flags, see __main__ below,
+    # populate these same parameters, so they follow this same
+    # order too -- there's only one resolution path, not two),
+    # and load_settings() itself returns {} whenever no settings
+    # file has ever been saved, so .get(...) below is None and
+    # every existing call falls through to the exact same
+    # PROJECT_FOLDER / "scores" and PROJECT_FOLDER / "output"
+    # this application always used.
+    _settings = load_settings(PROJECT_FOLDER)
+
+    if scores_folder is not None:
+        SCORES_FOLDER = Path(scores_folder)
+    elif _settings.get("scores_folder"):
+        SCORES_FOLDER = Path(_settings["scores_folder"])
+    else:
+        SCORES_FOLDER = PROJECT_FOLDER / "scores"
+
+    if output_folder is not None:
+        OUTPUT_FOLDER = Path(output_folder)
+    elif _settings.get("output_folder"):
+        OUTPUT_FOLDER = Path(_settings["output_folder"])
+    else:
+        OUTPUT_FOLDER = PROJECT_FOLDER / "output"
     TAB_TEMPLATE_PATH = (
         PROJECT_FOLDER / "templates" / "TAB_linked_Treble_Example.mscz"
     )
@@ -1051,6 +1247,15 @@ if __name__ == "__main__":
         "--alternatives", type=int, default=0
     )
 
+    # BO-160 -- one-off, per-run overrides only, same convention
+    # as --score itself: neither of these saves anything. Saving
+    # a new default scores/output location happens only via the
+    # GUI's own Settings dialog, which calls save_settings()
+    # directly.
+    arg_parser.add_argument("--scores-folder", default=None)
+
+    arg_parser.add_argument("--output-folder", default=None)
+
     cli_args, _unused_remaining_args = (
         arg_parser.parse_known_args()
     )
@@ -1068,6 +1273,8 @@ if __name__ == "__main__":
             tuning_symbol=cli_args.tuning,
             capo=cli_args.capo,
             alternatives=cli_args.alternatives,
+            scores_folder=cli_args.scores_folder,
+            output_folder=cli_args.output_folder,
         )
 
     except ValueError as error:
