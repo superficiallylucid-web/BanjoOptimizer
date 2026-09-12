@@ -829,49 +829,6 @@ def _generate_eid():
     ).rstrip("=")
 
 
-def _is_octave_substituted(actual_pitch, source_pitch):
-    """
-    BO-168 -- True when actual_pitch is genuinely a different
-    octave of the same pitch class as source_pitch (a real
-    example: source Bb4/70, actual Bb3/58) -- confirmed by pitch-
-    class equality (difference is a nonzero multiple of 12) with
-    the two values not being identical outright (the overwhelming
-    majority, same-pitch case, must never be flagged). Deliberately
-    compares real MIDI pitches only, not string/fret: two
-    different positions can genuinely sound the same pitch (e.g.
-    an open string vs. a fretted unison elsewhere), and that must
-    NOT be treated as an octave change.
-    """
-
-    return (
-        actual_pitch != source_pitch
-        and (actual_pitch - source_pitch) % 12 == 0
-    )
-
-
-def _add_octave_substitution_color(note_element):
-    """
-    BO-168 -- marks a single TAB <Note> red
-    (<color r="255" g="0" b="4" a="255" />, the exact same values
-    already used by _set_fret_diagram_content() above for a red
-    FretDiagram, BO-21 -- reused verbatim) as a visual warning
-    that its written pitch is a different octave of the source
-    melody note's own actual pitch. Only ever colors the result,
-    never changes it -- the existing octave-selection algorithm
-    in fretboard.py is entirely unaffected by this.
-    """
-
-    color_element = ET.SubElement(note_element, "color")
-
-    color_element.set("r", "255")
-
-    color_element.set("g", "0")
-
-    color_element.set("b", "4")
-
-    color_element.set("a", "255")
-
-
 def _set_fret_diagram_content(
     fret_diagram_element, values, is_exception=False
 ):
@@ -6554,20 +6511,6 @@ def generate_tab_from_template(
 
                         tab_note.append(tie_copy)
 
-                    # BO-168 -- marks this TAB note red when its
-                    # own actual pitch (position["pitch"], written
-                    # just below) is a different octave of this
-                    # exact pitch_index's own real source pitch.
-                    # Purely visual -- see _add_octave_substitution_
-                    # color()'s own docstring. Does not affect
-                    # which position was chosen.
-                    if _is_octave_substituted(
-                        position["pitch"],
-                        event["all_pitches"][pitch_index]
-                    ):
-
-                        _add_octave_substitution_color(tab_note)
-
                     # BO-133.5-FOLLOWUP -- position["pitch"] is
                     # the ACTUAL pitch used, which may differ
                     # from event["all_pitches"][pitch_index] (the
@@ -6638,20 +6581,6 @@ def generate_tab_from_template(
                         tie_eid_el.text = _generate_eid()
 
                     tab_note.append(tie_copy)
-
-                # BO-168 -- marks this TAB note red when its own
-                # actual written pitch (midi, written just below)
-                # is a different octave of this event's own real
-                # source pitch (event["pitch"] -- set once,
-                # unconditionally, from the source XML, before any
-                # possible tie-inheritance overwrite of midi
-                # itself). Covers the tie-inheritance case where a
-                # single-note event can inherit an already octave-
-                # substituted pitch from a prior dyad's own
-                # resolved position.
-                if _is_octave_substituted(midi, event["pitch"]):
-
-                    _add_octave_substitution_color(tab_note)
 
                 ET.SubElement(tab_note, "pitch").text = str(midi)
 
