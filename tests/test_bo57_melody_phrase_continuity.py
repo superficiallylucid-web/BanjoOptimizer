@@ -344,24 +344,35 @@ def test_chord_anchored_song_unaffected():
 
         assert a4 == (69, 7, 1)
 
-        # BO-147.6 -- updated from the stale (67, 10, 2). BO-74's
-        # own preceding_chord_still_relevant gate (added after
-        # this value was first set here) correctly finds the
-        # intervening A4 at fret 7 already outside the preceding
-        # Cmaj7 shape's own hand-position span (9,12), so that
-        # chord's exact shape is no longer treated as a live
-        # reference for G4 -- confirmed directly, BO-147.5's own
-        # investigation: both the current and the pre-BO-147.4
-        # pipeline produce (67, 3, 0), and BO-147.4 itself plays
-        # no part in this note's own result (phrase_notes_played
-        # is 0 for every candidate here regardless; the deciding
-        # component is BO-145.5's own lower_fret_preference).
-        # This assertion still verifies this test's own real
-        # purpose: a close preceding chord anchor (Cmaj7, 1.0
-        # beat away) still suppresses phrase planning for this
-        # note -- fret 3 wins on ordinary chord-anchored
-        # tiebreaking, not via the phrase-lookahead mechanism.
-        assert g4 == (67, 3, 0)
+        # BO-174 -- updated from the stale (67, 3, 0). Direct
+        # investigation confirms preceding_chord_still_relevant is
+        # genuinely True here (previous_position's own fret 7 IS
+        # inside chord_hp_span([9, 7, 9, 8]) == (7, 10) -- the
+        # BO-147.6 comment's own claimed span of (9, 12) was
+        # already stale/incorrect before this change), but this
+        # exact pitch (G4/67) has ZERO positions within that
+        # Cmaj7 shape at all (confirmed directly via _fd_positions_
+        # for_pitch -- empty list): a genuine passing tone, not a
+        # chord tone. This is itself a real instance of BO-174's
+        # own root cause (a relevant-but-non-matching chord anchor
+        # was silently disabling hp_tiebreak via no_chord_anchor_
+        # at_all, even though hp_tiebreak has no relationship to
+        # whether the match holds) -- BO-174's fix now correctly
+        # re-enables hp_tiebreak here: of G4's own 4 real
+        # candidates (frets 17/10/5/3), none sit inside current_hp
+        # (7,10), so hp_tiebreak's own "movement" component (BO-
+        # 62's abs(fret - hp.low)) now decides -- fret 10 (movement
+        # 3) genuinely beats fret 3 (movement 4), correctly
+        # preferring the position closer to the hand's actual
+        # current location over a lower-but-farther jump. This
+        # assertion still verifies this test's own real purpose: a
+        # close preceding chord anchor (Cmaj7, 1.0 beat away)
+        # still suppresses phrase planning for this note (phrase_
+        # notes_played remains 0 here, unchanged) -- only the
+        # separate hp_tiebreak component, not phrase-lookahead,
+        # is what BO-174 changed.
+        assert g4 == (67, 10, 2)
+
 
         assert f4 == (65, 8, 2)
 

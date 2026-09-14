@@ -56,12 +56,15 @@ from PySide6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
     QLabel, QLineEdit, QPushButton, QRadioButton, QButtonGroup,
     QComboBox, QSpinBox, QTextEdit, QFileDialog,
-    QMessageBox, QGroupBox, QDialog
+    QMessageBox, QGroupBox, QDialog, QCheckBox
 )
 from PySide6.QtCore import Qt
 
 import main
 from tunings import get_tunings
+from fretboard import (
+    DEFAULT_MAX_FRET, MIN_ALLOWED_MAX_FRET, MAX_ALLOWED_MAX_FRET
+)
 
 # BO-160 -- was Path(__file__).parent, a separate, non-frozen-
 # aware resolution from main.py's own (confirmed directly: this
@@ -128,7 +131,7 @@ class BanjoOptimizerWindow(QWidget):
         tuning_group = QGroupBox("Tuning")
         tuning_layout = QGridLayout(tuning_group)
 
-        self.recommend_radio = QRadioButton("Recommended Tuning")
+        self.recommend_radio = QRadioButton("Recommended tuning")
         self.recommend_radio.setChecked(True)
 
         # 11 is the real, total number of "modern" tunings the
@@ -276,6 +279,67 @@ class BanjoOptimizerWindow(QWidget):
             self._update_sounded_tuning_display
         )
 
+        # BO-171 -- output key selection. Deliberately NOT gated
+        # by self.specific_radio's own toggle (unlike every other
+        # control above) -- output key is orthogonal to which
+        # tuning is used, applying equally whether Recommend or
+        # a specific tuning is selected, so it's always enabled.
+        # "Keep input key" (index 0, mapped to None below) is the
+        # real, explicit default -- run_optimizer()'s own
+        # output_key=None behavior is a complete no-op, reproducing
+        # this application's prior, only behavior exactly. The
+        # other 12 options are main.PITCH_CLASS_TO_NOTE_NAME
+        # itself (same reuse as the 5th-string control above), so
+        # this can never drift out of sync with what
+        # transposition.semitones_for_output_key() actually
+        # accepts. Does NOT include "Best key" -- that requires a
+        # separate, not-yet-designed scoring architecture (BO-171's
+        # own investigation, Part 4) and is out of scope here.
+        output_key_label = QLabel("Output key:")
+        output_key_tooltip = (
+            "Transposes the generated score to a specific key, "
+            "regardless of what key the input score was written "
+            "in. 'Keep input key' (the default) leaves the score "
+            "untransposed, exactly as before this control existed."
+        )
+        output_key_label.setToolTip(output_key_tooltip)
+
+        self.output_key_combo = QComboBox()
+        self.output_key_combo.addItem(
+            "Keep input key", userData=None
+        )
+        for note_name in main.PITCH_CLASS_TO_NOTE_NAME:
+            self.output_key_combo.addItem(
+                note_name, userData=note_name
+            )
+        self.output_key_combo.setToolTip(output_key_tooltip)
+
+        # BO-178 -- only affects Recommend mode (a specific
+        # tuning requested via the radio button above has no
+        # "other keys" to compare against -- see main.py's own
+        # `if any_key:` branch, only ever checked inside the
+        # REQUESTED_TUNING-is-None path). Off by default: same-
+        # key behavior, matching every run before this checkbox
+        # existed, is completely unaffected either way.
+        any_key_tooltip = (
+            "Recommend mode only: for each candidate tuning, "
+            "also tries the other keys that tuning is known to "
+            "sound good in, and recommends whichever key scores "
+            "best for that specific tuning -- which may differ "
+            "from the input score's own key, and may differ "
+            "between tunings. Off (default) evaluates every "
+            "tuning only in the input score's own key."
+        )
+
+        self.any_key_checkbox = QCheckBox(
+            "Any key (recommend best key per tuning)"
+        )
+        self.any_key_checkbox.setToolTip(any_key_tooltip)
+
+        self.recommend_radio.toggled.connect(
+            self.any_key_checkbox.setEnabled
+        )
+
         # BO-165 -- display-only: always the live result of Capo
         # tuning + Capo + 5th string (never the all-tunings picker
         # directly), computed via main.compute_sounded_tuning() --
@@ -293,15 +357,31 @@ class BanjoOptimizerWindow(QWidget):
         )
         tuning_layout.addWidget(self.num_tunings_spin, 1, 2)
 
-        tuning_layout.addWidget(self.specific_radio, 2, 0, 1, 2)
-        tuning_layout.addWidget(all_tuning_label, 3, 1)
-        tuning_layout.addWidget(self.all_tunings_combo, 3, 2)
-        tuning_layout.addWidget(capo_label, 4, 1)
-        tuning_layout.addWidget(self.capo_spin, 4, 2)
-        tuning_layout.addWidget(fifth_string_label, 5, 1)
-        tuning_layout.addWidget(self.fifth_string_combo, 5, 2)
-        tuning_layout.addWidget(sounded_tuning_label, 6, 1)
-        tuning_layout.addWidget(self.sounded_tuning_display, 6, 2)
+        # BO-178 -- moved here (directly under Number of tunings,
+        # its own fellow Recommend-mode-only option) per direct
+        # user feedback: its previous position, below the Output
+        # key control near the bottom of this grid, sat close
+        # enough to Use specific tuning's own controls to read as
+        # belonging to that mode instead -- it does not, and stays
+        # checkable/uncheckable independently of which radio is
+        # selected (main.py's own `if any_key:` branch already
+        # only ever consults it inside the Recommend-mode path;
+        # this is a display-only enable/disable, matching the
+        # exact pattern num_tunings_spin's own toggle just above
+        # already established, not a new mechanism).
+        tuning_layout.addWidget(self.any_key_checkbox, 2, 1, 1, 2)
+
+        tuning_layout.addWidget(self.specific_radio, 3, 0, 1, 2)
+        tuning_layout.addWidget(all_tuning_label, 4, 1)
+        tuning_layout.addWidget(self.all_tunings_combo, 4, 2)
+        tuning_layout.addWidget(capo_label, 5, 1)
+        tuning_layout.addWidget(self.capo_spin, 5, 2)
+        tuning_layout.addWidget(fifth_string_label, 6, 1)
+        tuning_layout.addWidget(self.fifth_string_combo, 6, 2)
+        tuning_layout.addWidget(sounded_tuning_label, 7, 1)
+        tuning_layout.addWidget(self.sounded_tuning_display, 7, 2)
+        tuning_layout.addWidget(output_key_label, 8, 1)
+        tuning_layout.addWidget(self.output_key_combo, 8, 2)
 
         # Initial state: populate the display with whatever the
         # default Capo tuning/capo/5th-string selections resolve
@@ -564,6 +644,8 @@ class BanjoOptimizerWindow(QWidget):
                 capo=capo,
                 num_tunings=num_tunings,
                 fifth_string=fifth_string,
+                output_key=self.output_key_combo.currentData(),
+                any_key=self.any_key_checkbox.isChecked(),
             )
         except ValueError as error:
             self.status_label.setText("Status: Error")
@@ -610,7 +692,20 @@ class BanjoOptimizerWindow(QWidget):
             for i, rec in enumerate(
                 score_result["recommendations"], start=1
             ):
-                lines.append(f"{i}. {rec.name} ({rec.symbol})")
+                # BO-178 -- recommended_key is only ever set in
+                # any-key mode, and only when this tuning's own
+                # best key genuinely differs from the input
+                # score's key -- omitted entirely in same-key
+                # mode (always None there) and for an any-key
+                # result whose own best key was the input key.
+                key_suffix = (
+                    f" [Key: {rec.recommended_key}]"
+                    if rec.recommended_key is not None
+                    else ""
+                )
+                lines.append(
+                    f"{i}. {rec.name} ({rec.symbol}){key_suffix}"
+                )
                 for advantage in rec.advantages:
                     lines.append(f"   - {advantage}")
 
@@ -663,6 +758,13 @@ class SettingsDialog(QDialog):
     saving means "use this application's original default" for
     that one, not "set it to blank" -- save_settings() only ever
     receives keys for fields that were genuinely filled in.
+
+    BO-177 -- also lets the user save their own instrument's
+    maximum playable fret ("fret ceiling"), the same persisted-
+    settings mechanism. Unlike the two folder fields, this one is
+    NOT optional/blank-means-default -- it's a bounded QSpinBox
+    (fretboard.MIN_ALLOWED_MAX_FRET to MAX_ALLOWED_MAX_FRET),
+    always has some valid value showing, and is always saved.
 
     Deliberately does not touch run_optimizer() or any in-flight
     optimization -- this dialog only ever reads/writes the
@@ -725,6 +827,24 @@ class SettingsDialog(QDialog):
 
         layout.addWidget(output_group)
 
+        fret_ceiling_group = QGroupBox(
+            "Maximum Playable Fret (your instrument's own neck)"
+        )
+        fret_ceiling_layout = QHBoxLayout(fret_ceiling_group)
+
+        self.fret_ceiling_spin = QSpinBox()
+        self.fret_ceiling_spin.setRange(
+            MIN_ALLOWED_MAX_FRET, MAX_ALLOWED_MAX_FRET
+        )
+        self.fret_ceiling_spin.setValue(
+            current.get("fret_ceiling", DEFAULT_MAX_FRET)
+        )
+
+        fret_ceiling_layout.addWidget(self.fret_ceiling_spin)
+        fret_ceiling_layout.addStretch()
+
+        layout.addWidget(fret_ceiling_group)
+
         button_layout = QHBoxLayout()
 
         save_button = QPushButton("Save")
@@ -763,6 +883,12 @@ class SettingsDialog(QDialog):
         output_text = self.output_line_edit.text().strip()
         if output_text:
             settings["output_folder"] = output_text
+
+        # BO-177 -- always saved, unlike the two folder fields
+        # above: the spin box always shows a valid value (never
+        # blank), so there's no "leave it to mean default" case
+        # to preserve here.
+        settings["fret_ceiling"] = self.fret_ceiling_spin.value()
 
         try:
             main.save_settings(settings, PROJECT_FOLDER)

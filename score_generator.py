@@ -87,7 +87,8 @@ from fretboard import (
 )
 
 from music import (
-    quality_code_to_display_name, pitch_name, midi_to_note_name
+    quality_code_to_display_name, pitch_name, midi_to_note_name,
+    pitch_class_to_tpc
 )
 
 from playing_model import _chord_working_fret
@@ -849,16 +850,18 @@ def _is_octave_substituted(actual_pitch, source_pitch):
     )
 
 
-def _add_octave_substitution_color(note_element):
+def _add_note_warning_color(note_element):
     """
-    BO-168 -- marks a single TAB <Note> red
-    (<color r="255" g="0" b="4" a="255" />, the exact same values
-    already used by _set_fret_diagram_content() above for a red
-    FretDiagram, BO-21 -- reused verbatim) as a visual warning
-    that its written pitch is a different octave of the source
-    melody note's own actual pitch. Only ever colors the result,
-    never changes it -- the existing octave-selection algorithm
-    in fretboard.py is entirely unaffected by this.
+    BO-168, generalized under BO-179 -- marks a single TAB
+    <Note> red (<color r="255" g="0" b="4" a="255" />) as a
+    visual warning. Originally built for, and still used for,
+    octave-substitution warnings (BO-168 -- a note's written
+    pitch is a different octave of the source melody's own real
+    pitch); BO-179 reuses this same, already-generic helper
+    (takes any note_element, no octave-specific logic of its
+    own) for a second, unrelated warning: a note whose own
+    position genuinely exceeds the user's own configured fret
+    ceiling. Only ever colors the result, never changes it.
     """
 
     color_element = ET.SubElement(note_element, "color")
@@ -1134,6 +1137,110 @@ def _preferred_melody_fret(onset_notes, tuning):
         return None
 
     return min(position["fret"] for position in positions)
+
+
+def _choose_onset_melody_fret_with_fd_coupling(
+    onset_note, tuning, chord_service, root_name, root_pc,
+    quality_code, quality_display, incoming_shape
+):
+    """
+    BO-175 (Part 2) -- for a chord whose harmony onset coincides
+    with a SINGLE melody note (the "same beat" case this task's
+    own investigation confirmed the coupling should be limited
+    to -- deliberately excludes the 2+-note onset case, which
+    keeps using _preferred_melody_fret()'s own existing BO-133.5
+    logic unmodified, and never touches box_notes/following_box_
+    notes at all, since that is BO-125/126/54's own subsequent-
+    note continuity machinery, explicitly out of scope here).
+
+    Enumerates every playable TAB position for onset_note's own
+    pitch (fretboard.find_positions(), unmodified), and for each
+    one, asks the EXISTING chord_service.get_shapes_for_exact_
+    melody_pitch() -- unmodified, the same call already used
+    below for the final shape selection -- what the best FD is
+    when that exact fret is preferred. No second, independent FD
+    generation or scoring system: every candidate's own #1-ranked
+    shape already reflects the complete existing priority chain
+    (voicing category -> exact melody-pitch containment ->
+    quality_score -> BO-22/33/39's own positional tiebreaks ->
+    _score_candidate(), now BO-175 Part 1's own corrected
+    weighting). Comparing across candidate frets then only needs
+    each one's own already-ranked #1 shape's (quality_score,
+    generator_score) pair -- the same lexicographic ordering
+    get_shapes_for_exact_melody_pitch() itself already uses
+    internally (BO-18's own architecture), so a genuinely better-
+    quality shape at one fret is never overridden by a merely-
+    more-playable one at another.
+
+    Returns the winning fret (an int), to be used exactly where
+    _preferred_melody_fret()'s own return value already is --
+    every downstream consumer (the final get_shapes_for_exact_
+    melody_pitch() call, the BO-125 reach-window calculation)
+    is completely unchanged; only where this one value comes
+    from differs. The melody TAB position itself needs no
+    separate pass-through: _choose_melody_position()'s own
+    existing fd_shape_values exact-inclusion priority already
+    picks whichever string/fret the resulting FD actually
+    contains, once that FD is the one written -- confirmed
+    directly against the real Aureolin case.
+
+    Returns None (falling back to the existing single-lowest-
+    fret behavior at this function's own call site) when no
+    playable position exists at all, matching _preferred_melody_
+    fret()'s own established "no positional preference" contract.
+    """
+
+    open_notes = tuning.notes[1:]
+
+    candidate_positions = find_positions(onset_note.midi, open_notes)
+
+    if not candidate_positions:
+
+        return None
+
+    candidate_frets = sorted(
+        {position["fret"] for position in candidate_positions}
+    )
+
+    best_fret = None
+
+    best_ranking_key = None
+
+    for candidate_fret in candidate_frets:
+
+        shapes = chord_service.get_shapes_for_exact_melody_pitch(
+            tuning,
+            root_name,
+            root_pc,
+            quality_code,
+            quality_display,
+            {onset_note.midi},
+            preferred_melody_fret=candidate_fret,
+            following_box_notes=None,
+            incoming_shape=incoming_shape
+        )
+
+        if not shapes:
+
+            continue
+
+        top_shape = shapes[0]
+
+        ranking_key = (
+            top_shape.voicing_quality_score,
+            top_shape.generator_score
+        )
+
+        if (
+            best_ranking_key is None
+            or ranking_key > best_ranking_key
+        ):
+
+            best_ranking_key = ranking_key
+
+            best_fret = candidate_fret
+
+    return best_fret
 
 
 def _melody_notes_at_harmony_onset(harmony, melody_notes):
@@ -1447,6 +1554,44 @@ def _select_chord_shape_for_harmony(
             onset_notes, tuning
         )
 
+        # BO-175 (Part 2) -- a SEPARATE value, deliberately never
+        # substituted for preferred_melody_fret itself: that
+        # value is also reused as BO-54's own hp_notes_played()
+        # continuity anchor for whatever subsequent melody exists
+        # in this chord's own box (box_notes, below) -- changing
+        # it would silently alter subsequent-note continuity
+        # behavior, explicitly out of this task's own scope. This
+        # value is used ONLY at the final shape-selection call
+        # below, and ONLY when box_notes is genuinely empty (no
+        # subsequent melody at all within this chord's own
+        # duration) -- the same-onset case this task's own
+        # investigation scoped the coupling to, with zero
+        # possible interaction with subsequent-note continuity
+        # since there is no subsequent note to be continuous
+        # with. When exactly one melody note shares this chord's
+        # own onset, the single lowest-fret default
+        # (preferred_melody_fret above) is replaced, for this one
+        # narrow purpose, by the coupled melody-position/FD
+        # evaluation: every one of this note's own playable
+        # positions is tried against the existing FD ranking
+        # machinery, and the fret whose own best resulting FD
+        # genuinely ranks highest wins -- not simply the lowest
+        # fret, which is exactly the root cause the Aureolin Dm/
+        # Double C case exposed (BO-175 Part 1). None (both when
+        # box_notes is non-empty, and whenever the coupling finds
+        # no playable position at all) reproduces the existing
+        # preferred_melody_fret value exactly, at the call site
+        # below.
+        onset_fd_coupled_melody_fret = (
+            _choose_onset_melody_fret_with_fd_coupling(
+                onset_notes[0], tuning, chord_service, root_name,
+                harmony.root_pc, harmony.quality_code,
+                quality_display, effective_incoming_shape
+            )
+            if len(onset_notes) == 1
+            else None
+        )
+
         if box_notes:
 
             # BO-125 -- replaces BO-123's fixed 2-note cap with a
@@ -1638,7 +1783,14 @@ def _select_chord_shape_for_harmony(
             harmony.quality_code,
             quality_display,
             melody_pitches,
-            preferred_melody_fret=preferred_melody_fret,
+            preferred_melody_fret=(
+                onset_fd_coupled_melody_fret
+                if (
+                    not box_notes
+                    and onset_fd_coupled_melody_fret is not None
+                )
+                else preferred_melody_fret
+            ),
             following_box_notes=following_box_notes,
             incoming_shape=effective_incoming_shape
         )
@@ -2479,7 +2631,7 @@ def _set_score_title_and_composer(
         text_content.text = lyricist
 
 
-def _add_tuning_text(staff_element, tuning):
+def _add_tuning_text(staff_element, tuning, output_key=None):
     """
     Add a clearly-labeled text line stating the actual tuning
     notation (tuning.symbol, e.g. "gDGBD") to the score's own
@@ -2558,17 +2710,50 @@ def _add_tuning_text(staff_element, tuning):
     # exactly as before BO-126 ever existed -- confirmed required
     # by test_bo26/test_bo53's own existing, already-validated
     # assertions against this exact string.
+    #
+    # BO-172 -- output_key: just the root note (e.g. "C"), the
+    # same convention as the generated filename (see this
+    # module's own filename-building code). Capo'd branch's own
+    # condition is deliberately left exactly as BO-172 originally
+    # wrote it (a bare truthiness check) -- this follow-up's own
+    # scope is the non-capo branch only; see that branch's own
+    # comment below for the "Unknown" guard this follow-up adds.
     if tuning.capo:
 
+        key_prefix = (
+            f"Key {output_key} | " if output_key else ""
+        )
+
         content_element.text = (
-            f"{tuning.symbol} (open: {tuning.base_tuning}, "
-            f"capo {tuning.capo})"
+            f"{key_prefix}{tuning.symbol} "
+            f"(open: {tuning.base_tuning}, capo {tuning.capo})"
         )
 
     else:
 
+        # BO-172 follow-up -- same key_prefix convention as the
+        # capo'd branch above, prepended in front of the existing
+        # "Banjo tuning: ..." wording (kept verbatim, unlike the
+        # capo'd branch, which never had it). "Unknown" -- parser.
+        # MuseScoreFile's own default when key estimation never
+        # populated a real key (confirmed directly, both in real
+        # production use -- a source with no <KeySig> element at
+        # all -- and in test_bo26/test_bo53's own existing setup,
+        # which never calls estimate_key() -- is truthy, not
+        # None/"", so it must be explicitly excluded here rather
+        # than relying on a bare truthiness check, unlike the
+        # capo'd branch above) is treated as no usable output key,
+        # preserving test_bo26/test_bo53's own existing,
+        # already-validated exact-string assertions unchanged.
+        key_prefix = (
+            f"Key {output_key} | "
+            if output_key and output_key != "Unknown"
+            else ""
+        )
+
         content_element.text = (
-            f"Banjo tuning: {tuning.symbol} ({tuning.name})"
+            f"{key_prefix}Banjo tuning: "
+            f"{tuning.symbol} ({tuning.name})"
         )
 
 
@@ -2831,6 +3016,22 @@ def _extract_staff_events(
     pending_tuplet_element = None
 
     current_event = None
+
+    # BO-173 -- a running index into score_file.notes (the flat,
+    # already-transposed "old format" dict list -- see BO-171's
+    # transpose_score(), which mutates note["midi"] in place).
+    # Confirmed directly (real Aureolin data, 270 notes): the Nth
+    # <Note><pitch> element THIS function encounters (both walk
+    # the same staff_number, confirmed at main.py's own call
+    # sites) corresponds exactly to score_file.notes[N] -- both
+    # are built by the same underlying read_staff_notes() walk,
+    # appending to both lists together, one <Note> at a time.
+    # Used below so the melody pitch actually written into the
+    # generated TAB staff is the correct, already-transposed
+    # value -- not re-parsed from this raw, untransposed XML
+    # element directly (the same class of defect BO-173's own
+    # investigation already found and fixed for chord symbols).
+    note_position = 0
 
     for element in score_file.root.iter():
 
@@ -3172,17 +3373,48 @@ def _extract_staff_events(
 
             tpc_element = element.find("{*}tpc")
 
+            # BO-173 -- source_midi/transposed_midi computed once,
+            # outside either branch below, so both the pitch
+            # handling and the (independent, separately-checked --
+            # matching this block's own pre-existing, non-nested
+            # "if pitch: ... / if tpc: ..." structure, not an
+            # assumption that one implies the other) tpc handling
+            # can both use them, without a NameError when a real
+            # (if unusual) <Note> genuinely has one but not the
+            # other. None when pitch_element itself is None -- tpc
+            # then falls back to its own original, unmodified
+            # value below, since without a corresponding <pitch>
+            # there's no way to know which score_file.notes[N]
+            # entry (if any) this tpc would even correspond to.
+            source_midi = None
+
+            transposed_midi = None
+
             if pitch_element is not None:
 
-                current_event["pitch"] = int(
-                    pitch_element.text
+                # The value actually written to current_event[
+                # "pitch"] always comes from score_file.notes[
+                # note_position] (see note_position's own comment
+                # above): the already-correct, already-transposed
+                # value (or, when "Keep input key" is in effect,
+                # identical to this raw value -- transpose_score()
+                # is never even called, so score_file.notes was
+                # never touched).
+                source_midi = int(pitch_element.text)
+
+                transposed_midi = (
+                    score_file.notes[note_position]["midi"]
                 )
+
+                note_position += 1
+
+                current_event["pitch"] = transposed_midi
 
                 # BO-133.5 -- additive only; every existing
                 # single-note-melody consumer of event["pitch"]
                 # above is completely unaffected by this line.
                 current_event["all_pitches"].append(
-                    int(pitch_element.text)
+                    transposed_midi
                 )
 
                 # BO-138 -- a new, empty, per-note list, kept
@@ -3196,12 +3428,40 @@ def _extract_staff_events(
 
             if tpc_element is not None:
 
-                current_event["tpc"] = int(tpc_element.text)
+                # BO-173 -- only recompute tpc when this exact
+                # note's own pitch genuinely changed (source_midi
+                # != transposed_midi) -- "Keep input key" (where
+                # they're always equal) must keep the source's own
+                # tpc verbatim, preserving whatever enharmonic
+                # spelling (e.g. a genuine Bb vs A#) the original
+                # score used, unchanged. Only recomputed via
+                # music.pitch_class_to_tpc() (this project's own
+                # sharp-preferred convention, reused rather than
+                # inventing a second spelling rule) when
+                # transposition genuinely occurred; also unchanged
+                # when pitch_element was None above (nothing to
+                # compare against).
+                if (
+                    transposed_midi is not None
+                    and transposed_midi != source_midi
+                ):
+
+                    current_event["tpc"] = pitch_class_to_tpc(
+                        transposed_midi
+                    )
+
+                else:
+
+                    current_event["tpc"] = int(tpc_element.text)
 
                 # BO-133.5 -- additive only, same reasoning as
-                # all_pitches above.
+                # all_pitches above. Appends the same, possibly-
+                # recomputed value just assigned above (BO-173) --
+                # not a second, independent read of tpc_element,
+                # which would silently re-introduce the stale
+                # value this fix exists to remove.
                 current_event["all_tpcs"].append(
-                    int(tpc_element.text)
+                    current_event["tpc"]
                 )
 
             for note_child in element:
@@ -3440,7 +3700,7 @@ def _choose_melody_position(
     preceding_chord_shape_values=None, second_previous_position=None,
     melody_phrase_notes=None, current_hp=None,
     expected_attack_role=None, hp_is_earned=True,
-    preceding_chord_shape_elapsed_beats=None
+    preceding_chord_shape_elapsed_beats=None, slur_from_string=None
 ):
     """
     BO-24/BO-25/BO-30: choose a string/fret position for one
@@ -3618,6 +3878,38 @@ def _choose_melody_position(
     if not positions:
 
         return None
+
+    # BO-176 -- a slur physically requires both connected notes
+    # to be played on the SAME string (hammer-on/pull-off/slide --
+    # there is no way to slur across strings on a fretted
+    # instrument). This is checked first, before even fd_shape_
+    # values' own exact-inclusion fast path below, and returns
+    # immediately when satisfied -- per explicit instruction, this
+    # constraint outweighs every other consideration in this
+    # function, including an exact chord-shape match. slur_from_
+    # string is the immediately preceding melody note's own
+    # ACTUAL chosen string (the caller is responsible for passing
+    # the real result of that note's own _choose_melody_position()
+    # call, never a recomputed or assumed value -- the same
+    # established convention previous_position already uses).
+    # Only ever activates when this exact pitch is genuinely
+    # reachable on that string at all (a real candidate exists) --
+    # if not, this falls through completely unchanged to every
+    # existing mechanism below, since forcing an unreachable
+    # string would be worse than not forcing one at all.
+    if slur_from_string is not None:
+
+        slurred_candidate = next(
+            (
+                position for position in positions
+                if position["string"] == slur_from_string
+            ),
+            None
+        )
+
+        if slurred_candidate is not None:
+
+            return slurred_candidate
 
     # BO-88 -- the clawhammer attack-sequence filter narrows the
     # candidate pool BEFORE any scoring/sort logic below sees it
@@ -3919,6 +4211,21 @@ def _choose_melody_position(
         ) else set()
     )
 
+    # BO-174 -- whether the preceding chord shape (if any, and if
+    # still relevant -- both already folded into preceding_fd_
+    # matches above) actually provides a position for THIS exact
+    # melody pitch, reusing that same set rather than a second,
+    # independent definition of "matches" (per this investigation's
+    # own explicit instruction). A preceding chord can be relevant
+    # (recent, HP-span-compatible) yet simply not contain this
+    # pitch at all -- a genuine passing tone -- and BO-174's own
+    # root cause was exactly that: such a note was still treated as
+    # "anchored" by no_chord_anchor_at_all below purely because
+    # preceding_chord_shape_values was non-None, silently
+    # disabling hp_tiebreak/within_hp_offset even though this
+    # specific pitch has no real relationship to that chord shape.
+    preceding_chord_anchor_matches_pitch = bool(preceding_fd_matches)
+
     def _melody_phrase_notes_played(candidate_fret):
         """
         BO-57 -- how many of this note's own upcoming melody
@@ -4185,10 +4492,44 @@ def _choose_melody_position(
         # -score. Chord-anchored songs are unaffected: this
         # condition is identical to phrase_notes_played's own, so
         # it's never true for them.
+        # BO-174 -- "preceding_chord_shape_values is None" widened
+        # to distinguish "genuinely no anchor" from "an anchor
+        # exists and is still relevant, but doesn't actually
+        # contain this pitch" (a genuine passing tone). Uses
+        # preceding_chord_anchor_matches_pitch, computed once
+        # above from the existing preceding_fd_matches set -- no
+        # second, independent match definition introduced.
+        #
+        # Deliberately does NOT fold "not preceding_chord_still_
+        # relevant" into this same or-clause: that would also flip
+        # no_chord_anchor_at_all for the genuinely-irrelevant case
+        # (hand already left the chord's own HP span) -- confirmed
+        # a real regression against BO-57's own chord-anchored-
+        # song test (Cmaj7/G4): that case must keep its EXISTING
+        # no_chord_anchor_at_all=False result unchanged (hp_
+        # tiebreak/within_hp_offset were never the deciding
+        # mechanism there -- lower_fret_preference already, always
+        # correctly wins fret 3 -- so nothing about that outcome
+        # should move). preceding_chord_anchor_matches_pitch is
+        # gated by preceding_chord_still_relevant already (see its
+        # own comment above), so the "genuinely irrelevant" case
+        # is only reached inside the new or-clause when explicitly
+        # required by preceding_chord_still_relevant being True.
+        #
+        # When preceding_chord_shape_values genuinely matches (the
+        # historical BO-25/57/60/62/123 case this gate has always
+        # correctly served), this condition is identical to the
+        # original -- completely unchanged.
         no_chord_anchor_at_all = (
             working_fret_anchor is None
             and following_working_fret_anchor is None
-            and preceding_chord_shape_values is None
+            and (
+                preceding_chord_shape_values is None
+                or (
+                    preceding_chord_still_relevant
+                    and not preceding_chord_anchor_matches_pitch
+                )
+            )
         )
 
         # BO-123 -- simplified per direct instruction: extensive
@@ -4511,18 +4852,40 @@ def generate_tab_from_template(
     # harmony() (the exact same selection _apply_chord_shapes()
     # itself uses below, factored out for this reason) as a
     # read-only query; nothing is written to the output yet.
-
-    saved_harmonies = score_file.harmonies
-
-    saved_score_harmonies = score_file.score.harmonies
-
-    score_file.read_harmonies(staff_number)
-
+    #
+    # BO-171 -- previously re-parsed harmonies fresh from the
+    # raw source XML here (score_file.read_harmonies(staff_
+    # number), saving/restoring score_file.harmonies around the
+    # call), even though score_file.harmonies already holds the
+    # exact same data -- main.py's own run_optimizer() already
+    # calls score.read_harmonies(staff_used) with this identical
+    # staff_number before ever reaching this function. That
+    # re-parse was harmless before BO-171 (it reproduced
+    # identical Harmony objects either way), but became a real
+    # defect once output-key transposition exists: it silently
+    # discarded the in-memory, already-transposed Harmony objects
+    # (root_pc/quality_code/symbol) in favor of fresh ones rebuilt
+    # from the untransposed source XML, so chord-shape/FD
+    # selection below would have used the WRONG chord root/
+    # quality whenever an output key was requested -- not merely
+    # a stale report string. Using score_file.harmonies directly
+    # (confirmed identical to what the re-parse always produced,
+    # for the "Keep input key" case) fixes this while reproducing
+    # that exact prior behavior unchanged otherwise.
     staff_harmonies = list(score_file.harmonies)
 
-    score_file.harmonies = saved_harmonies
-
-    score_file.score.harmonies = saved_score_harmonies
+    # BO-173 -- a (measure, beat) -> Harmony lookup, so the
+    # generated <Harmony> XML symbol (written far below, in the
+    # main event loop) can be matched to its own already-
+    # transposed Harmony object -- reusing the exact same key
+    # convention chord_shape_by_position itself already
+    # establishes right below (measure/beat straight from the
+    # Harmony object, matching event["beat"] + measure_index + 1
+    # at the consuming end, confirmed already-working there).
+    harmony_by_position = {
+        (harmony.measure, harmony.beat): harmony
+        for harmony in staff_harmonies
+    }
 
     chord_shape_by_position = {}
 
@@ -4961,7 +5324,18 @@ def generate_tab_from_template(
         lyricist=score_file.score.lyricist
     )
 
-    _add_tuning_text(tab_staff, tuning)
+    # BO-172 -- passes score_file.key's own root note through,
+    # always (not conditionally on whether a BO-171 output key
+    # was actually requested) -- "Keep input key" still has a
+    # real, genuine key by this point, just an untransposed one;
+    # see _add_tuning_text()'s own docstring/comment for why this
+    # only affects the capo'd branch.
+    _add_tuning_text(
+        tab_staff, tuning,
+        output_key=(
+            score_file.key.split()[0] if score_file.key else None
+        )
+    )
 
     # ---- Rebuild the TAB staff's Measures from the source's
     # own events ----
@@ -5757,6 +6131,50 @@ def generate_tab_from_template(
                     event["harmony_element"]
                 )
 
+                # BO-173 -- rewrite this chord symbol's own root
+                # to match its already-transposed Harmony object
+                # (found via the same (measure, beat) position
+                # convention chord_shape_by_position itself
+                # already uses successfully, right below) --
+                # harmony_element above is the raw SOURCE XML
+                # element, untouched by BO-171's transposition, so
+                # its own <root> would otherwise still show the
+                # original, untransposed chord (this ticket's own
+                # root cause). Quality is intentionally left
+                # completely alone -- <name> already exactly
+                # matches Harmony.quality_code as-is (confirmed
+                # directly against real source XML), and quality
+                # itself is transposition-invariant, so nothing
+                # needs to change there at all. "Keep input key"
+                # is unaffected: harmony.root_pc there is simply
+                # the original, untransposed value already
+                # (transpose_score() is never called), so this
+                # reproduces the exact same tpc the source XML
+                # already had.
+                matched_harmony = harmony_by_position.get(
+                    (measure_index + 1, event["beat"])
+                )
+
+                if matched_harmony is not None:
+
+                    harmony_info_el = harmony_copy.find(
+                        "{*}harmonyInfo"
+                    )
+
+                    if harmony_info_el is not None:
+
+                        root_el = harmony_info_el.find(
+                            "{*}root"
+                        )
+
+                        if root_el is not None:
+
+                            root_el.text = str(
+                                pitch_class_to_tpc(
+                                    matched_harmony.root_pc
+                                )
+                            )
+
                 eid_el = harmony_copy.find("{*}eid")
 
                 if eid_el is not None:
@@ -6010,6 +6428,14 @@ def generate_tab_from_template(
             # result is authoritative, not to be recomputed.
             simultaneous_positions = None
 
+            # BO-179 -- default for every path EXCEPT the one
+            # that genuinely needed the fret-ceiling fallback
+            # below (tie-continuation/dyad-inheritance paths
+            # above never touch this at all, correctly leaving it
+            # False). Read at this note's own tab_note-writing
+            # site further down to decide whether to color it.
+            chosen_exceeds_fret_ceiling = False
+
             if inherited_positions is not None and len(
                 event["all_pitches"]
             ) == 2:
@@ -6067,7 +6493,17 @@ def generate_tab_from_template(
 
             else:
 
-                chosen = _choose_melody_position(
+                # BO-179 -- wrapped in a closure (capturing every
+                # one of this call's own arguments unchanged) so
+                # it can be invoked a second time below, with the
+                # shared fret ceiling temporarily raised, when the
+                # first attempt (at the user's own configured
+                # ceiling, via get_max_fret()) finds nothing --
+                # avoids duplicating this entire, large argument
+                # list a second time for the fallback attempt.
+                def _attempt_choice():
+
+                    return _choose_melody_position(
                     midi, open_notes,
                     fd_shape_values=fd_anchor_by_event_id.get(
                         id(event)
@@ -6101,6 +6537,18 @@ def generate_tab_from_template(
                             id(event)
                         )
                     ),
+                    slur_from_string=(
+                        previous_melody_position["string"]
+                        if (
+                            previous_melody_position is not None
+                            and any(
+                                spanner_el.find("{*}prev")
+                                is not None
+                                for spanner_el
+                                in event["slur_elements"]
+                            )
+                        ) else None
+                    ),
                     current_hp=current_hp,
                     expected_attack_role=(
                         attack_role_by_event_id[id(event)].role
@@ -6109,6 +6557,50 @@ def generate_tab_from_template(
                     ),
                     hp_is_earned=hp_is_earned
                 )
+
+                chosen = _attempt_choice()
+
+                # BO-179 -- when unreachable within the user's own
+                # configured fret ceiling (get_max_fret()), retry
+                # ONCE at the real physical maximum
+                # (MAX_ALLOWED_MAX_FRET) instead of immediately
+                # falling through to the "genuinely unplayable on
+                # any real instrument" Rest path below. Uses the
+                # exact same _choose_melody_position() call (same
+                # scoring/tiebreak logic, same slur/FD-anchor/
+                # continuity awareness -- not a second, simplified
+                # search), just with a temporarily wider candidate
+                # pool. Restored via try/finally so a later note's
+                # own call is never left seeing the wrong ceiling,
+                # including if _attempt_choice() itself raises.
+                # chosen_exceeds_fret_ceiling (initialized False
+                # above, alongside simultaneous_positions) flags
+                # this specific note for _add_note_warning_color()
+                # below -- stays False whenever the first attempt
+                # already succeeded (the overwhelmingly common
+                # case).
+                if chosen is None:
+
+                    from fretboard import (
+                        set_max_fret, get_max_fret,
+                        MAX_ALLOWED_MAX_FRET
+                    )
+
+                    original_max_fret = get_max_fret()
+
+                    try:
+
+                        set_max_fret(MAX_ALLOWED_MAX_FRET)
+
+                        chosen = _attempt_choice()
+
+                    finally:
+
+                        set_max_fret(original_max_fret)
+
+                    chosen_exceeds_fret_ceiling = (
+                        chosen is not None
+                    )
 
             if chosen is None:
 
@@ -6566,7 +7058,7 @@ def generate_tab_from_template(
                         event["all_pitches"][pitch_index]
                     ):
 
-                        _add_octave_substitution_color(tab_note)
+                        _add_note_warning_color(tab_note)
 
                     # BO-133.5-FOLLOWUP -- position["pitch"] is
                     # the ACTUAL pitch used, which may differ
@@ -6649,9 +7141,23 @@ def generate_tab_from_template(
                 # single-note event can inherit an already octave-
                 # substituted pitch from a prior dyad's own
                 # resolved position.
-                if _is_octave_substituted(midi, event["pitch"]):
+                #
+                # BO-179 -- separately, marks it red when this
+                # note's own chosen position only exists beyond
+                # the user's own configured fret ceiling (the
+                # fallback attempt above). Combined into one `or`
+                # check (not two separate `if`s each calling the
+                # shared helper) since _add_note_warning_color()
+                # unconditionally appends a new <color> child every
+                # call -- calling it twice would write two,
+                # redundant and not how a real MuseScore file's own
+                # single-color-per-note convention works.
+                if (
+                    _is_octave_substituted(midi, event["pitch"])
+                    or chosen_exceeds_fret_ceiling
+                ):
 
-                    _add_octave_substitution_color(tab_note)
+                    _add_note_warning_color(tab_note)
 
                 ET.SubElement(tab_note, "pitch").text = str(midi)
 
@@ -6999,8 +7505,26 @@ def generate_tab_from_template(
 
         title = score_file.score.title or "Untitled"
 
+        # BO-172 -- output_key_name: just the root note (e.g. "C"
+        # from "C minor"), matching the filename convention shown
+        # in this ticket's own examples -- not the full key string
+        # (mode isn't part of the filename). score_file.key is
+        # always populated by the time this function runs on the
+        # real production path (main.py's own run_optimizer()
+        # always calls score.estimate_key() before generation,
+        # and BO-171's own transposition -- when an output key was
+        # requested -- already updated it to the new, transposed
+        # key by this point). .split()[0] on the default "Unknown"
+        # (only reachable if estimate_key() was never called at
+        # all) is a harmless "Unknown" -- explicit rather than a
+        # crash, not a case this production path actually hits.
+        output_key_name = (
+            score_file.key.split()[0] if score_file.key else ""
+        )
+
         filename = _sanitize_filename(
-            f"{title} - {tuning.name} ({tuning.symbol}) - TAB"
+            f"{title} Key {output_key_name} "
+            f"{tuning.name} ({tuning.symbol})"
         ) + ".mscz"
 
     output_path = _save_template_copy(

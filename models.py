@@ -356,6 +356,17 @@ class TuningResult:
     # analyze() has run, and `score` for melody-only diagnostics.
     combined_score: float = 0.0
 
+    # BO-178 -- any-key mode's own output: the root note name
+    # (e.g. "D", "F#" -- main.PITCH_CLASS_TO_NOTE_NAME's own
+    # spelling, same as output_key's existing format) this
+    # tuning's own best-scoring transposition target, among the
+    # candidate keys listed in its own key_strengths. None in
+    # same-key mode (the existing, default behavior, completely
+    # unaffected) -- a caller checks this field, not a separate
+    # mode flag, to know whether a recommendation requires
+    # transposing the song before generating its own TAB.
+    recommended_key: str | None = None
+
 
 # ---------------------------------------------------------
 # Chord shape model

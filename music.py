@@ -418,6 +418,37 @@ def tpc_to_pitch_class(tpc):
     ) % 12
 
 
+# BO-173 -- the inverse of tpc_to_pitch_class() above: given only
+# a 0-11 pitch class (e.g. a Harmony.root_pc after BO-171
+# transposition), there are multiple valid TPC spellings (C#
+# and Db are both pitch class 1) -- this table picks exactly one
+# per pitch class, the one matching pitch_name()'s own sharp-only
+# convention (already used project-wide -- see e.g.
+# transposition.py's ROOT_NAME_TO_PITCH_CLASS, main.py's own
+# PITCH_CLASS_TO_NOTE_NAME). Each value confirmed directly
+# against tpc_to_name()/tpc_to_pitch_class() themselves (not an
+# independently-invented table): for every pitch class, the TPC
+# value below is the one where tpc_to_name(value) already equals
+# pitch_name(that pitch class) exactly.
+PITCH_CLASS_TO_TPC = {
+    0: 14, 1: 21, 2: 16, 3: 23, 4: 18, 5: 13,
+    6: 20, 7: 15, 8: 22, 9: 17, 10: 24, 11: 19,
+}
+
+
+def pitch_class_to_tpc(pitch_class):
+    """
+    Convert a 0-11 pitch class to a MuseScore TPC integer, using
+    this project's own sharp-only spelling convention (see
+    PITCH_CLASS_TO_TPC's own comment for how these were derived
+    and confirmed). Accepts any integer (not just 0-11) -- the
+    pitch class is taken mod 12 first, matching pitch_name()'s
+    own behavior.
+    """
+
+    return PITCH_CLASS_TO_TPC[pitch_class % 12]
+
+
 # ---------------------------------------------------------
 # Chord quality lookup
 # ---------------------------------------------------------

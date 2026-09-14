@@ -51,7 +51,8 @@ from fretboard import (
     format_shape,
     hand_span,
     average_fret as fretted_average,
-    calculate_shape_metadata
+    calculate_shape_metadata,
+    get_max_fret
 )
 
 from playability import evaluate as evaluate_playability
@@ -113,6 +114,47 @@ def _score_candidate(values):
     or None for muted). Used only to order/compare candidates
     that playability.py has already accepted -- not used to
     decide accept/reject itself (that's playability.py's job).
+
+    BO-175 -- open_count's own coefficient reduced from 10 to
+    3.3 (span/avg/muted_count weights all deliberately left
+    unchanged -- see this task's own investigation reports for
+    why a wholesale switch to playability._score()'s weights was
+    rejected: it broke 8 existing validated cases, concentrated
+    in BO-39's own adjacent-chord positional tiebreak, which
+    sits directly above this function in get_shapes_for_exact_
+    melody_pitch()'s own priority order and was explicitly not
+    to be reopened here).
+
+    Root cause (Aureolin Dm / Double C, gCGCD): with D4 at its
+    open position (string index 3, fret 0), the only available
+    Dm shapes tie through every earlier priority (voicing
+    category, exact melody-pitch containment, quality_score,
+    BO-22/33/39's own positional tiebreaks -- all genuinely
+    equal for 2250 vs 2223 in this real case), so this function
+    alone decided the winner. The prior +10-per-open-string bonus
+    let 2250 (one open string, but a 3-fret span with a little-
+    finger reach to fret 5 over a muted-in-practice open string)
+    outscore 2223 (zero open strings, but a comfortable 1-fret
+    barre span) by a wide margin, even though 2223 is
+    substantially easier to play and is what a player gets by
+    choosing D4 at fret 2 (string index 2) instead of open --
+    confirmed directly, playability.evaluate()'s own separate
+    accept/reject scorer already rated 2223 far higher (91 vs
+    73), it simply was never consulted for ranking.
+
+    Coefficient chosen by direct calculation against every real,
+    tied-quality case this affects, not just the Aureolin
+    example alone: 2250 vs 2223 requires coef<3.5 to flip
+    correctly; a real existing case in test_bo148_4_effective_
+    finger_count.py (D7/Open G, shapes "0(11)(10)(10)" vs
+    "777(10)", also genuinely tied through quality_score) is
+    already validated the OTHER way and requires coef>3.1667 to
+    stay correct -- confirmed an initial coef=3 choice flipped
+    that case incorrectly (found only by running the focused
+    tests this task's own investigation identified, exactly as
+    intended). 3.3 sits inside the valid (3.1667, 3.5) window
+    with real margin on both sides, rather than a razor-thin
+    value against either boundary.
     """
 
     open_count = sum(1 for value in values if value == 0)
@@ -124,7 +166,7 @@ def _score_candidate(values):
     avg = fretted_average(values)
 
     return (
-        (open_count * 10)
+        (open_count * 3.3)
         - (muted_count * 3)
         - (avg * 2)
         - span
@@ -429,8 +471,9 @@ def generate_candidates(
         # low-position options everywhere else has a huge hand
         # span and never survives the filter below. So every
         # string's search is widened to the full practical neck
-        # (up to 22 frets, matching this project's own existing
-        # full-neck outer bound elsewhere) for chord-tone-
+        # (BO-177 -- get_max_fret(), the same user-configured
+        # ceiling find_positions() itself now respects, not a
+        # second, independent hardcoded bound) for chord-tone-
         # producing frets, not just the one melody pitch's own
         # exact fret -- the existing hand-span/playability
         # filters, unchanged, still do the actual practicality
@@ -446,7 +489,7 @@ def generate_candidates(
         for string_index, open_note in enumerate(melody_strings):
 
             wider_frets = find_frets_for_pitch_classes(
-                open_note, tones, 22
+                open_note, tones, get_max_fret()
             )
 
             for fret in wider_frets:

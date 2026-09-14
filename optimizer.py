@@ -170,38 +170,147 @@ class TuningAnalyzer:
 
     MAX_AWKWARDNESS_REFERENCE = 4.0
 
-    # BO-49 -- fixed reference PLAYING_MODEL_QUALITY_REFERENCE is
-    # normalized against, exactly analogous in spirit to
-    # MAX_AWKWARDNESS_REFERENCE above (candidate-set-independent,
-    # per BO-47/48's own central requirement) but for the richer
-    # Playing Model per-phrase score chord_fd_quality is now
-    # derived from (see chord_fd_quality_bonus()'s own docstring
-    # for why avg_awkwardness alone was replaced as the source of
-    # chord_fd_quality).
+    # BO-176 -- replaces the old PLAYING_MODEL_QUALITY_REFERENCE-
+    # based chord_fd_quality entirely (found, on real data, to be
+    # permanently saturated at 1.0 -- every real tuning's own
+    # average-phrase score already exceeded 50 on every song
+    # tested, including tunings the user rated unplayable, so the
+    # term contributed zero discrimination to tuning ranking).
     #
-    # What it represents: an "excellent" phrase's own average
-    # score -- BASE_PLAYABILITY (10.0, playing_model.py's own
-    # constant, a fully-comfortable chord shape with no
-    # penalties) plus CONTAINED_IN_CHORD_BONUS (6.0, playing_
-    # model.py) for a handful of melody notes per phrase that
-    # land as genuine chord tones, which real songs' own melody
-    # density supports (each real song here averages roughly
-    # 3 melody notes per chord phrase).
+    # chord_fd_quality is now a worst-N-average of a per-chord
+    # score (see chord_fd_quality_bonus()'s own docstring for the
+    # full per-chord formula: intrinsic shape playability minus
+    # an isolation-aware "high position, was it worth it" cost),
+    # not an average-phrase Playing Model score. Confirmed via
+    # direct user validation against real per-tuning ratings on
+    # Aureolin (G Modal Sawmill rated 0/unplayable for one
+    # catastrophic chord among an otherwise fine song -- worst-N
+    # correctly collapses its score far below every other
+    # candidate, where the old full-average buried it mid-pack;
+    # A Modal Sawmill rated 8/best -- worst-N correctly ranks it
+    # highest).
     #
-    # How the initial value was selected: PROVISIONAL, derived
-    # from real observed data across all 4 real songs' own top-3
-    # candidates (BO-49's own investigation) -- average-per-
-    # phrase scores ranged from ~26 to ~46 across every real
-    # tuning/song combination measured. 50.0 sits just above that
-    # observed maximum, the same "round number with headroom"
-    # approach MAX_AWKWARDNESS_REFERENCE itself used.
-    #
-    # Revisit if a future real song's own average-per-phrase
-    # score meaningfully exceeds 50 -- values would saturate
-    # toward 1.0 rather than reading incorrectly, but
-    # discrimination would weaken for that song, the same
-    # tradeoff MAX_AWKWARDNESS_REFERENCE's own comment describes.
-    PLAYING_MODEL_QUALITY_REFERENCE = 50.0
+    # This per-chord score is NOT bounded the way the old Playing
+    # Model phrase score was (the position-cost term can drive it
+    # negative for a genuinely bad, isolated high chord), so it's
+    # normalized against a fixed [MIN, MAX] reference range rather
+    # than divided by a single upper bound. PROVISIONAL, derived
+    # from real worst-2-average values observed across 4 real
+    # songs' own top-6 candidates each (Aureolin, Christmas Song,
+    # My Favorite Things, White Christmas): observed range was
+    # -6.50 (Aureolin/G Modal Sawmill, the confirmed catastrophic
+    # case) to 7.12 (Aureolin/A Modal Sawmill, the confirmed best
+    # case). -8/9 gives roughly 1.5-2 points of headroom on each
+    # side beyond the observed extremes -- revisit if a future
+    # real song's own worst-2-average falls outside this range;
+    # values would saturate toward 0/1 rather than reading
+    # incorrectly, but discrimination would weaken for that song.
+    CHORD_FD_QUALITY_MIN_REFERENCE = -8.0
+
+    CHORD_FD_QUALITY_MAX_REFERENCE = 9.0
+
+    # BO-176 -- how many of a tuning's own worst chords (by the
+    # per-chord score above) are averaged together, rather than
+    # averaging every chord in the song or using only the single
+    # worst one. Confirmed against direct user judgment: a single
+    # bad chord the user would work around by re-spelling that
+    # one chord in the input score should NOT be able to zero out
+    # an otherwise-great tuning (rules out worst-1 alone); a
+    # tuning with a genuine PATTERN of poor chords (the real G
+    # Modal Sawmill/Aureolin case -- 4420 and 2214 were already
+    # awkward before its one catastrophic chord) should stay
+    # low across the board, which a full-song average was found
+    # to wash out entirely (G Modal Sawmill's own full average on
+    # Aureolin was 5.77, unremarkable next to every other
+    # candidate -- see chord_fd_quality_bonus()'s own docstring).
+    # 2 is the smallest N that distinguishes those two real cases
+    # -- not independently swept against a wider N, since this
+    # value was fixed BEFORE turning to the weight/normalization
+    # work that follows it.
+    CHORD_FD_WORST_N = 2
+
+    # BO-176 -- excess working_fret beyond WORKING_FRET_COMFORT_
+    # CEILING is only charged its FULL cost when the chord is
+    # genuinely isolated (the user's own "for one chord and a few
+    # tabs" complaint about Aureolin's G Modal Sawmill 17-18-16-19
+    # shape) -- a high chord that's part of a real passage (its
+    # immediate neighbor chord onsets are also high, and close
+    # enough on the neck to be the same hand position) costs much
+    # less, since the position is already justified by more than
+    # one chord. Multiplier keyed by how many of the two immediate
+    # neighbors (preceding, following) qualify as "high and
+    # close": 0 neighbors = full cost (genuinely isolated), 1 =
+    # substantially discounted, 2 = a real passage, minimal cost.
+    # 0.4/0.15 are provisional -- not independently derived,
+    # chosen to give a clear, visible gap between the three tiers
+    # while confirmed not to fully zero out a passage's own real
+    # neck-position cost. NOTE (flagged to user, not yet
+    # resolved): being part of a passage does not mean the
+    # position is within a given player's own physical fret
+    # range -- this multiplier can still discount a chord that
+    # exceeds a user's own instrument (see the pending, separate
+    # fret-ceiling task). Confirmed via real data this can let a
+    # tuning built around a sustained high-fret passage (fret 17,
+    # beyond the user's own stated 15-fret instrument) rank #1
+    # regardless of chord_fd_quality's own influence weight (real
+    # White Christmas/G Modal Sawmill case) -- CHORD_FD_INFLUENCE
+    # is deliberately being held at its current value rather than
+    # raised until fret-ceiling filtering exists to remove such
+    # candidates before this scoring ever sees them.
+    CHORD_FD_ISOLATION_MULTIPLIER = {0: 1.0, 1: 0.4, 2: 0.15}
+
+    # BO-176 -- how close two chords' own working_fret values
+    # need to be, in raw fret count, to count as "the same hand
+    # position" for the isolation check above. Sanity-checked
+    # against real banjo fretboard geometry (12th-root-of-2 fret
+    # spacing, 26.5in scale) rather than picked arbitrarily: this
+    # value is only ever evaluated between two chords that are
+    # BOTH already above WORKING_FRET_COMFORT_CEILING (7) -- in
+    # that fret-7-and-up range, 3 frets corresponds to roughly
+    # 1.7-2.8 physical inches, which lines up with a genuine
+    # "no real hand shift" distance. Confirmed this constant does
+    # NOT need position-dependent scaling despite fret spacing
+    # itself varying substantially across the neck (a 3-fret span
+    # near the nut is ~4in, physically a real shift), because the
+    # relevant range for this specific check is narrow enough
+    # that a single fixed value holds up across it.
+    CHORD_FD_CLOSE_POSITION_THRESHOLD = 3
+
+    # BO-176 -- fixed reference range the raw melody `score` is
+    # normalized against, replacing the old per-candidate-set
+    # min-max normalization in _apply_combined_score(). Found,
+    # on real data, that candidate-set-relative min-max was
+    # stretching very small real melody-score gaps (as little as
+    # ~1.5%, e.g. Aureolin's own top candidates spanning only
+    # 83.16 to 84.73) into a full 0-to-1 swing -- giving melody
+    # disproportionate leverage over chord_fd_quality even at
+    # equal blend weights, since chord_fd_quality was already
+    # normalized against a fixed range that doesn't inflate small
+    # gaps the same way. This was the direct cause of a real,
+    # confirmed case (Aureolin) where A Modal Sawmill -- the
+    # user's own highest-rated tuning -- could not reach #1 even
+    # at influence=0.50 until this was fixed; fixing normalization
+    # alone (no weight change at all) was sufficient. PROVISIONAL,
+    # derived from real melody `score` values observed across all
+    # 5 real songs' own full modern-category candidate sets (55
+    # observations), called with score.estimate_key() beforehand
+    # exactly as main.py's own real production path always does
+    # (an earlier calibration pass omitted this call and derived
+    # a substantially-too-low range from it -- key_bonus() and
+    # related open-string/5th-string bonuses add real points once
+    # a key is actually detected, confirmed directly: e.g. White
+    # Christmas's own real range only becomes 79-112 once
+    # estimate_key() runs, not 74-80 without it): observed range
+    # was 71.37 to 115.86. 60/125 gives meaningful headroom on
+    # both sides beyond the observed extremes. Revisit if a
+    # future real song's own melody score falls outside this
+    # range; values would saturate toward 0/1 rather than reading
+    # incorrectly, but discrimination would weaken for that song
+    # -- the same tradeoff every other fixed reference range in
+    # this class already documents.
+    MELODY_SCORE_MIN_REFERENCE = 60.0
+
+    MELODY_SCORE_MAX_REFERENCE = 125.0
 
     # BO-48 -- severity of the SEPARATE unplayable-melody-note
     # penalty (see chord_fd_quality_bonus()'s own docstring for
@@ -381,27 +490,35 @@ class TuningAnalyzer:
         formula. Mutates each TuningResult in `results` in
         place, setting combined_score; does not reorder the
         list (analyze() sorts afterward).
+
+        BO-176 -- normalized_melody now uses the same FIXED-
+        reference approach chord_fd_quality already used (see
+        MELODY_SCORE_MIN/MAX_REFERENCE's own comment for why):
+        the previous candidate-set-relative min-max was found, on
+        real data, to stretch very small real melody-score gaps
+        into a full 0-to-1 swing, giving melody disproportionate
+        leverage over chord_fd_quality regardless of the blend
+        weight used -- confirmed as the direct cause of a real
+        case (Aureolin) where the user's own highest-rated tuning
+        could not reach #1 even at influence=0.50 until this was
+        fixed, with no weight change needed once it was.
         """
 
         if not results:
 
             return results
 
-        melody_scores = [r.score for r in results]
-
-        m_min, m_max = min(melody_scores), max(melody_scores)
-
         for result in results:
 
-            if m_max > m_min:
-
-                normalized_melody = (
-                    (result.score - m_min) / (m_max - m_min)
-                )
-
-            else:
-
-                normalized_melody = 1.0
+            normalized_melody = max(0.0, min(
+                (
+                    result.score - self.MELODY_SCORE_MIN_REFERENCE
+                ) / (
+                    self.MELODY_SCORE_MAX_REFERENCE
+                    - self.MELODY_SCORE_MIN_REFERENCE
+                ),
+                1.0
+            ))
 
             combined = (
                 (1 - self.CHORD_FD_INFLUENCE) * normalized_melody
@@ -985,76 +1102,79 @@ class TuningAnalyzer:
 
     def chord_fd_quality_bonus(self, tuning):
         """
-        BO-49 -- Chord/playing quality for this tuning.
+        BO-176 -- Chord/playing quality for this tuning.
 
-        BO-49's own investigation traced the existing Playing
-        Model (playing_model.py, analyze_tuning_playing_model())
-        and found it ALREADY does exactly what BO-49 set out to
-        build: for each real chord occurrence, it evaluates every
-        candidate chord shape's own intrinsic playability (finger
-        count, span, hand geometry -- analyze_chord_shape_
-        playability()) TOGETHER WITH how well the surrounding
-        melody notes can be played from that specific chord's own
-        hand position (evaluate_combination() -- contained-in-
-        chord bonus, free-finger availability without abandoning
-        the chord shape, proximity to the chord's own working
-        fret), keeping the single best-scoring COMBINATION per
-        phrase (evaluate_phrase()). This is a strictly richer
-        measure of "chord/playing quality" than BO-43 through
-        BO-48's own avg_awkwardness, which only ever looked at
-        working_fret (how high up the neck) and had no way to
-        distinguish a comfortable low-fret shape from an awkward
-        one, or to know whether the melody can actually be played
-        from a chord's own hand position at all. Confirmed with
-        real data (White Christmas): Open G has the best raw
-        melody score but the WORST Playing Model score of its own
-        top 3 real candidates -- exactly the "good melody, poor
-        chords" case BO-49 exists to catch, and something
-        avg_awkwardness alone could never see.
+        Replaces BO-49's own Playing-Model-average-based chord_
+        fd_quality entirely. Found, via direct user validation on
+        real recommended tunings (Aureolin), that averaging across
+        every chord in a song makes a single catastrophic shape
+        invisible -- a genuinely unplayable chord (17-18-16-19, on
+        a tuning the user rated 0/unplayable) sat mid-pack in the
+        old full-average, buried by the song's many otherwise-fine
+        chords. What actually drove the user's own judgment, per
+        direct confirmation: a single bad chord they'd work around
+        by re-spelling that one chord in the input score should
+        NOT sink an otherwise-great tuning; a tuning with a
+        genuine PATTERN of poor chords should stay low regardless
+        of how many fine chords surround them. See CHORD_FD_
+        WORST_N's own comment for why worst-N (not worst-1, not a
+        full average) is the reconciliation of those two real
+        cases.
 
-        Per BO-49's own explicit instruction, this composes the
-        EXISTING Playing Model rather than building a second,
-        parallel scoring system -- reuses analyze_tuning_playing_
-        model() unchanged, no new chord/melody evaluation logic
-        of its own.
+        Per-chord score (before worst-N averaging): analyze_
+        chord_shape_playability().score (intrinsic shape
+        difficulty -- finger count, span, hand geometry, UNCHANGED
+        from BO-131.4) minus a position cost: max(0, working_fret
+        - WORKING_FRET_COMFORT_CEILING) times CHORD_FD_ISOLATION_
+        MULTIPLIER, keyed by how many of the chord's own immediate
+        neighbor onsets (preceding, following) are ALSO high and
+        close enough on the neck to count as the same real
+        passage (CHORD_FD_CLOSE_POSITION_THRESHOLD). Directly
+        confirmed against the real Aureolin case: the user's own
+        stated complaint about 17-18-16-19 was specifically "I
+        would not want to jump that high up the neck for one
+        chord and a few tabs" -- an isolated high chord costs its
+        full excess; a chord that's part of a real passage (both
+        neighbors also high and close) costs a small fraction of
+        it, since the position is already justified by more than
+        one chord.
+
+        The worst CHORD_FD_WORST_N of these per-chord scores
+        (lowest N, not the whole song) are averaged, then
+        normalized to [0, 1] against a FIXED reference range
+        (CHORD_FD_QUALITY_MIN/MAX_REFERENCE -- this per-chord
+        score is not bounded the way the old Playing Model phrase
+        score was, since the position-cost term can drive it
+        negative) -- still deliberately NOT the current candidate
+        set's own min/max, preserving BO-47/48's own central
+        requirement: this value must not change merely because a
+        different tuning is also being compared alongside this
+        one. 1.0 = as good as the reference range allows; 0.0 =
+        at or beyond its low end.
 
         Returns (avg_awkwardness, chord_fd_quality,
         unplayable_note_count, unplayable_note_proportion,
         avg_generated_chord_playability).
 
-        avg_generated_chord_playability -- BO-131.4. Mean
-        analyze_chord_shape_playability().score across this same
-        loop's own real chord occurrences, evaluated on the
-        EXACT shape _select_chord_shape_for_harmony() selects
-        (the same call already made above for avg_awkwardness --
-        not a second, independent chord selection). Unlike
-        chord_fd_quality, this never passes through
-        analyze_tuning_playing_model(), so it carries none of
-        that path's own melody-combination contribution -- a
-        measurement of chord-shape quality alone, on the shapes
-        BO would actually generate for this tuning. Deliberately
-        not yet part of combined_score or any existing weight;
-        see TuningResult.avg_generated_chord_playability's own
-        docstring in models.py.
+        avg_generated_chord_playability -- BO-131.4, UNCHANGED.
+        Mean analyze_chord_shape_playability().score across this
+        same loop's own real chord occurrences (a full-song
+        average, not the worst-N used for chord_fd_quality
+        above), evaluated on the EXACT shape _select_chord_shape_
+        for_harmony() selects. Deliberately not yet part of
+        combined_score or any existing weight; see TuningResult.
+        avg_generated_chord_playability's own docstring in
+        models.py.
 
         avg_awkwardness (BO-43/44/46 definition, UNCHANGED --
         mean of max(0, working_fret - WORKING_FRET_COMFORT_
         CEILING) across real chord onsets) is still computed and
         returned as a diagnostic/comparison value -- existing
         BO-48 tests and reporting that read it are unaffected --
-        but chord_fd_quality itself is no longer derived from it.
-
-        chord_fd_quality is now the Playing Model's own average
-        per-phrase score (total_score / phrase count -- the same
-        normalization playing_model_bonus() already established,
-        reused here rather than duplicated), normalized to [0, 1]
-        against a FIXED reference (PLAYING_MODEL_QUALITY_
-        REFERENCE, see that constant's own comment) -- still
-        deliberately NOT the current candidate set's own min/max,
-        preserving BO-47/48's own central requirement: this value
-        must not change merely because a different tuning is also
-        being compared alongside this one. 1.0 = as good as the
-        reference allows; 0.0 = at or beyond it.
+        chord_fd_quality itself was never derived from it even
+        before this change (BO-49 already replaced that
+        dependency; this change only replaces what chord_fd_
+        quality derives from instead).
 
         unplayable_note_count/proportion: UNCHANGED from BO-48 --
         still a separate, hard-playability-failure concept,
@@ -1127,6 +1247,12 @@ class TuningAnalyzer:
             # selects for awkwardness above.
             generated_chord_playability_sum = 0.0
 
+            # BO-176 -- in onset order, populated inside the loop
+            # below; consumed after the loop for the isolation-
+            # aware position-cost pass (needs neighbor access, so
+            # cannot be computed within a single forward pass).
+            chord_sequence = []
+
             incoming_shape = None
 
             for harmony_index, harmony in enumerate(
@@ -1193,6 +1319,16 @@ class TuningAnalyzer:
 
                 total_chord_onsets += 1
 
+                # BO-176 -- per-chord (working_fret, intrinsic
+                # playability) pair, in onset order, for the
+                # isolation-aware position-cost pass below.
+                chord_sequence.append({
+                    "working_fret": working_fret,
+                    "intrinsic": analyze_chord_shape_playability(
+                        shape.shape
+                    ).score
+                })
+
             avg_awkwardness = (
                 awkwardness_sum / total_chord_onsets
                 if total_chord_onsets else 0.0
@@ -1204,34 +1340,81 @@ class TuningAnalyzer:
                 if total_chord_onsets else 0.0
             )
 
-            # chord_fd_quality -- BO-49, derived from the
-            # existing Playing Model's own combined chord+melody
-            # phrase scoring, reused unchanged.
+            # chord_fd_quality -- BO-176, see this method's own
+            # docstring for the full per-chord formula and why
+            # worst-N replaced the old Playing-Model-average
+            # approach.
 
-            temp_score = Score(
-                notes=self.melody_notes,
-                harmonies=self.harmonies
-            )
-
-            playing_model_result = analyze_tuning_playing_model(
-                temp_score, tuning, chord_service
-            )
-
-            phrase_count = len(playing_model_result.phrases)
-
-            if phrase_count == 0:
+            if not chord_sequence:
 
                 return 0.0, 1.0, unplayable_note_count, (
                     unplayable_note_proportion
                 ), avg_generated_chord_playability
 
-            average_phrase_score = (
-                playing_model_result.total_score / phrase_count
-            )
+            def _is_high_and_close(this_chord, neighbor):
+
+                if neighbor is None:
+
+                    return False
+
+                return (
+                    neighbor["working_fret"]
+                    > self.WORKING_FRET_COMFORT_CEILING
+                    and abs(
+                        this_chord["working_fret"]
+                        - neighbor["working_fret"]
+                    ) <= self.CHORD_FD_CLOSE_POSITION_THRESHOLD
+                )
+
+            per_chord_scores = []
+
+            for index, chord in enumerate(chord_sequence):
+
+                excess = max(
+                    0,
+                    chord["working_fret"]
+                    - self.WORKING_FRET_COMFORT_CEILING
+                )
+
+                preceding = (
+                    chord_sequence[index - 1]
+                    if index > 0 else None
+                )
+
+                following = (
+                    chord_sequence[index + 1]
+                    if index + 1 < len(chord_sequence) else None
+                )
+
+                qualifying_neighbors = sum([
+                    _is_high_and_close(chord, preceding),
+                    _is_high_and_close(chord, following)
+                ])
+
+                multiplier = self.CHORD_FD_ISOLATION_MULTIPLIER[
+                    qualifying_neighbors
+                ]
+
+                per_chord_scores.append(
+                    chord["intrinsic"] - excess * multiplier
+                )
+
+            per_chord_scores.sort()
+
+            worst_n = per_chord_scores[
+                :self.CHORD_FD_WORST_N
+            ]
+
+            worst_n_average = sum(worst_n) / len(worst_n)
 
             chord_fd_quality = max(0.0, min(
-                average_phrase_score
-                / self.PLAYING_MODEL_QUALITY_REFERENCE,
+                (
+                    worst_n_average
+                    - self.CHORD_FD_QUALITY_MIN_REFERENCE
+                ) / (
+                    self.CHORD_FD_QUALITY_MAX_REFERENCE
+                    - self.CHORD_FD_QUALITY_MIN_REFERENCE
+                ),
                 1.0
             ))
 

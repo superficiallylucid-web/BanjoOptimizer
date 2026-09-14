@@ -340,17 +340,32 @@ def test_full_pipeline_real_examples_and_consistency():
         # genuine following_working_fret_anchor, so string_distance
         # remains active there exactly as before -- unchanged.
         #
-        # Updated fret 3 -> fret 1 (BO-145.5): confirmed directly,
-        # this delta is fully explained by best_position()'s own
-        # middle-string bonus being removed and the new explicit
-        # lower-fret tie-break being added -- an even lower,
-        # equally defensible fret now wins for this same note.
-        # Not a regression.
+        # BO-174 -- updated from the stale (63, 1, 0). Direct
+        # investigation confirms preceding_chord_still_relevant is
+        # genuinely True here (previous_position's own fret 10 IS
+        # inside chord_hp_span([9, 10, 10, 0]) == (9, 12)), but
+        # this exact pitch (D#4/63) has ZERO positions within that
+        # shape at all (confirmed via _fd_positions_for_pitch --
+        # empty list): a genuine passing tone. BO-123's own
+        # string_distance fix (described above) already correctly
+        # stopped this note from being pulled toward the previous
+        # note's STRING via stale chord context; BO-174 now
+        # additionally re-enables hp_tiebreak for the same
+        # underlying reason (a relevant-but-non-matching anchor
+        # must not suppress it either) -- of this pitch's 4 real
+        # candidates (frets 15/8/3/1), none sit inside current_hp
+        # (9,12), so hp_tiebreak's own "movement" component (BO-
+        # 62's abs(fret - hp.low)) decides: fret 8 (movement 1)
+        # correctly beats fret 1 (movement 8), preferring the
+        # position much closer to the hand's actual current
+        # location over a low-but-far jump -- exactly BO-174's own
+        # stated goal, and a further improvement of this same
+        # note BO-123 had already partially corrected.
         first_ds4_note = ds4_chords[0].find("{*}Note")
 
-        assert first_ds4_note.find("{*}fret").text == "1"
+        assert first_ds4_note.find("{*}fret").text == "8"
 
-        assert first_ds4_note.find("{*}string").text == "0"
+        assert first_ds4_note.find("{*}string").text == "2"
 
         second_ds4_note = ds4_chords[1].find("{*}Note")
 

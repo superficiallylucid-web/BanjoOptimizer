@@ -25,22 +25,107 @@ from music import (
 
 
 # ---------------------------------------------------------
+# BO-177 -- user-configurable maximum playable fret
+# ---------------------------------------------------------
+#
+# The highest fret this instrument's own neck actually has.
+# Module-level rather than threaded as an explicit parameter
+# through every one of find_positions()'s own ~75 real call
+# sites across 7 production files -- most of those call sites
+# have no reason to know or care about this value at all, only
+# ever passing it through unchanged; a shared, settable module
+# value (same pattern this project already uses for per-run
+# configuration elsewhere, e.g. TuningAnalyzer's own class
+# constants being reassigned directly in its own tests) avoids
+# that blast radius while still being explicit and testable via
+# set_max_fret()/get_max_fret(), not silent, undocumented global
+# mutation.
+#
+# Default is 15, not the neck's own more common physical
+# maximum (17-22 on most modern 5-string banjos) -- deliberately
+# conservative per direct instruction: this tool is for personal
+# use, generating scores meant to be genuinely playable, not a
+# theoretical maximum. main.py's own run_optimizer() overwrites
+# this from the user's saved setting (see main.load_settings(),
+# "fret_ceiling" key) before any real optimization work starts;
+# this default only applies when nothing has been configured at
+# all (a fresh settings file, or any caller -- tests included --
+# that never touches this value).
+DEFAULT_MAX_FRET = 15
+
+MIN_ALLOWED_MAX_FRET = 5
+
+MAX_ALLOWED_MAX_FRET = 22
+
+_max_fret = DEFAULT_MAX_FRET
+
+
+def set_max_fret(value):
+    """
+    BO-177 -- sets the shared maximum playable fret every
+    find_positions() call (and chord_generator.py's own melody-
+    tone widening, which reads get_max_fret() directly rather
+    than keeping a second, independent hardcoded ceiling) uses
+    from this point forward, until changed again. Raises
+    ValueError outside [MIN_ALLOWED_MAX_FRET,
+    MAX_ALLOWED_MAX_FRET] -- the same validated range the
+    Settings dialog itself enforces, checked again here so any
+    other future caller (a test, a script) can't silently set an
+    out-of-range value either.
+    """
+
+    global _max_fret
+
+    if not (
+        MIN_ALLOWED_MAX_FRET <= value <= MAX_ALLOWED_MAX_FRET
+    ):
+
+        raise ValueError(
+            f"fret ceiling must be between "
+            f"{MIN_ALLOWED_MAX_FRET} and {MAX_ALLOWED_MAX_FRET} "
+            f"(got {value})"
+        )
+
+    _max_fret = value
+
+
+def get_max_fret():
+
+    return _max_fret
+
+
+# ---------------------------------------------------------
 # Find possible fret positions for a specific pitch
 # ---------------------------------------------------------
 #
 # Extracted unchanged from TuningAnalyzer.find_positions().
 
-def find_positions(midi, open_notes):
+def find_positions(midi, open_notes, max_fret=None):
+    """
+    max_fret: BO-179 -- optional override for this one call,
+    bypassing the shared, module-level ceiling (get_max_fret())
+    entirely. None (default, every one of this function's own
+    ~75 existing call sites) uses get_max_fret() exactly as
+    before this parameter existed. Used by score_generator.py's
+    own melody-position fallback: when a note is genuinely
+    unreachable within the user's own configured ceiling, a
+    second call with max_fret=MAX_ALLOWED_MAX_FRET (the real
+    physical maximum, not the user's own preference) checks
+    whether it's reachable at all on a real instrument, so it can
+    still be written (and visually flagged) rather than silently
+    omitted.
+    """
 
     positions = []
 
+    ceiling = max_fret if max_fret is not None else get_max_fret()
 
     for string_number, open_note in enumerate(open_notes):
 
         fret = midi - open_note
 
 
-        if 0 <= fret <= 22:
+        if 0 <= fret <= ceiling:
 
             # 5th-string fretted positions are excluded from
             # melody candidates entirely (per direct instruction):

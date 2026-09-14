@@ -17,6 +17,9 @@ from tunings import get_tunings
 from chord_service import ChordService
 from chord_library import ChordLibrary
 from models import Tuning
+from transposition import semitones_for_output_key, transpose_score
+from fretboard import set_max_fret, DEFAULT_MAX_FRET
+from any_key import rank_tunings_across_keys
 
 VERSION = "1.0"
 # ---------------------------------------------------------
@@ -333,7 +336,8 @@ def compute_sounded_tuning(tuning_symbol, capo=None, fifth_string=None):
 def run_optimizer(
     score_filename=None, score_path=None, tuning_symbol=None,
     capo=None, alternatives=0, num_tunings=3, project_folder=None,
-    scores_folder=None, output_folder=None, fifth_string=None
+    scores_folder=None, output_folder=None, fifth_string=None,
+    output_key=None, any_key=False
 ):
     """
     BO-153 -- the application's real entry point, extracted from
@@ -441,6 +445,22 @@ def run_optimizer(
     Reuses _parse_tuning_symbol() itself for the actual letter-to-
     pitch parsing (not a duplicate parser) -- see the inline
     comment where it's used, below, for exactly how.
+
+    BO-171 -- output_key (new): an explicit output key request --
+    one of main.PITCH_CLASS_TO_NOTE_NAME's own note names (e.g.
+    "C", "F#"), or None (the default). None means "Keep input
+    key" -- this function's own prior, only behavior, completely
+    unchanged: the score is analyzed and generated in whatever
+    key it was already parsed in. When given, the parsed score's
+    own melody/harmony data is transposed in place (see
+    transposition.transpose_score()) before any tuning analysis
+    or file generation happens, so every downstream consumer
+    (TuningAnalyzer, generate_tab_from_template()) sees the
+    already-transposed data -- not a second, parallel
+    representation. Does NOT implement "Best key" -- selecting a
+    key BO itself chooses for its own arrangement quality is a
+    separate, not-yet-designed feature (BO-171's own
+    investigation, Part 4).
 
     Returns a dict:
         {
@@ -582,6 +602,24 @@ def run_optimizer(
     # PROJECT_FOLDER / "scores" and PROJECT_FOLDER / "output"
     # this application always used.
     _settings = load_settings(PROJECT_FOLDER)
+
+    # BO-177 -- same resolution order as scores_folder/output_
+    # folder just above: saved setting when present, else
+    # fretboard.py's own DEFAULT_MAX_FRET (15, not this
+    # application's old unconfigured 22 -- see that constant's
+    # own docstring for why the default itself changed, not just
+    # became configurable). Set once here, before any melody-
+    # position or chord-shape generation in this run, since both
+    # find_positions() and chord_generator.py's own widening read
+    # this shared value directly rather than taking it as an
+    # explicit parameter (see fretboard.set_max_fret()'s own
+    # docstring for why). No per-call CLI override exists (this
+    # application is personal-use, per direct instruction) --
+    # the Settings dialog is the only way to change it.
+    if "fret_ceiling" in _settings:
+        set_max_fret(_settings["fret_ceiling"])
+    else:
+        set_max_fret(DEFAULT_MAX_FRET)
 
     if scores_folder is not None:
         SCORES_FOLDER = Path(scores_folder)
@@ -736,6 +774,33 @@ def run_optimizer(
                 # this has no effect on the current score/recommendations.
                 score.read_harmonies(staff_used)
 
+                # BO-171 -- output_key transposition. Applied here,
+                # unconditionally before any tuning analysis or file
+                # generation, so every downstream consumer (the
+                # REQUESTED_TUNING branch below, TuningAnalyzer,
+                # generate_tab_from_template()) sees the already-
+                # transposed melody/harmony data -- not a second,
+                # parallel representation. output_key=None ("Keep
+                # input key") is a complete no-op: semitones_for_
+                # output_key()/transpose_score() are never even
+                # called, exactly reproducing this function's own
+                # prior, only behavior.
+                if output_key is not None:
+
+                    semitones = semitones_for_output_key(
+                        score.key, output_key
+                    )
+
+                    new_key = transpose_score(score, semitones)
+
+                    score.key = new_key
+
+                    score.score.key = new_key
+
+                    output(
+                        f"Transposed to {new_key}"
+                    )
+
 
                 output(
                     "================================"
@@ -820,16 +885,32 @@ def run_optimizer(
 
                 else:
 
-                    analyzer = TuningAnalyzer(
-                        score.notes,
-                        score.key,
-                        score.harmonies,
-                        score.score.notes
-                    )
+                    if any_key:
+
+                        # BO-178 -- any-key mode: each tuning's
+                        # own best-scoring candidate key (among
+                        # its own key_strengths), not the song's
+                        # single shared key. See any_key.py's own
+                        # docstring for the full mechanism.
+                        modern_results = rank_tunings_across_keys(
+                            score.notes, score.score.notes,
+                            score.harmonies, score.key
+                        )
+
+                    else:
+
+                        analyzer = TuningAnalyzer(
+                            score.notes,
+                            score.key,
+                            score.harmonies,
+                            score.score.notes
+                        )
 
 
 
-                    results = analyzer.analyze()
+                        results = analyzer.analyze()
+
+                        modern_results = results["modern"]
 
 
 
@@ -843,7 +924,7 @@ def run_optimizer(
 
 
                     top_results = apply_shared_features(
-                        results["modern"][:num_tunings]
+                        modern_results[:num_tunings]
                     )
 
                     top_results = apply_confidence(top_results)
@@ -941,7 +1022,7 @@ def run_optimizer(
                 if alternatives > 0:
 
                     additional = select_additional_strong_alternatives(
-                        results["modern"][num_tunings:],
+                        modern_results[num_tunings:],
                         alternatives
                     )
 
@@ -1016,6 +1097,15 @@ def run_optimizer(
 
                 generation_chord_service = ChordService(ChordLibrary())
 
+                # BO-178 -- captured before the generation loop
+                # below, which (in any-key mode only) transposes
+                # `score` per-item to each recommendation's own
+                # best key, in place -- this preserves the song's
+                # own original source key for the report below,
+                # rather than whatever the LAST generated item
+                # happened to leave `score.key` as.
+                original_source_key = score.key
+
                 all_melody_exceptions = []
 
                 # BO-153 -- structured, per-tuning generation results,
@@ -1047,6 +1137,36 @@ def run_optimizer(
                             if REQUESTED_TUNING is not None
                             else get_tunings()[item.name]
                         )
+
+                        # BO-178 -- any-key mode: this specific
+                        # recommendation's own best key may differ
+                        # from whatever key `score` currently sits
+                        # in (its original source key, or another
+                        # item's own recommended key from a
+                        # previous iteration of this same loop).
+                        # semitones_for_output_key() always reads
+                        # score.key's own CURRENT state as its
+                        # source, so re-deriving the shift fresh
+                        # here, every iteration, is safe regardless
+                        # of what the previous item left it as --
+                        # no manual "undo" step needed. None (same-
+                        # key mode, or an any-key result whose own
+                        # best key genuinely was the source key)
+                        # leaves `score` untouched, identical to
+                        # output_key=None's own existing no-op.
+                        if item.recommended_key is not None:
+
+                            item_semitones = semitones_for_output_key(
+                                score.key, item.recommended_key
+                            )
+
+                            item_new_key = transpose_score(
+                                score, item_semitones
+                            )
+
+                            score.key = item_new_key
+
+                            score.score.key = item_new_key
 
                         (
                             tab_path, tab_shapes_applied, tab_shapes_skipped,
@@ -1181,7 +1301,7 @@ def run_optimizer(
                 all_scores_results.append({
                     "filename": filename.name,
                     "title": score.title,
-                    "key": score.key,
+                    "key": original_source_key,
                     "time_signature": score.time_signature,
                     "total_notes": len(score.notes),
                     "staff_used": staff_used,
