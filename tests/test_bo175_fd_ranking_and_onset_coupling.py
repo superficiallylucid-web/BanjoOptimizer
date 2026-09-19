@@ -170,7 +170,7 @@ def test_coupling_never_activates_when_box_notes_present():
     # the coupling must never be consulted for it -- confirmed by
     # comparing the real result against the same call with the
     # coupling helper forced to always return None.
-    shape_real, _, _ = _select_chord_shape_for_harmony(
+    shape_real, _, _, _ = _select_chord_shape_for_harmony(
         cmaj7, DOUBLE_D, service, melody_notes=p.score.notes,
         next_harmony=next_harmony
     )
@@ -185,7 +185,7 @@ def test_coupling_never_activates_when_box_notes_present():
 
     try:
 
-        shape_forced_off, _, _ = _select_chord_shape_for_harmony(
+        shape_forced_off, _, _, _ = _select_chord_shape_for_harmony(
             cmaj7, DOUBLE_D, service, melody_notes=p.score.notes,
             next_harmony=next_harmony
         )

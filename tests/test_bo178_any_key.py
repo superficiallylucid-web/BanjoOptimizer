@@ -137,6 +137,8 @@ def test_report_key_is_original_source_key_in_any_key_mode():
 
 def test_generated_file_reflects_its_own_recommended_key():
 
+    from music import key_display_name
+
     buf = io.StringIO()
 
     with contextlib.redirect_stdout(buf):
@@ -148,6 +150,20 @@ def test_generated_file_reflects_its_own_recommended_key():
             any_key=True
         )
 
+    # BO-180 -- the filename now shows the COMPLETE key (root +
+    # "m" for minor, via music.key_display_name()), not just the
+    # root recommended_key itself stores (recommended_key stays
+    # root-only/mode-blind by design -- see BO-180's own gui.py
+    # comment -- it also feeds transposition.
+    # semitones_for_output_key() directly elsewhere, which needs
+    # a bare root). Mode is reattached here from this score's own
+    # key, exactly as BO-180's GUI display does, since
+    # transposition always preserves mode.
+    mode_word = (
+        result["scores"][0]["key"].split()[-1]
+        if result["scores"][0]["key"] else ""
+    )
+
     for rec, generated in zip(
         result["scores"][0]["recommendations"],
         result["scores"][0]["generated_files"]
@@ -155,7 +171,11 @@ def test_generated_file_reflects_its_own_recommended_key():
 
         if rec.recommended_key is not None:
 
+            display_key = key_display_name(
+                f"{rec.recommended_key} {mode_word}"
+            )
+
             assert (
-                f"Key {rec.recommended_key} "
+                f"Key {display_key} "
                 in generated["tab_path"].name
             )

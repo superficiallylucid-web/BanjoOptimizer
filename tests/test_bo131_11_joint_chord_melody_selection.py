@@ -68,7 +68,7 @@ def _select(p, harmony, tuning, service):
         p.harmonies[idx + 1] if idx + 1 < len(p.harmonies) else None
     )
 
-    shape, is_exception, exception_dict = (
+    shape, is_exception, exception_dict, _ = (
         _select_chord_shape_for_harmony(
             harmony, tuning, service, melody_notes=p.score.notes,
             next_harmony=next_harmony, incoming_shape=None

@@ -98,14 +98,14 @@ def test_incoming_hp_continuity_across_chord_change():
 
     cmaj7_harmony = harmonies_sorted[c_index + 1]
 
-    c_shape, _, _ = _select_chord_shape_for_harmony(
+    c_shape, _, _, _ = _select_chord_shape_for_harmony(
         c_harmony, A_MODAL_SAWMILL, service,
         melody_notes=p.score.notes, next_harmony=cmaj7_harmony
     )
 
     assert c_shape.shape == "0(10)(10)0"
 
-    cmaj7_shape, _, _ = _select_chord_shape_for_harmony(
+    cmaj7_shape, _, _, _ = _select_chord_shape_for_harmony(
         cmaj7_harmony, A_MODAL_SAWMILL, service,
         melody_notes=p.score.notes,
         next_harmony=harmonies_sorted[c_index + 2],
@@ -194,13 +194,13 @@ def test_genuine_hp_transition_still_occurs():
 
     em_harmony = harmonies_sorted[c_index + 2]
 
-    cmaj7_shape, _, _ = _select_chord_shape_for_harmony(
+    cmaj7_shape, _, _, _ = _select_chord_shape_for_harmony(
         cmaj7_harmony, A_MODAL_SAWMILL, service,
         melody_notes=p.score.notes, next_harmony=em_harmony,
         incoming_shape="0(10)(10)0"
     )
 
-    em_shape, _, _ = _select_chord_shape_for_harmony(
+    em_shape, _, _, _ = _select_chord_shape_for_harmony(
         em_harmony, A_MODAL_SAWMILL, service,
         melody_notes=p.score.notes,
         next_harmony=harmonies_sorted[c_index + 3],

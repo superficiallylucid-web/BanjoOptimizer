@@ -288,6 +288,47 @@ def get_key_profile(key):
 
 
 
+def key_display_name(key):
+    """
+    BO-180 -- the "complete key" name used in filenames, the GUI
+    panel, and the in-score tuning text label: root note only
+    for major ("C major" -> "C", matching every existing caller's
+    prior behavior), root note + "m" for minor ("B minor" ->
+    "Bm", "F# minor" -> "F#m") -- distinguishing the two modes,
+    which the prior root-only convention conflated (B major and
+    B minor both previously displayed as just "B", even though
+    they are different keys with different key signatures).
+
+    key: a parser.estimate_key()-style string ("<root> major" or
+    "<root> minor", case-insensitive on the mode word) -- the
+    same format score.key/transpose_score()'s own return value
+    always uses. Root spelling is passed through completely
+    unchanged (this function makes no spelling decisions of its
+    own -- estimate_key()'s existing major_keys/minor_keys dicts
+    already spell every key exactly as BO-180's own request
+    listed, e.g. "F# minor"/"A# minor" for sharp keys, "Bb minor"
+    for -5, confirmed directly against parser.py before writing
+    this).
+
+    Returns "" for a falsy/missing key (no root to display),
+    matching every existing caller's own prior "" fallback for
+    a missing key -- not "Unknown" or a crash.
+    """
+
+    if not key:
+
+        return ""
+
+    parts = key.split()
+
+    root = parts[0]
+
+    mode = parts[-1].lower() if len(parts) > 1 else "major"
+
+    return f"{root}m" if mode == "minor" else root
+
+
+
 def key_tonic(key):
     """
     Return tonic pitch class.
@@ -560,6 +601,21 @@ CHORD_QUALITIES = {
     "6": {
         "intervals": [0, 4, 7, 9],
         "display": "6"
+    },
+
+    # BO-181 -- dominant 7th, flat 5: root, major 3rd, diminished
+    # 5th, minor 7th. Same shape of gap as "o7"/"7#5" (BO-121) and
+    # "6" (BO-167) above: prior to this entry, chord_tones()
+    # returned None for it, so no FD was ever generated at all.
+    # Confirmed real: user's own reported case, "G7b5" (Take the
+    # A Train) -- MuseScore emits quality_code "7b5" for this
+    # chord, the standard, unambiguous jazz spelling (unlike
+    # BO-181's OTHER reported case, "G3", which the user confirmed
+    # is a one-off special not worth chasing -- deliberately not
+    # added here).
+    "7b5": {
+        "intervals": [0, 4, 6, 10],
+        "display": "7b5"
     }
 
 }
@@ -926,6 +982,15 @@ QUALITY_CODE_TO_DISPLAY_NAME = {
     # too -- confirmed necessary via direct real-pipeline tracing
     # during BO-167's own C6 investigation.
     "6": "6",
+    # BO-181 -- matches CHORD_QUALITIES' own new "7b5" entry
+    # above, same reasoning as the "o7"/"7#5"/"6" entries before
+    # it: this second, separate lookup table gates
+    # _select_chord_shape_for_harmony()'s own earliest return
+    # independently of CHORD_QUALITIES, so it needs its own entry
+    # too -- confirmed necessary via direct real-pipeline tracing
+    # during BO-121/BO-167's own investigations, reused here
+    # without re-verifying, since the gap shape is identical.
+    "7b5": "7b5",
 }
 
 

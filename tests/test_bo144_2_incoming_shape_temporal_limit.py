@@ -66,7 +66,7 @@ def test_below_cutoff_continuity_applies():
 
     service = ChordService(ChordLibrary())
 
-    shape, _, _ = _select_chord_shape_for_harmony(
+    shape, _, _, _ = _select_chord_shape_for_harmony(
         harmony, tuning, service, melody_notes=[melody_note],
         next_harmony=None, incoming_shape='0005',
         incoming_shape_elapsed_beats=1.0
@@ -90,7 +90,7 @@ def test_exactly_at_cutoff_continuity_still_applies():
 
     service = ChordService(ChordLibrary())
 
-    shape, _, _ = _select_chord_shape_for_harmony(
+    shape, _, _, _ = _select_chord_shape_for_harmony(
         harmony, tuning, service, melody_notes=[melody_note],
         next_harmony=None, incoming_shape='0005',
         incoming_shape_elapsed_beats=(
@@ -115,7 +115,7 @@ def test_beyond_cutoff_continuity_does_not_apply():
 
     service = ChordService(ChordLibrary())
 
-    shape, _, _ = _select_chord_shape_for_harmony(
+    shape, _, _, _ = _select_chord_shape_for_harmony(
         harmony, tuning, service, melody_notes=[melody_note],
         next_harmony=None, incoming_shape='0005',
         incoming_shape_elapsed_beats=(

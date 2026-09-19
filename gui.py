@@ -670,6 +670,8 @@ class BanjoOptimizerWindow(QWidget):
 
     def _display_result(self, result):
 
+        from music import key_display_name
+
         lines = []
 
         for score_result in result["scores"]:
@@ -689,18 +691,41 @@ class BanjoOptimizerWindow(QWidget):
 
             lines.append("")
 
+            # BO-180 -- the mode word (e.g. "minor") this score's
+            # own source/requested key uses -- transpose_score()
+            # always preserves mode, so every per-tuning key
+            # below (whether same-key mode's single shared key,
+            # or any-key mode's own, possibly different, root per
+            # tuning) genuinely shares this same mode. Used below
+            # to build each tuning's own complete key string.
+            mode_word = (
+                score_result["key"].split()[-1]
+                if score_result["key"] else ""
+            )
+
             for i, rec in enumerate(
                 score_result["recommendations"], start=1
             ):
-                # BO-178 -- recommended_key is only ever set in
-                # any-key mode, and only when this tuning's own
-                # best key genuinely differs from the input
-                # score's key -- omitted entirely in same-key
-                # mode (always None there) and for an any-key
+                # BO-180 -- every generated tab has a real key,
+                # so this now always displays one (previously
+                # shown only in any-key mode, and only when that
+                # tuning's own best key differed from the input
+                # key -- BO-178's own recommended_key, which
+                # stays root-only/mode-blind since it also feeds
+                # transposition.semitones_for_output_key()
+                # directly elsewhere; mode is reattached here,
+                # display-only, from mode_word above). Falls back
+                # to this score's own key when recommended_key is
+                # None -- same-key mode always, or an any-key
                 # result whose own best key was the input key.
-                key_suffix = (
-                    f" [Key: {rec.recommended_key}]"
+                display_key = key_display_name(
+                    f"{rec.recommended_key} {mode_word}"
                     if rec.recommended_key is not None
+                    else score_result["key"]
+                )
+
+                key_suffix = (
+                    f" [Key: {display_key}]" if display_key
                     else ""
                 )
                 lines.append(

@@ -74,7 +74,11 @@ def test_select_chord_shape_for_harmony_returns_usable_shape_for_c6():
         measure=1, root_pc=0, quality_code="6", symbol="C6"
     )
 
-    shape, is_exception, incoming_hp = (
+    # BO-181 -- _select_chord_shape_for_harmony() now returns a
+    # 4th value, quality_recognized, so this unpacking needs one
+    # more name -- unused here, this test only cares about the
+    # shape itself.
+    shape, is_exception, incoming_hp, _ = (
         score_generator._select_chord_shape_for_harmony(
             c6_harmony, tuning, chord_service
         )
@@ -99,7 +103,7 @@ def test_c6_shape_produces_real_fret_diagram_xml():
         measure=1, root_pc=0, quality_code="6", symbol="C6"
     )
 
-    shape, _, _ = score_generator._select_chord_shape_for_harmony(
+    shape, _, _, _ = score_generator._select_chord_shape_for_harmony(
         c6_harmony, tuning, chord_service
     )
 
@@ -129,7 +133,7 @@ def test_g6_also_resolves_confirming_root_independence():
         measure=1, root_pc=7, quality_code="6", symbol="G6"
     )
 
-    shape, _, _ = score_generator._select_chord_shape_for_harmony(
+    shape, _, _, _ = score_generator._select_chord_shape_for_harmony(
         g6_harmony, tuning, chord_service
     )
 
@@ -164,5 +168,8 @@ def test_existing_qualities_unchanged():
     assert music.QUALITY_CODE_TO_DISPLAY_NAME["o7"] == "dim7"
     assert music.QUALITY_CODE_TO_DISPLAY_NAME["7#5"] == "7#5"
 
-    assert len(music.CHORD_QUALITIES) == 16
-    assert len(music.QUALITY_CODE_TO_DISPLAY_NAME) == 12
+    # BO-181 -- both counts +1 for the new "7b5" entry (dominant
+    # 7th flat 5), same shape of addition as BO-167's own "6"
+    # entry just above.
+    assert len(music.CHORD_QUALITIES) == 17
+    assert len(music.QUALITY_CODE_TO_DISPLAY_NAME) == 13

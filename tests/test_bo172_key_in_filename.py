@@ -6,6 +6,14 @@ from "<title> - <tuning> (<sounded tuning>) - TAB.mscz" to
 "<title> Key <output key> <tuning> (<sounded tuning>).mscz",
 and the existing in-score tuning text (capo'd branch only) gains
 a "Key <output key> | " prefix.
+
+BO-180 follow-up (updated in place here, not a separate file):
+<output key> is now the COMPLETE key (root + "m" suffix for
+minor, e.g. "Bm" -- major stays root-only, e.g. "C") via music.
+key_display_name(), not just the root note -- root alone
+conflated two different, genuine keys (e.g. B major and B minor)
+into the same displayed text. Every assertion below using
+Aureolin (source key: B minor) reflects this.
 """
 
 import sys
@@ -66,7 +74,7 @@ def test_recommended_tuning_filename():
     generated = result['scores'][0]['generated_files'][0]
 
     assert generated['tab_path'].name == (
-        'Aureolin Key C Double D (aDADE).mscz'
+        'Aureolin Key Cm Double D (aDADE).mscz'
     )
 
 
@@ -86,7 +94,7 @@ def test_specific_tuning_capo_0_filename():
     generated = result['scores'][0]['generated_files'][0]
 
     assert generated['tab_path'].name == (
-        'Aureolin Key C gCGCD (gCGCD).mscz'
+        'Aureolin Key Cm gCGCD (gCGCD).mscz'
     )
 
 
@@ -107,7 +115,7 @@ def test_specific_tuning_capo_2_filename():
     generated = result['scores'][0]['generated_files'][0]
 
     assert generated['tab_path'].name == (
-        'Aureolin Key D gDGBD capo 2 (gEAC#E).mscz'
+        'Aureolin Key Dm gDGBD capo 2 (gEAC#E).mscz'
     )
 
 
@@ -117,6 +125,11 @@ def test_specific_tuning_capo_2_filename():
 
 def test_output_key_appears_correctly_for_several_keys():
 
+    # Aureolin's own real source key is B minor (BO-171's own
+    # investigation) -- transposition preserves mode (transpose_
+    # score()'s own docstring/behavior), so every one of these
+    # requested output keys genuinely resolves to a minor key
+    # too, hence the "m" suffix expected below.
     for requested_key, expected_root in (
         ('C', 'C'), ('F#', 'F#'), ('A#', 'A#')
     ):
@@ -131,10 +144,10 @@ def test_output_key_appears_correctly_for_several_keys():
         generated = result['scores'][0]['generated_files'][0]
 
         assert generated['tab_path'].name.startswith(
-            f'Aureolin Key {expected_root} '
+            f'Aureolin Key {expected_root}m '
         ), (
             f"Expected filename to start with 'Aureolin Key "
-            f"{expected_root} ' for requested key "
+            f"{expected_root}m ' for requested key "
             f"{requested_key!r} -- got "
             f"{generated['tab_path'].name!r}."
         )
@@ -158,7 +171,7 @@ def test_keep_input_key_uses_source_key_in_filename():
     # Aureolin's own real, unmodified source key is B minor --
     # confirmed directly, BO-171's own investigation.
     assert generated['tab_path'].name == (
-        'Aureolin Key B gCGCD (gCGCD).mscz'
+        'Aureolin Key Bm gCGCD (gCGCD).mscz'
     )
 
 
@@ -178,7 +191,7 @@ def test_specified_output_key_uses_requested_key_in_filename():
     generated = result['scores'][0]['generated_files'][0]
 
     assert generated['tab_path'].name == (
-        'Aureolin Key G gCGCD (gCGCD).mscz'
+        'Aureolin Key Gm gCGCD (gCGCD).mscz'
     )
 
 
@@ -302,7 +315,7 @@ def test_in_score_tuning_text_includes_key_for_real_capoed_run():
             tuning_text = text_el.text
 
     assert tuning_text == (
-        'Key D | gEAC#E (open: gDGBD, capo 2)'
+        'Key Dm | gEAC#E (open: gDGBD, capo 2)'
     )
 
 
@@ -388,5 +401,5 @@ def test_filename_sanitization_still_strips_unsafe_characters():
     )
 
     assert output_path.name == (
-        'WeirdTitleName Key B Open G (gDGBD).mscz'
+        'WeirdTitleName Key Bm Open G (gDGBD).mscz'
     )

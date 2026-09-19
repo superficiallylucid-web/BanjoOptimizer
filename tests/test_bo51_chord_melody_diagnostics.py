@@ -80,7 +80,7 @@ def _christmas_song_cmaj7_case():
         h for h in p.harmonies if h.symbol == "Cmaj7"
     )
 
-    shape, _, _ = _select_chord_shape_for_harmony(
+    shape, _, _, _ = _select_chord_shape_for_harmony(
         harmony, A_MODAL_SAWMILL, service,
         melody_notes=p.score.notes
     )
@@ -249,7 +249,7 @@ def test_position_change_required_real_data():
         if g_index + 1 < len(harmonies_sorted) else None
     )
 
-    shape, _, _ = _select_chord_shape_for_harmony(
+    shape, _, _, _ = _select_chord_shape_for_harmony(
         g_harmony, c_standard, service,
         melody_notes=p.score.notes, next_harmony=next_harmony
     )

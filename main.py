@@ -1256,6 +1256,38 @@ def run_optimizer(
 
                         if "reason" in exception:
 
+                            # BO-181 -- an unrecognized-chord-type
+                            # exception (chord_symbol present,
+                            # melody_pitch absent -- neither this
+                            # chord's quality was ever understood,
+                            # nor was any shape ever selected for
+                            # it, so there's no melody pitch to
+                            # report). Checked first, and
+                            # distinctly, since it shares the
+                            # "reason" key with the unreachable-
+                            # pitch exception below it but is a
+                            # genuinely different situation (a
+                            # chord, not a melody note) with its
+                            # own, differently-shaped fields.
+
+                            if "chord_symbol" in exception:
+
+                                output(
+                                    f"   Chord: "
+                                    f"{exception['chord_symbol']}"
+                                )
+
+                                output(
+                                    f"   Tuning: "
+                                    f"{exception['tuning_symbol']}"
+                                )
+
+                                output(
+                                    f"   {exception['reason']}.\n"
+                                )
+
+                                continue
+
                             # An unreachable-pitch exception (this
                             # note's own melody pitch has no possible
                             # fret/string in this tuning at all -- a

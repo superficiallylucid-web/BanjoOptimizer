@@ -138,7 +138,7 @@ def test_real_double_c_final_chord_selects_lower_shape():
         if h.symbol == "C" and h.measure == 32
     ][0]
 
-    chosen_shape, is_exception, exc = _select_chord_shape_for_harmony(
+    chosen_shape, is_exception, exc, _ = _select_chord_shape_for_harmony(
         c_harmony, double_c, service, melody_notes=p.score.notes
     )
 
@@ -314,7 +314,7 @@ def test_generalizes_to_a_modal_sawmill_no_high_fret_shapes():
 
     for h in p.harmonies:
 
-        chosen_shape, is_exception, exc = (
+        chosen_shape, is_exception, exc, _ = (
             _select_chord_shape_for_harmony(
                 h, A_MODAL_SAWMILL, service,
                 melody_notes=p.score.notes

@@ -121,7 +121,7 @@ def test_avg_generated_chord_playability_matches_real_selector_output():
             if harmony_index + 1 < len(p.harmonies) else None
         )
 
-        shape, is_exception, exception_dict = (
+        shape, is_exception, exception_dict, _ = (
             _select_chord_shape_for_harmony(
                 harmony, tuning, chord_service,
                 melody_notes=p.score.notes,

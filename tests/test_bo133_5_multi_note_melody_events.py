@@ -252,7 +252,7 @@ def test_chord_selection_reflects_full_multi_note_voicing():
 
     service = ChordService(ChordLibrary())
 
-    shape, is_exception, exception_dict = (
+    shape, is_exception, exception_dict, _ = (
         _select_chord_shape_for_harmony(
             dsus2, tuning, service, melody_notes=p.score.notes,
             next_harmony=p.harmonies[1], incoming_shape=None
@@ -468,7 +468,7 @@ def test_octave_adjustment_output_fully_consistent():
     # BO's own report).
     dsus2 = p.harmonies[0]
 
-    shape, is_exception, exception_dict = (
+    shape, is_exception, exception_dict, _ = (
         _select_chord_shape_for_harmony(
             dsus2, tuning, service, melody_notes=p.score.notes,
             next_harmony=p.harmonies[1], incoming_shape=None

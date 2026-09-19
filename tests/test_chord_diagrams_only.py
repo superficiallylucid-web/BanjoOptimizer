@@ -589,7 +589,7 @@ def test_chord_diagram_shape_matches_chord_service_directly():
                 _select_chord_shape_for_harmony
             )
 
-            selected_shape, _, _ = (
+            selected_shape, _, _, _ = (
                 _select_chord_shape_for_harmony(
                     matching_harmony, target_tuning, service,
                     melody_notes=p.score.notes

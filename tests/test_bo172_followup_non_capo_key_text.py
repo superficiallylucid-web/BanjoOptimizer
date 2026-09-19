@@ -99,7 +99,7 @@ def test_real_key_estimated_non_capo_case_includes_key_prefix():
         output_path, 'Banjo tuning'
     )
 
-    assert tuning_text == 'Key B | Banjo tuning: gCGCD (Double C)'
+    assert tuning_text == 'Key Bm | Banjo tuning: gCGCD (Double C)'
 
 
 def test_real_key_estimated_non_capo_case_via_full_pipeline():
@@ -123,7 +123,7 @@ def test_real_key_estimated_non_capo_case_via_full_pipeline():
         generated['tab_path'], 'Banjo tuning'
     )
 
-    assert tuning_text == 'Key G | Banjo tuning: gCGCD (gCGCD)'
+    assert tuning_text == 'Key Gm | Banjo tuning: gCGCD (gCGCD)'
 
 
 # ---------------------------------------------------------

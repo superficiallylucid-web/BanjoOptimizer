@@ -88,7 +88,7 @@ from fretboard import (
 
 from music import (
     quality_code_to_display_name, pitch_name, midi_to_note_name,
-    pitch_class_to_tpc
+    pitch_class_to_tpc, key_display_name
 )
 
 from playing_model import _chord_working_fret
@@ -1438,15 +1438,28 @@ def _select_chord_shape_for_harmony(
     disables the BO-54 HP-continuity tiebreak entirely,
     reproducing this function's own pre-BO-54 behavior exactly.
 
-    Returns (chosen_shape, is_exception, exception_dict) --
-    chosen_shape is None (with is_exception False and
-    exception_dict None) when this harmony's quality isn't
-    recognized or no usable shape exists for this tuning,
-    exactly matching _apply_chord_shapes()'s own "skipped"
-    case. exception_dict is the BO-21 exception record (or
-    None when not an exception), built identically to what
+    Returns (chosen_shape, is_exception, exception_dict,
+    quality_recognized) -- chosen_shape is None (with
+    is_exception False and exception_dict None) when this
+    harmony's quality isn't recognized or no usable shape exists
+    for this tuning, exactly matching _apply_chord_shapes()'s own
+    "skipped" case. exception_dict is the BO-21 exception record
+    (or None when not an exception), built identically to what
     _apply_chord_shapes() itself would append to its own
     exceptions list.
+
+    quality_recognized: BO-181 -- False only in the specific case
+    that reaches this function's own earliest return below (this
+    harmony's quality_code isn't in music.QUALITY_CODE_TO_
+    DISPLAY_NAME at all) -- True in every other case, including
+    when chosen_shape still ends up None because no playable
+    shape exists for this particular tuning (a genuinely
+    different situation: the chord type itself is understood,
+    it's just unplayable here). Lets _apply_chord_shapes() color
+    the chord symbol red and report it distinctly from that
+    other, unrelated "skipped" case, which stays exactly as
+    before -- silent, no color, no exception -- since nothing
+    about it changed.
     """
 
     root_name = pitch_name(harmony.root_pc)
@@ -1485,7 +1498,7 @@ def _select_chord_shape_for_harmony(
 
     if quality_display is None:
 
-        return None, False, None
+        return None, False, None, False
 
     melody_pitches = None
 
@@ -1772,7 +1785,7 @@ def _select_chord_shape_for_harmony(
 
             if contains_onset_pitch:
 
-                return candidate, False, None
+                return candidate, False, None, True
 
     if melody_pitches:
 
@@ -1807,7 +1820,7 @@ def _select_chord_shape_for_harmony(
 
     if not shapes:
 
-        return None, False, None
+        return None, False, None, True
 
     # BO-131.11 -- joint chord/melody selection, v1: scoped
     # exactly to "one chord occurrence + its onset melody note"
@@ -1970,7 +1983,7 @@ def _select_chord_shape_for_harmony(
             "tuning_symbol": tuning.symbol
         }
 
-    return chosen_shape, is_exception, exception_dict
+    return chosen_shape, is_exception, exception_dict, True
 
 
 def _apply_chord_shapes(
@@ -2011,18 +2024,25 @@ def _apply_chord_shapes(
     attempt: unrecognized quality code, no usable shape for
     this tuning, or a muted-string shape (see module notes).
 
-    exceptions: BO-21 -- a list of dicts, one per chord where a
-    melody note existed at the chord's exact onset but no
-    practical shape containing that exact pitch existed, so the
-    normal fallback shape was used and its FretDiagram was
-    marked red (see _set_fret_diagram_content()'s own docstring
-    for the red-marking mechanism). Each dict has measure, beat,
-    chord_symbol, melody_pitch, selected_shape, tuning_symbol --
-    enough to build the report section BO-21 asks for without
-    the caller needing to re-derive anything. Always an empty
-    list when melody_notes is None (matching the pre-BO-21
-    behavior exactly -- no melody awareness means no exceptions
-    either).
+    exceptions: BO-21 -- a list of dicts, of two distinct
+    shapes. Most have measure, beat, chord_symbol, melody_pitch,
+    selected_shape, tuning_symbol: a melody note existed at the
+    chord's exact onset but no practical shape containing that
+    exact pitch existed, so the normal fallback shape was used
+    and its FretDiagram was marked red (see
+    _set_fret_diagram_content()'s own docstring for the
+    red-marking mechanism). BO-181 adds a second, differently-
+    shaped kind: measure, beat, chord_symbol, tuning_symbol,
+    reason -- no melody_pitch or selected_shape, since neither
+    concept applies when the chord's own quality was never
+    recognized at all (no shape was ever selected, exact pitch
+    or otherwise); the chord symbol's own text is marked red
+    instead of a FretDiagram, since none was ever created. Always
+    an empty list when melody_notes is None (matching the
+    pre-BO-21 behavior exactly for the first shape -- no melody
+    awareness means no exceptions of that kind; the second,
+    BO-181 shape is unaffected by melody_notes either way, since
+    it never depended on melody awareness at all).
     """
 
     xml_harmony_elements = [
@@ -2073,7 +2093,9 @@ def _apply_chord_shapes(
                 time_signature=time_signature
             )
 
-        chosen_shape, is_exception, exception_dict = (
+        chosen_shape, is_exception, exception_dict, (
+            quality_recognized
+        ) = (
             _select_chord_shape_for_harmony(
                 harmony, tuning, chord_service, melody_notes,
                 next_harmony=next_harmony,
@@ -2095,6 +2117,40 @@ def _apply_chord_shapes(
         if chosen_shape is None:
 
             skipped_count += 1
+
+            # BO-181 -- an unrecognized quality is a genuinely
+            # different, earlier failure than "no usable shape
+            # exists for this tuning" (the only other reason
+            # chosen_shape can be None here) -- the chord type
+            # itself was never understood at all, so nothing was
+            # even attempted. Marks the chord symbol's own text
+            # red (reusing _add_note_warning_color()'s existing,
+            # already-generic <color r="255" g="0" b="4" a="255"
+            # /> marking -- confirmed it takes any element and
+            # adds nothing else, so it applies to a Harmony
+            # element exactly as it does to a Note) and logs a
+            # distinctly-shaped exception (measure/beat/chord_
+            # symbol/tuning_symbol/reason, no melody_pitch or
+            # selected_shape -- neither concept applies when no
+            # shape was ever selected at all) so it's reported by
+            # name rather than silently vanishing into skipped_
+            # count. The "no usable shape for this tuning" case
+            # is deliberately untouched -- same silent skip as
+            # before this BO, since nothing about it changed.
+            if not quality_recognized:
+
+                _add_note_warning_color(xml_harmony)
+
+                exceptions.append({
+                    "measure": harmony.measure,
+                    "beat": harmony.beat,
+                    "chord_symbol": harmony.symbol,
+                    "tuning_symbol": tuning.symbol,
+                    "reason": (
+                        "unrecognized chord type -- no chord "
+                        "diagram was generated"
+                    )
+                })
 
             continue
 
@@ -4912,7 +4968,7 @@ def generate_tab_from_template(
                 time_signature=score_file.time_signature
             )
 
-        chosen_shape, _, _ = _select_chord_shape_for_harmony(
+        chosen_shape, _, _, _ = _select_chord_shape_for_harmony(
             harmony, tuning, chord_service,
             melody_notes=score_file.score.notes,
             next_harmony=next_harmony,
@@ -5324,7 +5380,11 @@ def generate_tab_from_template(
         lyricist=score_file.score.lyricist
     )
 
-    # BO-172 -- passes score_file.key's own root note through,
+    # BO-180 -- passes score_file.key's own complete key (root +
+    # "m" for minor, via music.key_display_name(), replacing
+    # BO-172's own root-only convention -- same reasoning as the
+    # filename's own BO-180 update above: root alone conflated
+    # e.g. B major and B minor into the same displayed text),
     # always (not conditionally on whether a BO-171 output key
     # was actually requested) -- "Keep input key" still has a
     # real, genuine key by this point, just an untransposed one;
@@ -5332,9 +5392,7 @@ def generate_tab_from_template(
     # only affects the capo'd branch.
     _add_tuning_text(
         tab_staff, tuning,
-        output_key=(
-            score_file.key.split()[0] if score_file.key else None
-        )
+        output_key=key_display_name(score_file.key) or None
     )
 
     # ---- Rebuild the TAB staff's Measures from the source's
@@ -7505,22 +7563,21 @@ def generate_tab_from_template(
 
         title = score_file.score.title or "Untitled"
 
-        # BO-172 -- output_key_name: just the root note (e.g. "C"
-        # from "C minor"), matching the filename convention shown
-        # in this ticket's own examples -- not the full key string
-        # (mode isn't part of the filename). score_file.key is
+        # BO-180 -- output_key_name: the complete key (root +
+        # "m" suffix for minor, e.g. "Bm" from "B minor"; root
+        # only for major, e.g. "C" from "C major" -- unchanged
+        # from BO-172's own prior convention there) via music.
+        # key_display_name(), replacing BO-172's own root-only
+        # convention, which conflated e.g. B major and B minor
+        # into the same filename ("Key B" either way) -- a
+        # different, genuine key each time. score_file.key is
         # always populated by the time this function runs on the
         # real production path (main.py's own run_optimizer()
         # always calls score.estimate_key() before generation,
         # and BO-171's own transposition -- when an output key was
         # requested -- already updated it to the new, transposed
-        # key by this point). .split()[0] on the default "Unknown"
-        # (only reachable if estimate_key() was never called at
-        # all) is a harmless "Unknown" -- explicit rather than a
-        # crash, not a case this production path actually hits.
-        output_key_name = (
-            score_file.key.split()[0] if score_file.key else ""
-        )
+        # key by this point).
+        output_key_name = key_display_name(score_file.key)
 
         filename = _sanitize_filename(
             f"{title} Key {output_key_name} "

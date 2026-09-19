@@ -115,7 +115,7 @@ def test_melody_aware_chord_shape_preference():
         _christmas_song_cmaj7_double_d()
     )
 
-    shape, _, _ = _select_chord_shape_for_harmony(
+    shape, _, _, _ = _select_chord_shape_for_harmony(
         cmaj7, DOUBLE_D, service, melody_notes=p.score.notes,
         next_harmony=next_harmony
     )
@@ -137,7 +137,7 @@ def test_hp_continuity_keeps_consecutive_notes_in_position():
         _christmas_song_cmaj7_double_d()
     )
 
-    shape, _, _ = _select_chord_shape_for_harmony(
+    shape, _, _, _ = _select_chord_shape_for_harmony(
         cmaj7, DOUBLE_D, service, melody_notes=p.score.notes,
         next_harmony=next_harmony
     )
@@ -195,7 +195,7 @@ def test_genuine_hp_transition_still_allowed():
         _christmas_song_cmaj7_double_d()
     )
 
-    shape, _, _ = _select_chord_shape_for_harmony(
+    shape, _, _, _ = _select_chord_shape_for_harmony(
         cmaj7, DOUBLE_D, service, melody_notes=p.score.notes,
         next_harmony=next_harmony
     )
@@ -216,7 +216,7 @@ def test_genuine_hp_transition_still_allowed():
         if em_index + 1 < len(harmonies_sorted) else None
     )
 
-    em_shape, _, _ = _select_chord_shape_for_harmony(
+    em_shape, _, _, _ = _select_chord_shape_for_harmony(
         next_harmony, DOUBLE_D, service,
         melody_notes=p.score.notes, next_harmony=em_next
     )
@@ -279,7 +279,7 @@ def test_multiple_notes_considered_not_just_first():
         _christmas_song_cmaj7_double_d()
     )
 
-    shape, _, _ = _select_chord_shape_for_harmony(
+    shape, _, _, _ = _select_chord_shape_for_harmony(
         cmaj7, DOUBLE_D, service, melody_notes=p.score.notes,
         next_harmony=next_harmony
     )
@@ -329,7 +329,7 @@ def test_hp_continuity_respects_chord_tone_vs_voicing_distinction():
         _christmas_song_cmaj7_double_d()
     )
 
-    shape, _, _ = _select_chord_shape_for_harmony(
+    shape, _, _, _ = _select_chord_shape_for_harmony(
         cmaj7, DOUBLE_D, service, melody_notes=p.score.notes,
         next_harmony=next_harmony
     )
@@ -368,7 +368,7 @@ def test_position_coherence_preferred_when_meaningful():
         _christmas_song_cmaj7_double_d()
     )
 
-    shape, _, _ = _select_chord_shape_for_harmony(
+    shape, _, _, _ = _select_chord_shape_for_harmony(
         cmaj7, DOUBLE_D, service, melody_notes=p.score.notes,
         next_harmony=next_harmony
     )
