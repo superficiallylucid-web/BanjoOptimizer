@@ -129,7 +129,22 @@ def get_tunings():
             name="Old G",
             symbol="gDGDE",
             notes=[67, 50, 55, 62, 64],
-            category="modern",
+            # BO-183 -- changed from "modern" to "historical" at
+            # the user's own explicit request, to remove it from
+            # both recommendation modes (optimizer.py's own same-
+            # key scoring and any_key.py's own any-key ranking
+            # both gate strictly on category == "modern" -- this
+            # is the only field either one consults). Reuses the
+            # same category value "Minstrel" already carries below
+            # (already excluded from recommendations before this
+            # change, for the same reason), rather than inventing
+            # a new category value for the same purpose. Still
+            # remains a selectable option under "Use specific
+            # tuning" (gui.py's own all_tunings_combo lists every
+            # tuning from get_tunings() regardless of category --
+            # confirmed directly, not filtered by "modern" at
+            # all) -- only automatic recommendation is affected.
+            category="historical",
             popularity=5,
             key_strengths={
                 "E minor": 10,

@@ -171,5 +171,8 @@ def test_existing_qualities_unchanged():
     # BO-181 -- both counts +1 for the new "7b5" entry (dominant
     # 7th flat 5), same shape of addition as BO-167's own "6"
     # entry just above.
-    assert len(music.CHORD_QUALITIES) == 17
-    assert len(music.QUALITY_CODE_TO_DISPLAY_NAME) == 13
+    # BO-182 -- both counts +2 for the new "add9"/"9" pair (both
+    # deliberately mapped to the same no-7th interval set), same
+    # shape of addition as every entry before it.
+    assert len(music.CHORD_QUALITIES) == 19
+    assert len(music.QUALITY_CODE_TO_DISPLAY_NAME) == 15

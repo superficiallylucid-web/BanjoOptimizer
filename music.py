@@ -616,6 +616,32 @@ CHORD_QUALITIES = {
     "7b5": {
         "intervals": [0, 4, 6, 10],
         "display": "7b5"
+    },
+
+    # BO-182 -- add9: a plain major triad (root, major 3rd,
+    # perfect 5th) plus the 9th (major 2nd, one octave up --
+    # collapsed to pitch class 2, matching this table's own
+    # every-interval-is-a-pitch-class convention, e.g. "6" above
+    # using 9 for a 6th rather than a literal 9-semitone-plus-
+    # octave value). No 7th at all -- deliberately, per the
+    # user's own reasoning: a 5-note chord (1, 3, 5, 7, 9) has no
+    # practical banjo voicing at all (4-5 strings), so both of
+    # the user's reported spellings for this chord -- "add9" and
+    # bare "9" -- are mapped to the SAME, no-7th interval set
+    # here, even though "9" alone is conventionally a dominant
+    # 9th (WITH a minor 7th) in general music theory. This is a
+    # deliberate simplification for this instrument, not an
+    # oversight -- if a real MuseScore file ever turns out to
+    # need the full dominant-9th voicing distinguished from add9,
+    # that would need its own, separate quality_code entry.
+    "add9": {
+        "intervals": [0, 2, 4, 7],
+        "display": "add9"
+    },
+
+    "9": {
+        "intervals": [0, 2, 4, 7],
+        "display": "add9"
     }
 
 }
@@ -991,6 +1017,14 @@ QUALITY_CODE_TO_DISPLAY_NAME = {
     # during BO-121/BO-167's own investigations, reused here
     # without re-verifying, since the gap shape is identical.
     "7b5": "7b5",
+    # BO-182 -- matches CHORD_QUALITIES' own new "add9"/"9" pair
+    # above (both deliberately mapped to the same no-7th interval
+    # set -- see that entry's own comment), same reasoning as
+    # every prior addition to this table: gates
+    # _select_chord_shape_for_harmony()'s own earliest return
+    # independently of CHORD_QUALITIES.
+    "add9": "add9",
+    "9": "add9",
 }
 
 

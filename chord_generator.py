@@ -52,7 +52,7 @@ from fretboard import (
     hand_span,
     average_fret as fretted_average,
     calculate_shape_metadata,
-    get_max_fret
+    get_effective_max_fret
 )
 
 from playability import evaluate as evaluate_playability
@@ -443,11 +443,27 @@ def generate_candidates(
     # docstring in models.py).
     melody_strings = tuning.notes[1:]
 
+    # BO-185 -- the effective, capo-aware ceiling (get_effective_
+    # max_fret()) can be LOWER than FRET_CEILING's own fixed
+    # "loose computational bound" (7) for a low-configured-
+    # ceiling-plus-capo combination (e.g. a 5-fret ceiling with a
+    # capo at 5 leaves 0 effective frets above the capo) --
+    # confirmed real, directly: with a 6-fret ceiling and a capo
+    # of 2 (effective 4), a chord shape reaching fret 5 on some
+    # string was still generated and, via this note's own melody-
+    # position anchor to that chord's own shape, written into the
+    # actual output, 1 fret beyond the real physical limit that
+    # ceiling was configured to represent. Only ever narrows the
+    # search (min(), never widens it) -- when the effective
+    # ceiling is above 7, exactly the prior, unaffected 0..7
+    # search still runs.
+    search_ceiling = min(FRET_CEILING, get_effective_max_fret())
+
     per_string_frets = [
         find_frets_for_pitch_classes(
             open_note,
             tones,
-            FRET_CEILING
+            search_ceiling
         )
         for open_note in melody_strings
     ]
@@ -471,14 +487,14 @@ def generate_candidates(
         # low-position options everywhere else has a huge hand
         # span and never survives the filter below. So every
         # string's search is widened to the full practical neck
-        # (BO-177 -- get_max_fret(), the same user-configured
-        # ceiling find_positions() itself now respects, not a
-        # second, independent hardcoded bound) for chord-tone-
-        # producing frets, not just the one melody pitch's own
-        # exact fret -- the existing hand-span/playability
-        # filters, unchanged, still do the actual practicality
-        # filtering from this wider pool exactly as they always
-        # have.
+        # (BO-177 -- get_effective_max_fret(), the same user-
+        # configured, capo-aware ceiling find_positions() itself
+        # now respects (BO-185), not a second, independent
+        # hardcoded bound) for chord-tone-producing frets, not
+        # just the one melody pitch's own exact fret -- the
+        # existing hand-span/playability filters, unchanged,
+        # still do the actual practicality filtering from this
+        # wider pool exactly as they always have.
         #
         # Only done at all when the melody pitch is genuinely a
         # chord tone (checked above) -- if it isn't, no shape
@@ -489,7 +505,7 @@ def generate_candidates(
         for string_index, open_note in enumerate(melody_strings):
 
             wider_frets = find_frets_for_pitch_classes(
-                open_note, tones, get_max_fret()
+                open_note, tones, get_effective_max_fret()
             )
 
             for fret in wider_frets:

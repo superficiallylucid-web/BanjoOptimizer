@@ -1288,6 +1288,40 @@ def run_optimizer(
 
                                 continue
 
+                            # BO-186 -- an octave-shifted-note
+                            # exception (source_pitch present --
+                            # this note WAS written, one octave
+                            # away from its own real source pitch,
+                            # not left as a silent Rest, hence the
+                            # extra field showing both). Checked
+                            # before the plain unreachable-pitch
+                            # exception below, which this also
+                            # shares the "reason" key with but
+                            # lacks source_pitch entirely.
+
+                            if "source_pitch" in exception:
+
+                                output(
+                                    f"   Melody pitch: "
+                                    f"{exception['source_pitch']}"
+                                )
+
+                                output(
+                                    f"   Written as: "
+                                    f"{exception['melody_pitch']}"
+                                )
+
+                                output(
+                                    f"   Tuning: "
+                                    f"{exception['tuning_symbol']}"
+                                )
+
+                                output(
+                                    f"   {exception['reason']}.\n"
+                                )
+
+                                continue
+
                             # An unreachable-pitch exception (this
                             # note's own melody pitch has no possible
                             # fret/string in this tuning at all -- a

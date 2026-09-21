@@ -59,6 +59,57 @@ MAX_ALLOWED_MAX_FRET = 22
 
 _max_fret = DEFAULT_MAX_FRET
 
+# ---------------------------------------------------------
+# BO-185 -- capo reduces the physically usable fret range
+# ---------------------------------------------------------
+#
+# A capo shortens the playable neck by its own fret count: with
+# a 15-fret physical ceiling and a capo at fret 2, the highest
+# WRITTEN fret (relative to the capo, which every tuning.notes
+# value in this project already is -- confirmed directly, e.g.
+# "A Modal Sawmill"'s own notes are Double C's open notes shifted
+# up by exactly capo=2 on every fretted string) must not exceed
+# 13, not 15 -- fret 13 relative to the capo is the physical 15th
+# fret. Before this, find_positions() had no capo awareness at
+# all, so a capo'd tuning could write up to the user's own
+# configured ceiling ON TOP OF the capo, silently exceeding the
+# real, physical neck limit the user configured that ceiling to
+# represent in the first place.
+#
+# Same module-level-state pattern as _max_fret itself, for the
+# same reason (~75 find_positions() call sites, most with no
+# reason to know about capo at all) -- set once per tuning
+# (optimizer.py's score_tuning(), score_generator.py's
+# generate_tab_from_template()/generate_chord_diagrams_only(),
+# each already knows its own tuning.capo at that point) rather
+# than threaded as an explicit parameter everywhere. See
+# get_effective_max_fret() below for how this actually gets
+# applied -- kept separate from get_max_fret() itself so that
+# function's own round-trip contract with set_max_fret() stays
+# intact.
+_capo = 0
+
+
+def set_capo(value):
+    """
+    BO-185 -- sets the shared capo fret every get_max_fret() call
+    (and so, transitively, every find_positions() call and chord_
+    generator.py's own direct get_max_fret() use) accounts for,
+    until changed again. No range validation here -- main.py's
+    own --capo argument already validates 1-5 before this is ever
+    called with a real value, and 0 (no capo) is always valid
+    too; this function only stores what it's given.
+    """
+
+    global _capo
+
+    _capo = value
+
+
+def get_capo():
+
+    return _capo
+
 
 def set_max_fret(value):
     """
@@ -90,8 +141,41 @@ def set_max_fret(value):
 
 
 def get_max_fret():
+    """
+    Returns the raw, user-configured physical ceiling exactly as
+    set_max_fret() stored it -- NOT capo-adjusted. Existing
+    callers (score_generator.py's own BO-179 fallback: it reads
+    this value, temporarily overrides it, then restores it via
+    set_max_fret(get_max_fret())) depend on this being the exact
+    inverse of set_max_fret() -- returning a capo-adjusted value
+    here would have that restore silently shift the real,
+    user-configured ceiling down by the capo amount every time
+    the fallback runs. See get_effective_max_fret() (BO-185) for
+    the capo-adjusted value find_positions() itself actually
+    uses.
+    """
 
     return _max_fret
+
+
+def get_effective_max_fret():
+    """
+    BO-185 -- the value find_positions() (and chord_generator.py's
+    own direct use, for the same reason) actually compares each
+    candidate fret against: the user's own configured physical
+    ceiling (get_max_fret()) minus the current capo (get_capo()),
+    clamped to never go below 0 (a capo at or beyond the user's
+    own configured ceiling still permits fret 0 -- the open
+    string -- which remains physically playable regardless;
+    main.py's own --capo validation caps capo at 5, and
+    MIN_ALLOWED_MAX_FRET is 5, so this clamp is a defensive
+    floor, not a case expected to occur in practice). Distinct
+    from get_max_fret() itself specifically so that function's
+    own round-trip contract with set_max_fret() (see its
+    docstring) stays intact.
+    """
+
+    return max(0, _max_fret - _capo)
 
 
 # ---------------------------------------------------------
@@ -103,9 +187,10 @@ def get_max_fret():
 def find_positions(midi, open_notes, max_fret=None):
     """
     max_fret: BO-179 -- optional override for this one call,
-    bypassing the shared, module-level ceiling (get_max_fret())
-    entirely. None (default, every one of this function's own
-    ~75 existing call sites) uses get_max_fret() exactly as
+    bypassing the shared, module-level ceiling
+    (get_effective_max_fret()) entirely as the STARTING physical
+    ceiling. None (default, every one of this function's own ~75
+    existing call sites) uses get_effective_max_fret() exactly as
     before this parameter existed. Used by score_generator.py's
     own melody-position fallback: when a note is genuinely
     unreachable within the user's own configured ceiling, a
@@ -114,11 +199,22 @@ def find_positions(midi, open_notes, max_fret=None):
     whether it's reachable at all on a real instrument, so it can
     still be written (and visually flagged) rather than silently
     omitted.
+
+    BO-185: whichever ceiling results (the module-level one, or
+    this explicit override) is still reduced by the current capo
+    (get_capo()) before use -- an explicit max_fret is still a
+    real, physical fret-ceiling value in the same sense
+    get_max_fret() is (see get_effective_max_fret()'s own
+    docstring for why capo affects it too), so it gets the same
+    treatment, not a separate, capo-blind path.
     """
 
     positions = []
 
-    ceiling = max_fret if max_fret is not None else get_max_fret()
+    ceiling = (
+        get_effective_max_fret() if max_fret is None
+        else max(0, max_fret - get_capo())
+    )
 
     for string_number, open_note in enumerate(open_notes):
 

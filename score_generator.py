@@ -2818,6 +2818,35 @@ def generate_chord_diagrams_only(
     chord_service, filename=None
 ):
     """
+    BO-185 -- thin wrapper around the real implementation
+    (renamed _generate_chord_diagrams_only_impl below): same
+    capo-context pattern as generate_tab_from_template()'s own
+    wrapper -- see that one's docstring for the full reasoning.
+    """
+
+    from fretboard import set_capo, get_capo
+
+    original_capo = get_capo()
+
+    try:
+
+        set_capo(tuning.capo)
+
+        return _generate_chord_diagrams_only_impl(
+            score_file, tuning, staff_number, output_folder,
+            chord_service, filename=filename
+        )
+
+    finally:
+
+        set_capo(original_capo)
+
+
+def _generate_chord_diagrams_only_impl(
+    score_file, tuning, staff_number, output_folder,
+    chord_service, filename=None
+):
+    """
     Plan B: add banjo chord shape diagrams for `tuning` above
     the existing chord symbols on the score's own notation
     staff, leaving everything else -- melody notes, frets,
@@ -2963,7 +2992,8 @@ def _extract_staff_events(
     score_file, staff_number, volta_sink=None,
     rehearsal_mark_sink=None, tempo_sink=None,
     repeat_sink=None, system_text_sink=None,
-    marker_jump_sink=None, fermata_sink=None
+    marker_jump_sink=None, fermata_sink=None,
+    layout_break_sink=None
 ):
     """
     Walk one content staff's Measures/voice in document order,
@@ -3061,6 +3091,22 @@ def _extract_staff_events(
     # order, rather than two separate ones.
     measure_marker_jumps = []
 
+    # BO-184 -- raw <LayoutBreak> XML element(s) per measure
+    # (system/page breaks). Same structural category as
+    # measure_repeats/measure_marker_jumps above: a direct child
+    # of <Measure> itself (sibling to <voice>), not nested inside
+    # <voice> at all -- confirmed real, directly against several
+    # supplied fixtures (My Favorite Things, Cousin Sally Brown,
+    # Alizarin, Gamboge, Aureolin v3). Only "line" (system break)
+    # subtype has been observed in any real fixture so far -- no
+    # "page" example found -- but this list captures the raw
+    # element wholesale, subtype untouched, exactly like
+    # measure_repeats/measure_marker_jumps do for their own
+    # element types, so a page break would be captured and
+    # re-emitted identically without needing its own separate
+    # code path.
+    measure_layout_breaks = []
+
     current_measure_events = None
 
     current_staff = 0
@@ -3140,6 +3186,20 @@ def _extract_staff_events(
             ]
 
             measure_marker_jumps.append(this_measure_marker_jumps)
+
+            # BO-184 -- same pattern as this_measure_repeats/
+            # this_measure_marker_jumps above: direct children of
+            # THIS <Measure> element itself named LayoutBreak, in
+            # document order.
+            this_measure_layout_breaks = [
+                measure_child
+                for measure_child in element
+                if measure_child.tag.split("}")[-1] == (
+                    "LayoutBreak"
+                )
+            ]
+
+            measure_layout_breaks.append(this_measure_layout_breaks)
 
             # BO-131 -- the full input tree is already parsed
             # before this .iter() loop runs, so `element` (this
@@ -3610,6 +3670,10 @@ def _extract_staff_events(
     if marker_jump_sink is not None:
 
         marker_jump_sink.extend(measure_marker_jumps)
+
+    if layout_break_sink is not None:
+
+        layout_break_sink.extend(measure_layout_breaks)
 
     if fermata_sink is not None:
 
@@ -4501,6 +4565,45 @@ def _choose_melody_position(
             else 0
         )
 
+        # BO-187 -- a chord anchor represents "at or above the
+        # chord's own lowest (working) fret", not a symmetric
+        # target distance -- per direct correction: a candidate
+        # BELOW the anchor is genuinely out of range of it, not
+        # merely "some distance away" the same way a candidate
+        # above it is. _anchor_distance() (below) makes this
+        # asymmetric: at-or-above candidates keep the exact prior
+        # min(distance, CAP) behavior unchanged; a below-anchor
+        # candidate is always scored strictly worse than every
+        # at-or-above one (CAP + how far below, itself also
+        # capped at CAP -- so multiple below-anchor candidates
+        # still rank against EACH OTHER by how far below they
+        # are, up to that same cap, rather than tying at a
+        # single "disqualified" value immediately; capping this
+        # second term too preserves the pre-existing "an anchor
+        # far beyond every real candidate should not override
+        # best_position()'s own preference" guarantee (BO-24's
+        # own test_large_chord_position_change_is_capped_not_
+        # forced) -- an unbounded penalty here would have made an
+        # extreme anchor keep distinguishing far-below candidates
+        # from each other by raw fret value forever, instead of
+        # letting them all tie at "maximally far" the same way
+        # far-above candidates already do). Confirmed against
+        # every one of this BO's own real, reported cases (Let
+        # It Snow / aEADE, measures 3-4): each one's own current
+        # (undesired) choice was a fret BELOW its chord anchor
+        # that used to win purely because it was numerically
+        # closer to the anchor than the preferred, at-or-above
+        # candidate was -- exactly the asymmetry this fixes.
+        def _anchor_distance(fret, anchor):
+
+            if fret >= anchor:
+
+                return min(fret - anchor, MELODY_ANCHOR_DISTANCE_CAP)
+
+            return MELODY_ANCHOR_DISTANCE_CAP + min(
+                anchor - fret, MELODY_ANCHOR_DISTANCE_CAP
+            )
+
         # BO-30: when both a preceding and a following anchor
         # apply, use the capped MAX of the two distances -- see
         # this function's own docstring for why (confirmed
@@ -4512,21 +4615,16 @@ def _choose_melody_position(
         if working_fret_anchor is not None:
 
             distances.append(
-                min(
-                    abs(position["fret"] - working_fret_anchor),
-                    MELODY_ANCHOR_DISTANCE_CAP
+                _anchor_distance(
+                    position["fret"], working_fret_anchor
                 )
             )
 
         if following_working_fret_anchor is not None:
 
             distances.append(
-                min(
-                    abs(
-                        position["fret"]
-                        - following_working_fret_anchor
-                    ),
-                    MELODY_ANCHOR_DISTANCE_CAP
+                _anchor_distance(
+                    position["fret"], following_working_fret_anchor
                 )
             )
 
@@ -4797,6 +4895,47 @@ def generate_tab_from_template(
     include_notation=False, hp_trace_sink=None
 ):
     """
+    BO-185 -- thin wrapper around the real implementation
+    (renamed _generate_tab_from_template_impl below): sets the
+    shared capo context (fretboard.set_capo()) to THIS tuning's
+    own capo value for the full duration of generation, restoring
+    whatever capo value was active before regardless of how it
+    exits (including an exception) -- every find_positions() call
+    this makes (direct, or via _select_chord_shape_for_harmony()/
+    chord_generator.py) needs the physical ceiling reduced by
+    this tuning's own capo. A thin wrapper here, rather than
+    wrapping the real function's own very large body in try/
+    finally directly, avoids re-indenting that entire body for
+    this one addition. See optimizer.py's own score_tuning() for
+    the identical pattern applied there.
+    """
+
+    from fretboard import set_capo, get_capo
+
+    original_capo = get_capo()
+
+    try:
+
+        set_capo(tuning.capo)
+
+        return _generate_tab_from_template_impl(
+            score_file, tuning, staff_number, template_path,
+            output_folder, chord_service, filename=filename,
+            include_notation=include_notation,
+            hp_trace_sink=hp_trace_sink
+        )
+
+    finally:
+
+        set_capo(original_capo)
+
+
+def _generate_tab_from_template_impl(
+    score_file, tuning, staff_number, template_path,
+    output_folder, chord_service, filename=None,
+    include_notation=False, hp_trace_sink=None
+):
+    """
     BO-23: populate a MuseScore-created TAB template (see this
     module's own BO-23 section notes above) with the source
     score's melody and chord symbols, rather than constructing
@@ -4891,6 +5030,10 @@ def generate_tab_from_template(
 
     measure_fermatas = []
 
+    # BO-184 -- same sink pattern as measure_repeats/measure_
+    # marker_jumps above.
+    measure_layout_breaks = []
+
     measures = _extract_staff_events(
         score_file, staff_number, volta_sink=measure_voltas,
         rehearsal_mark_sink=measure_rehearsal_marks,
@@ -4898,7 +5041,8 @@ def generate_tab_from_template(
         repeat_sink=measure_repeats,
         system_text_sink=measure_system_texts,
         marker_jump_sink=measure_marker_jumps,
-        fermata_sink=measure_fermatas
+        fermata_sink=measure_fermatas,
+        layout_break_sink=measure_layout_breaks
     )
 
     # ---- BO-24: read harmonies and pre-select each chord's own
@@ -5087,6 +5231,57 @@ def generate_tab_from_template(
                 ] = _chord_working_fret(
                     chord_shape_by_position[next_key]
                 )
+
+    # BO-188 -- propagate a following-chord anchor BACKWARD
+    # through a chain of one or more consecutive, single-note
+    # events that all share the EXACT SAME pitch. The loop above
+    # only ever looks exactly one event ahead, so only the note
+    # immediately preceding a chord onset picks up that onset's
+    # own working fret as a following anchor; an earlier note in
+    # a run of repeated identical pitches (e.g. "same pitch played
+    # twice in a row, then a chord") got no anchor at all and fell
+    # through to best_position()'s own plain low-fret preference,
+    # even though the exact same string/fret candidates are
+    # available to it as to the note right after it -- confirmed
+    # real: Let It Snow / aEADE, measure 1 beat 1 (a C4 with no
+    # anchor of its own, immediately followed by a second, IDENTICAL
+    # C4 that DOES have a real following anchor and correctly lands
+    # on fret 8) -- the preferred tab keeps both on the same fret,
+    # matching the note that already has a real reason to be there.
+    # Walking backward (not forward from each chord onset) means
+    # this naturally stops at the first event that ISN'T the same
+    # pitch, or that already has its own following anchor (a real
+    # chord onset immediately preceding it, which must not be
+    # overwritten), without needing a separate lookahead scan.
+    for index in range(len(flat_note_events) - 2, -1, -1):
+
+        measure_number, event = flat_note_events[index]
+
+        if id(event) in following_working_fret_anchor_by_event_id:
+
+            continue
+
+        if len(event["all_pitches"]) != 1:
+
+            continue
+
+        next_measure, next_event = flat_note_events[index + 1]
+
+        if next_event["all_pitches"] != event["all_pitches"]:
+
+            continue
+
+        next_anchor = following_working_fret_anchor_by_event_id.get(
+            id(next_event)
+        )
+
+        if next_anchor is None:
+
+            continue
+
+        following_working_fret_anchor_by_event_id[id(event)] = (
+            next_anchor
+        )
 
     # BO-57 -- a forward-looking window of realize_note()-
     # processed melody notes for each note event, starting at
@@ -5534,6 +5729,10 @@ def generate_tab_from_template(
     # built, without adding a second, separate reporting path.
     unreachable_pitch_exceptions = []
 
+    # BO-186 -- see this list's own append() site's comment,
+    # below the octave-shift fallback attempt.
+    octave_shifted_note_exceptions = []
+
     for measure_index, measure_events in enumerate(measures):
 
         is_first_measure = (measure_index == 0)
@@ -5555,6 +5754,39 @@ def generate_tab_from_template(
         for repeat_element in measure_repeats[measure_index]:
 
             tab_measure.append(copy.deepcopy(repeat_element))
+
+        # BO-184 -- re-emit any LayoutBreak (system/page break)
+        # captured for this measure, same fixed position as
+        # startRepeat/endRepeat above -- confirmed real, directly
+        # against several supplied fixtures. Placed between the
+        # repeat and Marker/Jump blocks: the majority (4 of 5) of
+        # real fixtures inspected that have both a repeat and a
+        # LayoutBreak in the same measure order them repeat-then-
+        # LayoutBreak, and the majority (1 of 2 conflicting real
+        # examples) that have both a LayoutBreak and a Marker/Jump
+        # order them LayoutBreak-then-Marker/Jump -- sibling
+        # element order isn't semantically significant to
+        # MuseScore's own reader (each is its own distinct tag),
+        # so this doesn't need to match every source file's exact
+        # ordering to open correctly, but this matches the more
+        # common one anyway rather than picking an arbitrary
+        # position. Does have its own real <eid> (confirmed
+        # directly against the supplied fixtures), so it's
+        # regenerated on the copy, matching the same pattern
+        # already established for Marker/Jump below.
+        for layout_break_element in measure_layout_breaks[
+            measure_index
+        ]:
+
+            layout_break_copy = copy.deepcopy(layout_break_element)
+
+            eid_element = layout_break_copy.find("{*}eid")
+
+            if eid_element is not None:
+
+                eid_element.text = _generate_eid()
+
+            tab_measure.append(layout_break_copy)
 
         # BO-143 -- re-emit any Marker/Jump captured for this
         # measure, same fixed position as startRepeat/endRepeat
@@ -5635,6 +5867,29 @@ def generate_tab_from_template(
                 treble_measure.append(
                     copy.deepcopy(repeat_element)
                 )
+
+            # BO-184 -- same LayoutBreak re-emission as the TAB
+            # staff's own Measure above, for this separate,
+            # independently-built notation-staff Measure.
+            for layout_break_element in measure_layout_breaks[
+                measure_index
+            ]:
+
+                treble_layout_break_copy = copy.deepcopy(
+                    layout_break_element
+                )
+
+                treble_layout_break_eid_el = (
+                    treble_layout_break_copy.find("{*}eid")
+                )
+
+                if treble_layout_break_eid_el is not None:
+
+                    treble_layout_break_eid_el.text = (
+                        _generate_eid()
+                    )
+
+                treble_measure.append(treble_layout_break_copy)
 
             # BO-143 -- same Marker/Jump re-emission as the TAB
             # staff's own Measure above, for this separate,
@@ -6660,6 +6915,92 @@ def generate_tab_from_template(
                         chosen is not None
                     )
 
+                # BO-186 -- when even the real physical maximum
+                # (BO-179's own fallback just above) can't reach
+                # this pitch at all -- genuinely below the lowest
+                # open string, or above the highest reachable
+                # position, confirmed real: The_Christmas_Song_
+                # Low.mscz in G minor (gDGBbD) has melody pitches
+                # (C3/B2) below every string's own open note, so
+                # no fret at all (frets can't be negative) can
+                # reach them -- try the SAME pitch class one
+                # octave away instead of falling through to a
+                # silent Rest. Up (+12) tried before down (-12):
+                # a banjo's open strings sit fairly high (typically
+                # D3-G4), so a melody note being too LOW is the
+                # far more common real case than too high; this
+                # genuinely is a last resort, tried only after
+                # BO-179's own fallback has already failed at
+                # every fret up to the real physical maximum.
+                # Still marked red -- reuses the EXISTING _is_
+                # octave_substituted() check further below
+                # unchanged (compares the final written midi
+                # against event["pitch"], the untouched real
+                # source pitch), and still carries lyrics/slurs/
+                # ties normally, since a successful chosen here
+                # takes the exact same successful-note-writing
+                # path from this point on (this "if chosen is
+                # None" block, and the unreachable_pitch_
+                # exceptions.append() below it, are both skipped
+                # once chosen is no longer None).
+                chosen_via_octave_shift = False
+
+                if chosen is None:
+
+                    from fretboard import (
+                        set_max_fret, get_max_fret,
+                        MAX_ALLOWED_MAX_FRET
+                    )
+
+                    original_midi = midi
+
+                    for octave_shift in (12, -12):
+
+                        midi = original_midi + octave_shift
+
+                        original_max_fret = get_max_fret()
+
+                        try:
+
+                            set_max_fret(MAX_ALLOWED_MAX_FRET)
+
+                            chosen = _attempt_choice()
+
+                        finally:
+
+                            set_max_fret(original_max_fret)
+
+                        if chosen is not None:
+
+                            chosen_via_octave_shift = True
+
+                            break
+
+                    if chosen is None:
+
+                        midi = original_midi
+
+            if chosen_via_octave_shift:
+
+                # BO-186 -- distinctly-shaped report entry
+                # (separate from the unreachable_pitch_exceptions
+                # list below, which only ever means "written as a
+                # silent Rest") -- this note WAS written, just at
+                # a different octave, so it's reported that way
+                # rather than folded into the "unreachable" wording.
+                octave_shifted_note_exceptions.append({
+                    "measure": measure_index + 1,
+                    "beat": event["beat"],
+                    "melody_pitch": midi,
+                    "source_pitch": event["pitch"],
+                    "tuning_symbol": tuning.symbol,
+                    "reason": (
+                        "melody pitch was outside every string's "
+                        "own reachable range in this tuning -- "
+                        "written one octave away instead"
+                    )
+                })
+
             if chosen is None:
 
                 unreachable_pitch_exceptions.append({
@@ -7556,7 +7897,9 @@ def generate_tab_from_template(
     )
 
     exceptions = (
-        unreachable_pitch_exceptions + chord_exceptions
+        unreachable_pitch_exceptions
+        + octave_shifted_note_exceptions
+        + chord_exceptions
     )
 
     if filename is None:

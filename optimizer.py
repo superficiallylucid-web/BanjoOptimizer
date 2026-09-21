@@ -6,7 +6,8 @@ from models import TuningResult, Score
 
 from fretboard import (
     find_positions,
-    best_position as choose_best_position
+    best_position as choose_best_position,
+    set_capo, get_capo
 )
 
 from playing_model import (
@@ -558,6 +559,35 @@ class TuningAnalyzer:
     # -------------------------------------------------
 
     def score_tuning(self, tuning):
+        """
+        BO-185 -- thin wrapper around the real implementation
+        (renamed _score_tuning_impl below): sets the shared capo
+        context (fretboard.set_capo()) to THIS tuning's own capo
+        value for the full duration of scoring it, restoring
+        whatever capo value was active before regardless of how
+        scoring exits (including an exception) -- every one of
+        this method's own find_positions() calls (direct or via
+        chord_generator.py/_select_chord_shape_for_harmony())
+        needs the physical ceiling reduced by this tuning's own
+        capo, not the previous tuning's. A thin wrapper here,
+        rather than wrapping the ~300-line real method body in
+        try/finally directly, avoids re-indenting that entire
+        body for this one addition.
+        """
+
+        original_capo = get_capo()
+
+        try:
+
+            set_capo(tuning.capo)
+
+            return self._score_tuning_impl(tuning)
+
+        finally:
+
+            set_capo(original_capo)
+
+    def _score_tuning_impl(self, tuning):
 
 
         playable = 0
